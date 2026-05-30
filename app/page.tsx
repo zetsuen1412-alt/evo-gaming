@@ -42,38 +42,18 @@ export default function Home() {
       }}
     >
       <nav className="sticky top-0 z-50 flex items-center justify-between border-b border-white/10 bg-gray-950/80 px-8 py-4 backdrop-blur">
-        <Link href="/">
-          <img
-  src="/logo-transparent.png?v=3"
-  alt="ComePlayers"
-  className="h-20 w-auto object-contain"
-/>
-        </Link>
+  <Link href="/">
+    <img
+      src="/logo-transparent.png?v=4"
+      alt="ComePlayers"
+      className="h-20 w-auto object-contain"
+    />
+  </Link>
 
-        <div className="flex items-center gap-4">
-          <Link
-            href="/seller"
-            className="rounded-full border border-cyan-400 px-6 py-2 text-cyan-400 hover:bg-cyan-400 hover:text-black"
-          >
-            Sell With Us
-          </Link>
-
-          <Link
-            href="/login"
-            className="rounded-full border border-gray-600 px-6 py-2 hover:bg-white hover:text-black"
-          >
-            Login
-          </Link>
-
-          <Link
-            href="/register"
-            className="rounded-full bg-cyan-400 px-6 py-2 font-bold text-black hover:bg-cyan-300"
-          >
-            Sign Up
-          </Link>
-        </div>
-      </nav>
-
+  <div className="flex items-center gap-4">
+    ...
+  </div>
+</nav>
       <section className="px-8 pt-32 pb-24">
         <div className="max-w-4xl">
           <h1 className="text-4xl md:text-6xl font-black leading-tight">
