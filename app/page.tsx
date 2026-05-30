@@ -44,10 +44,10 @@ export default function Home() {
       <nav className="sticky top-0 z-50 flex items-center justify-between border-b border-white/10 bg-gray-950/80 px-8 py-4 backdrop-blur">
         <Link href="/">
           <img
-  src="/logo-transparent.png?v=2"
+  src="/logo-transparent.png?v=3"
   alt="ComePlayers"
   className="h-20 w-auto object-contain"
- />
+/>
         </Link>
 
         <div className="flex items-center gap-4">
