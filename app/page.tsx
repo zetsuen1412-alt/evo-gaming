@@ -44,10 +44,10 @@ export default function Home() {
       <nav className="sticky top-0 z-50 flex items-center justify-between border-b border-white/10 bg-gray-950/80 px-8 py-4 backdrop-blur">
         <Link href="/">
           <img
-            src="/logo.webp"
-            alt="ComePlayers"
-            className="h-24 w-auto object-contain"
-          />
+  src="/logo-transparent.png?v=2"
+  alt="ComePlayers"
+  className="h-20 w-auto object-contain"
+ />
         </Link>
 
         <div className="flex items-center gap-4">
@@ -74,9 +74,9 @@ export default function Home() {
         </div>
       </nav>
 
-      <section className="px-8 py-24">
+      <section className="px-8 pt-32 pb-24">
         <div className="max-w-4xl">
-          <h1 className="text-5xl font-black leading-tight md:text-7xl">
+          <h1 className="text-4xl md:text-6xl font-black leading-tight">
             All Your Gaming Needs
             <br />
             in One Secure{" "}
