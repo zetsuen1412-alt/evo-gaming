@@ -50,7 +50,7 @@ export default function Home() {
           <img
   src="/logo.png?v=1"
   alt="ComePlayers"
-  className="h-20 w-auto object-contain"
+  className="h-16 w-auto object-contain"
 />
         </Link>
 
