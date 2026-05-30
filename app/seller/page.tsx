@@ -1,33 +1,52 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-export default function SellerPage() {
-  const [title, setTitle] = useState("");
-  const [price, setPrice] = useState("");
-  const [seller, setSeller] = useState("");
-  const [description, setDescription] = useState("");
+type Order = {
+  id: number;
+  product: string;
+  buyer: string;
+  price: string;
+  status: string;
+  payment_proof: string | null;
+  payment_image: string | null;
+  created_at: string;
+};
 
-  async function handleAddProduct() {
-    const { error } = await supabase.from("products").insert({
-      title,
-      price,
-      seller,
-      description,
-    });
+export default function SellerPage() {
+  const [orders, setOrders] = useState<Order[]>([]);
+
+  async function getOrders() {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("*")
+      .order("id", { ascending: false });
 
     if (error) {
       alert(error.message);
       return;
     }
 
-    alert("Produk berhasil ditambahkan!");
+    setOrders(data || []);
+  }
 
-    setTitle("");
-    setPrice("");
-    setSeller("");
-    setDescription("");
+  useEffect(() => {
+    getOrders();
+  }, []);
+
+  async function updateStatus(id: number, status: string) {
+    const { error } = await supabase
+      .from("orders")
+      .update({ status })
+      .eq("id", id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    getOrders();
   }
 
   return (
@@ -36,43 +55,110 @@ export default function SellerPage() {
         ← Kembali ke Home
       </a>
 
-      <section className="mx-auto mt-10 max-w-2xl rounded-3xl border border-gray-800 bg-gray-900 p-8">
-        <h1 className="text-4xl font-black">Tambah Produk</h1>
+      <h1 className="mt-8 text-4xl font-black text-cyan-400">
+        Seller Dashboard
+      </h1>
 
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Nama produk"
-          className="mt-8 w-full rounded-2xl border border-gray-700 bg-black px-5 py-4 outline-none focus:border-cyan-400"
-        />
+      <p className="mt-2 text-gray-400">
+        Kelola pesanan masuk dari pembeli.
+      </p>
 
-        <input
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          placeholder="Harga, contoh: Rp 50.000"
-          className="mt-4 w-full rounded-2xl border border-gray-700 bg-black px-5 py-4 outline-none focus:border-cyan-400"
-        />
+      <section className="mt-10 grid gap-6">
+        {orders.length === 0 ? (
+          <p className="text-gray-400">Belum ada pesanan.</p>
+        ) : (
+          orders.map((order) => (
+            <div
+              key={order.id}
+              className="rounded-3xl border border-gray-800 bg-gray-900 p-6"
+            >
+              <div className="flex flex-col justify-between gap-6 md:flex-row">
+                <div>
+                  <h2 className="text-2xl font-black">
+                    {order.product}
+                  </h2>
 
-        <input
-          value={seller}
-          onChange={(e) => setSeller(e.target.value)}
-          placeholder="Nama seller"
-          className="mt-4 w-full rounded-2xl border border-gray-700 bg-black px-5 py-4 outline-none focus:border-cyan-400"
-        />
+                  <p className="mt-2 text-cyan-400 text-xl font-bold">
+                    Rp {order.price}
+                  </p>
 
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Deskripsi produk"
-          className="mt-4 h-32 w-full rounded-2xl border border-gray-700 bg-black px-5 py-4 outline-none focus:border-cyan-400"
-        />
+                  <p className="mt-2 text-gray-400">
+                    Buyer: {order.buyer || "-"}
+                  </p>
 
-        <button
-          onClick={handleAddProduct}
-          className="mt-6 w-full rounded-2xl bg-cyan-400 py-4 font-bold text-black hover:bg-cyan-300"
-        >
-          Simpan Produk
-        </button>
+                  <p className="text-gray-400">
+                    Status:{" "}
+                    <span className="font-bold text-yellow-400">
+                      {order.status}
+                    </span>
+                  </p>
+
+                  {order.payment_proof && (
+                    <p className="mt-2 text-sm text-green-400">
+                      {order.payment_proof}
+                    </p>
+                  )}
+
+                  {order.payment_image && (
+                    <div className="mt-4">
+                      <p className="mb-2 font-bold text-cyan-400">
+                        Bukti Pembayaran
+                      </p>
+
+                      <a
+                        href={order.payment_image}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <img
+                          src={order.payment_image}
+                          alt="Bukti Pembayaran"
+                          className="w-64 rounded-xl border border-gray-700 hover:opacity-80"
+                        />
+                      </a>
+                    </div>
+                  )}
+
+                  <p className="mt-3 text-sm text-gray-500">
+                    Order ID: #{order.id}
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() =>
+                      updateStatus(order.id, "Menunggu Cek Pembayaran")
+                    }
+                    className="rounded-xl bg-yellow-400 px-5 py-3 font-bold text-black"
+                  >
+                    Menunggu Cek
+                  </button>
+
+                  <button
+                    onClick={() => updateStatus(order.id, "Diproses")}
+                    className="rounded-xl bg-blue-500 px-5 py-3 font-bold text-white"
+                  >
+                    Diproses
+                  </button>
+
+                  <button
+                    onClick={() => updateStatus(order.id, "Selesai")}
+                    className="rounded-xl bg-green-500 px-5 py-3 font-bold text-white"
+                  >
+                    Selesai
+                  </button>
+
+                  <button
+                    onClick={() => updateStatus(order.id, "Dibatalkan")}
+                    className="rounded-xl bg-red-500 px-5 py-3 font-bold text-white"
+                  >
+                    Batalkan
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </section>
     </main>
   );

@@ -1,9 +1,20 @@
 "use client";
 
+import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 export default function PaymentPage() {
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+
   async function handleUpload() {
+    if (!file) {
+      alert("Pilih gambar bukti pembayaran dulu.");
+      return;
+    }
+
+    setLoading(true);
+
     const { data: userData } = await supabase.auth.getUser();
 
     if (!userData.user) {
@@ -12,18 +23,39 @@ export default function PaymentPage() {
       return;
     }
 
-    const { error } = await supabase
+    const fileName = `${Date.now()}-${file.name}`;
+
+    const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("payment-proofs")
+        .upload(fileName, file);
+
+      console.log("UPLOAD RESULT", uploadData);
+      console.log("UPLOAD ERROR", uploadError);
+
+    if (uploadError) {
+      alert(uploadError.message);
+      setLoading(false);
+      return;
+    }
+
+    const { data: publicUrl } = supabase.storage
+      .from("payment-proofs")
+      .getPublicUrl(fileName);
+
+    const { error: updateError } = await supabase
       .from("orders")
       .update({
         status: "Menunggu Cek Pembayaran",
         payment_proof: "Bukti pembayaran sudah diupload",
+        payment_image: publicUrl.publicUrl,
       })
       .eq("buyer", userData.user.email)
       .order("id", { ascending: false })
       .limit(1);
 
-    if (error) {
-      alert(error.message);
+    if (updateError) {
+      alert(updateError.message);
+      setLoading(false);
       return;
     }
 
@@ -37,7 +69,7 @@ export default function PaymentPage() {
         ← Kembali ke Home
       </a>
 
-      <section className="mx-auto mt-10 max-w-xl rounded-3xl border border-gray-800 bg-gray-900 p-8 text-center">
+      <section className="mx-auto mt-10 max-w-xl rounded-3xl border border-gray-800 bg-gray-900 p-8">
         <h1 className="text-4xl font-black text-cyan-400">
           Pembayaran QRIS
         </h1>
@@ -49,20 +81,22 @@ export default function PaymentPage() {
         <img
           src="/qris.jpeg"
           alt="QRIS Payment"
-          className="mx-auto mt-8 w-full max-w-sm rounded-2xl bg-white p-3"
+          className="mx-auto mt-8 w-full max-w-sm rounded-2xl bg-white"
         />
 
         <input
           type="file"
           accept="image/*"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
           className="mt-8 w-full rounded-2xl border border-gray-700 bg-black px-5 py-4"
         />
 
         <button
           onClick={handleUpload}
-          className="mt-8 w-full rounded-2xl bg-cyan-400 py-4 font-bold text-black"
+          disabled={loading}
+          className="mt-8 w-full rounded-2xl bg-cyan-400 py-4 font-bold text-black hover:bg-cyan-300 disabled:opacity-50"
         >
-          Kirim Bukti Pembayaran
+          {loading ? "Mengirim..." : "Kirim Bukti Pembayaran"}
         </button>
       </section>
     </main>
