@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
 type Category = {
@@ -18,8 +19,16 @@ export default function Home() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+
+  const [user, setUser] = useState<User | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
+
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
 
   useEffect(() => {
     async function loadCategories() {
@@ -36,7 +45,23 @@ export default function Home() {
       setCategories(data || []);
     }
 
+    async function loadUser() {
+      const { data } = await supabase.auth.getUser();
+      setUser(data.user);
+    }
+
     loadCategories();
+    loadUser();
+
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user || null);
+      }
+    );
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
   const filteredCategories = categories.filter((category) => {
@@ -55,6 +80,55 @@ export default function Home() {
     setShowAuthModal(true);
   }
 
+  async function handleEmailAuth(e: React.FormEvent) {
+    e.preventDefault();
+    setAuthLoading(true);
+
+    if (authMode === "register" && password !== confirmPassword) {
+      alert("Password dan Confirm Password tidak sama.");
+      setAuthLoading(false);
+      return;
+    }
+
+    if (authMode === "login") {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        alert(error.message);
+        setAuthLoading(false);
+        return;
+      }
+
+      setShowAuthModal(false);
+    }
+
+    if (authMode === "register") {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            username,
+          },
+        },
+      });
+
+      if (error) {
+        alert(error.message);
+        setAuthLoading(false);
+        return;
+      }
+
+      alert("Registrasi berhasil. Cek email jika Supabase meminta konfirmasi.");
+      setShowAuthModal(false);
+    }
+
+    setAuthLoading(false);
+  }
+
   async function handleOAuth(provider: OAuthProvider) {
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
@@ -66,6 +140,11 @@ export default function Home() {
     if (error) {
       alert(error.message);
     }
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setUser(null);
   }
 
   return (
@@ -143,12 +222,27 @@ export default function Home() {
               Sell With Us
             </Link>
 
-            <button
-              onClick={() => openAuth("login")}
-              className="rounded-full bg-cyan-400 px-6 py-2 font-bold text-black transition hover:bg-cyan-300"
-            >
-              Login / Sign Up
-            </button>
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-400 font-black text-black">
+                  {user.email?.charAt(0).toUpperCase()}
+                </div>
+
+                <button
+                  onClick={handleLogout}
+                  className="rounded-full border border-white/20 px-5 py-2 font-semibold transition hover:bg-white hover:text-black"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => openAuth("login")}
+                className="rounded-full bg-cyan-400 px-6 py-2 font-bold text-black transition hover:bg-cyan-300"
+              >
+                Login / Sign Up
+              </button>
+            )}
           </div>
         </nav>
 
@@ -192,11 +286,9 @@ export default function Home() {
               <span className="rounded-full border border-white/10 bg-black/35 px-4 py-2 backdrop-blur">
                 🔒 Secure Transactions
               </span>
-
               <span className="rounded-full border border-white/10 bg-black/35 px-4 py-2 backdrop-blur">
                 ⚡ Fast Delivery
               </span>
-
               <span className="rounded-full border border-white/10 bg-black/35 px-4 py-2 backdrop-blur">
                 🎧 24/7 Support
               </span>
@@ -243,12 +335,14 @@ export default function Home() {
             <Link href="/seller" className="hover:text-cyan-300">
               Sell With Us
             </Link>
-            <button
-              onClick={() => openAuth("login")}
-              className="hover:text-cyan-300"
-            >
-              Login / Sign Up
-            </button>
+            {!user && (
+              <button
+                onClick={() => openAuth("login")}
+                className="hover:text-cyan-300"
+              >
+                Login / Sign Up
+              </button>
+            )}
           </div>
         </div>
       </footer>
@@ -298,19 +392,12 @@ export default function Home() {
               </button>
             </div>
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                alert(
-                  authMode === "login"
-                    ? "Login system akan kita hubungkan ke Supabase setelah ini."
-                    : "Register system akan kita hubungkan ke Supabase setelah ini."
-                );
-              }}
-            >
+            <form onSubmit={handleEmailAuth}>
               {authMode === "register" && (
                 <input
                   type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   placeholder="Username"
                   className="mb-4 w-full rounded-xl border border-white/10 bg-[#090d24] px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
                 />
@@ -318,26 +405,42 @@ export default function Home() {
 
               <input
                 type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="Email"
+                required
                 className="mb-4 w-full rounded-xl border border-white/10 bg-[#090d24] px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
               />
 
               <input
                 type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="Password"
+                required
                 className="mb-5 w-full rounded-xl border border-white/10 bg-[#090d24] px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
               />
 
               {authMode === "register" && (
                 <input
                   type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm Password"
+                  required
                   className="mb-5 w-full rounded-xl border border-white/10 bg-[#090d24] px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
                 />
               )}
 
-              <button className="w-full rounded-xl bg-cyan-400 py-3 font-black text-black transition hover:bg-cyan-300">
-                {authMode === "login" ? "Login" : "Create Account"}
+              <button
+                disabled={authLoading}
+                className="w-full rounded-xl bg-cyan-400 py-3 font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {authLoading
+                  ? "Loading..."
+                  : authMode === "login"
+                  ? "Login"
+                  : "Create Account"}
               </button>
             </form>
 
@@ -352,48 +455,24 @@ export default function Home() {
                 type="button"
                 onClick={() => handleOAuth("google")}
                 className="flex items-center justify-center rounded-xl border border-white/10 bg-white/10 py-3 transition hover:border-cyan-400 hover:bg-white/15"
-                aria-label="Continue with Google"
               >
-                <svg width="22" height="22" viewBox="0 0 48 48">
-                  <path
-                    fill="#FFC107"
-                    d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"
-                  />
-                  <path
-                    fill="#FF3D00"
-                    d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.6 8.3 6.3 14.7z"
-                  />
-                  <path
-                    fill="#4CAF50"
-                    d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.8-3.4-11.4-8.1l-6.5 5C9.4 39.5 16.1 44 24 44z"
-                  />
-                  <path
-                    fill="#1976D2"
-                    d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.6l6.2 5.2C36.9 39.3 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"
-                  />
-                </svg>
+                G
               </button>
 
               <button
                 type="button"
                 onClick={() => handleOAuth("discord")}
                 className="flex items-center justify-center rounded-xl border border-white/10 bg-white/10 py-3 transition hover:border-cyan-400 hover:bg-white/15"
-                aria-label="Continue with Discord"
               >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="#5865F2">
-                  <path d="M20.3 4.4A16.4 16.4 0 0 0 16.2 3c-.2.4-.5.9-.6 1.3a15.2 15.2 0 0 0-7.2 0C8.2 3.9 8 3.4 7.8 3a16.2 16.2 0 0 0-4.1 1.4C1.1 8.3.4 12.1.7 15.9A16.5 16.5 0 0 0 5.8 18.5c.4-.6.8-1.2 1.1-1.8-.6-.2-1.1-.5-1.6-.8l.4-.3c3.1 1.4 6.5 1.4 9.6 0l.4.3c-.5.3-1 .6-1.6.8.3.6.7 1.2 1.1 1.8a16.5 16.5 0 0 0 5.1-2.6c.4-4.4-.6-8.1-3-11.5zM8.7 13.6c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2zm6.6 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2z" />
-                </svg>
+                🎮
               </button>
 
               <button
                 type="button"
                 onClick={() => handleOAuth("facebook")}
                 className="flex items-center justify-center rounded-xl border border-white/10 bg-white/10 py-3 transition hover:border-cyan-400 hover:bg-white/15"
-                aria-label="Continue with Facebook"
               >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="#1877F2">
-                  <path d="M24 12.1C24 5.4 18.6 0 12 0S0 5.4 0 12.1C0 18.1 4.4 23 10.1 24v-8.4h-3v-3.5h3V9.4c0-3 1.8-4.7 4.5-4.7 1.3 0 2.7.2 2.7.2v3h-1.5c-1.5 0-2 .9-2 1.9v2.3h3.4l-.5 3.5h-2.9V24C19.6 23 24 18.1 24 12.1z" />
-                </svg>
+                f
               </button>
             </div>
 
