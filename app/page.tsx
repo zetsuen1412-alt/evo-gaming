@@ -48,10 +48,10 @@ export default function Home() {
       <nav className="sticky top-0 z-50 flex h-24 items-center justify-between border-b border-white/10 bg-gray-950/85 px-8 backdrop-blur">
         <Link href="/" className="flex items-center">
           <img
-            src="/logo-transparent.png?v=10"
-            alt="ComePlayers"
-            className="h-16 w-auto object-contain"
-          />
+  src="/logo.png?v=1"
+  alt="ComePlayers"
+  className="h-20 w-auto object-contain"
+/>
         </Link>
 
         <div className="flex items-center gap-4">
