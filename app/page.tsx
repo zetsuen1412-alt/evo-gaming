@@ -80,6 +80,16 @@ export default function Home() {
     setShowAuthModal(true);
   }
 
+  function handleSellerClick() {
+    if (!user) {
+      setAuthMode("login");
+      setShowAuthModal(true);
+      return;
+    }
+
+    window.location.href = "/seller";
+  }
+
   async function handleEmailAuth(e: React.FormEvent) {
     e.preventDefault();
     setAuthLoading(true);
@@ -103,6 +113,8 @@ export default function Home() {
       }
 
       setShowAuthModal(false);
+      setEmail("");
+      setPassword("");
     }
 
     if (authMode === "register") {
@@ -124,6 +136,10 @@ export default function Home() {
 
       alert("Registrasi berhasil. Cek email jika Supabase meminta konfirmasi.");
       setShowAuthModal(false);
+      setUsername("");
+      setEmail("");
+      setPassword("");
+      setConfirmPassword("");
     }
 
     setAuthLoading(false);
@@ -215,12 +231,12 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Link
-              href="/seller"
+            <button
+              onClick={handleSellerClick}
               className="hidden rounded-full border border-cyan-400 px-5 py-2 font-semibold text-cyan-300 transition hover:bg-cyan-400 hover:text-black sm:block"
             >
               Sell With Us
-            </Link>
+            </button>
 
             {user ? (
               <div className="flex items-center gap-3">
@@ -332,9 +348,13 @@ export default function Home() {
           <p>© 2026 ComePlayers. All rights reserved.</p>
 
           <div className="flex gap-5">
-            <Link href="/seller" className="hover:text-cyan-300">
+            <button
+              onClick={handleSellerClick}
+              className="hover:text-cyan-300"
+            >
               Sell With Us
-            </Link>
+            </button>
+
             {!user && (
               <button
                 onClick={() => openAuth("login")}
