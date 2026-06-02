@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
 type Product = {
@@ -36,10 +37,26 @@ type SellerProfile = {
   created_at: string;
 };
 
-type GameCategory = {
+type Category = {
   id: number;
   name: string;
   slug: string;
+  icon: string | null;
+};
+
+type GameMaster = {
+  id: number;
+  name: string;
+  slug: string;
+  first_letter: string | null;
+  status: string | null;
+  image_url: string | null;
+};
+
+type WishlistRow = {
+  id: number;
+  user_id: string;
+  product_id: number;
 };
 
 function formatPrice(value: string | number | null) {
@@ -62,19 +79,24 @@ function formatDate(value: string | null | undefined) {
   });
 }
 
-export default function ProductDetailPage() {
+export default function ProductDetailV5WishlistPage() {
   const params = useParams();
   const productId = String(params.id || "");
 
+  const [user, setUser] = useState<User | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [buying, setBuying] = useState(false);
+  const [wishlistLoading, setWishlistLoading] = useState(false);
 
   const [product, setProduct] = useState<Product | null>(null);
   const [sellerProfile, setSellerProfile] = useState<SellerProfile | null>(
     null
   );
-  const [gameCategory, setGameCategory] = useState<GameCategory | null>(null);
+  const [category, setCategory] = useState<Category | null>(null);
+  const [gameMaster, setGameMaster] = useState<GameMaster | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
+  const [wishlistRow, setWishlistRow] = useState<WishlistRow | null>(null);
 
   const sellerDisplayName = useMemo(() => {
     return (
@@ -86,9 +108,21 @@ export default function ProductDetailPage() {
     );
   }, [sellerProfile, product]);
 
+  const categoryDisplayName = useMemo(() => {
+    return category?.name || product?.category || "Marketplace";
+  }, [category, product]);
+
   const gameDisplayName = useMemo(() => {
-    return product?.game_name || gameCategory?.name || "-";
-  }, [product, gameCategory]);
+    return gameMaster?.name || product?.game_name || "-";
+  }, [gameMaster, product]);
+
+  const backToGameUrl = useMemo(() => {
+    if (!category?.slug || !gameMaster?.slug) {
+      return "/";
+    }
+
+    return `/categories/${category.slug}/${gameMaster.slug}-${category.slug}`;
+  }, [category, gameMaster]);
 
   useEffect(() => {
     if (productId) {
@@ -99,6 +133,10 @@ export default function ProductDetailPage() {
   async function loadProduct() {
     try {
       setLoading(true);
+
+      const { data: userData } = await supabase.auth.getUser();
+      const currentUser = userData.user || null;
+      setUser(currentUser);
 
       const { data: productData, error: productError } = await supabase
         .from("products")
@@ -120,6 +158,17 @@ export default function ProductDetailPage() {
 
       setProduct(productData);
 
+      if (currentUser) {
+        const { data: wishlistData } = await supabase
+          .from("wishlists")
+          .select("id,user_id,product_id")
+          .eq("user_id", currentUser.id)
+          .eq("product_id", productData.id)
+          .maybeSingle();
+
+        setWishlistRow(wishlistData || null);
+      }
+
       if (productData.seller_id) {
         const { data: sellerData } = await supabase
           .from("profiles")
@@ -130,32 +179,98 @@ export default function ProductDetailPage() {
         setSellerProfile(sellerData || null);
       }
 
+      if (productData.category_id) {
+        const { data: categoryData } = await supabase
+          .from("categories")
+          .select("*")
+          .eq("id", productData.category_id)
+          .maybeSingle();
+
+        setCategory(categoryData || null);
+      }
+
       if (productData.game_category_id) {
         const { data: gameData } = await supabase
-          .from("game_categories")
-          .select("id,name,slug")
+          .from("game_master")
+          .select("*")
           .eq("id", productData.game_category_id)
           .maybeSingle();
 
-        setGameCategory(gameData || null);
-
-        const { data: relatedData } = await supabase
-          .from("products")
+        setGameMaster(gameData || null);
+      } else if (productData.game_name) {
+        const { data: gameData } = await supabase
+          .from("game_master")
           .select("*")
-          .eq("game_category_id", productData.game_category_id)
-          .eq("status", "active")
-          .neq("id", productData.id)
-          .limit(4);
+          .ilike("name", productData.game_name)
+          .maybeSingle();
 
-        setRelatedProducts(relatedData || []);
+        setGameMaster(gameData || null);
       }
 
+      const { data: relatedData } = await supabase
+        .from("products")
+        .select("*")
+        .eq("category_id", productData.category_id)
+        .eq("game_category_id", productData.game_category_id)
+        .eq("status", "active")
+        .neq("id", productData.id)
+        .limit(4);
+
+      setRelatedProducts(relatedData || []);
       setLoading(false);
     } catch (error) {
       console.error("Load product detail error:", error);
       alert("Failed to load product detail.");
       setLoading(false);
     }
+  }
+
+  async function toggleWishlist() {
+    if (!product) return;
+
+    if (!user) {
+      alert("Please login before using wishlist.");
+      window.location.href = "/";
+      return;
+    }
+
+    setWishlistLoading(true);
+
+    if (wishlistRow) {
+      const { error } = await supabase
+        .from("wishlists")
+        .delete()
+        .eq("id", wishlistRow.id)
+        .eq("user_id", user.id);
+
+      if (error) {
+        alert(error.message);
+        setWishlistLoading(false);
+        return;
+      }
+
+      setWishlistRow(null);
+      setWishlistLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("wishlists")
+      .insert({
+        user_id: user.id,
+        product_id: product.id,
+      })
+      .select("id,user_id,product_id")
+      .single();
+
+    if (error) {
+      alert(error.message);
+      setWishlistLoading(false);
+      return;
+    }
+
+    setWishlistRow(data);
+    setWishlistLoading(false);
   }
 
   async function handleBuyNow() {
@@ -178,36 +293,14 @@ export default function ProductDetailPage() {
 
       if (!sessionData.session?.user) {
         alert("Please login before buying.");
-        window.location.href = "/login";
+        window.location.href = "/";
         return;
       }
 
-      const buyer = sessionData.session.user;
-
-      const { data: orderData, error: orderError } = await supabase
-        .from("orders")
-        .insert({
-          buyer_id: buyer.id,
-          seller_id: product.seller_id,
-          product_id: product.id,
-          quantity: 1,
-          total_price: Number(product.price || 0),
-          status: "pending",
-        })
-        .select("*")
-        .single();
-
-      if (orderError) {
-        alert(`Order Error: ${orderError.message}`);
-        setBuying(false);
-        return;
-      }
-
-      alert("Order created successfully.");
-      window.location.href = `/order/${orderData.id}`;
+      window.location.href = `/checkout/${product.id}`;
     } catch (error) {
       console.error("Buy product error:", error);
-      alert("Failed to create order.");
+      alert("Failed to continue checkout.");
       setBuying(false);
     }
   }
@@ -232,7 +325,7 @@ export default function ProductDetailPage() {
 
           <Link
             href="/"
-            className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black hover:bg-cyan-300"
+            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
           >
             Back to Home
           </Link>
@@ -244,41 +337,44 @@ export default function ProductDetailPage() {
   const isAvailable =
     product.status === "active" && Number(product.stock || 0) > 0;
 
+  const isWishlisted = Boolean(wishlistRow);
+
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <nav className="sticky top-0 z-50 flex h-20 items-center justify-between border-b border-white/10 bg-[#020617]/90 px-8 backdrop-blur-xl">
-        <Link href="/" className="flex items-center">
-          <img
-            src="/logo.png?v=2"
-            alt="ComePlayers"
-            className="h-16 w-auto object-contain md:h-20"
-          />
-        </Link>
-
-        <Link
-          href="/"
-          className="rounded-full border border-cyan-400 px-5 py-2 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-        >
-          Back to Home
-        </Link>
-      </nav>
-
       <section className="relative overflow-hidden border-b border-white/10 px-8 py-10">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
 
-        <div className="relative z-10 mx-auto max-w-7xl">
-          <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-            {product.category || "Marketplace"} / {gameDisplayName}
-          </p>
+        <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-6 lg:flex-row lg:items-start">
+          <div>
+            <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              {categoryDisplayName} / {gameDisplayName}
+            </p>
 
-          <h1 className="mt-5 max-w-5xl text-4xl font-black md:text-6xl">
-            {product.title}
-          </h1>
+            <h1 className="mt-5 max-w-5xl text-4xl font-black md:text-6xl">
+              {product.title}
+            </h1>
 
-          <p className="mt-4 text-gray-400">
-            Listed by {sellerDisplayName} · Created{" "}
-            {formatDate(product.created_at)}
-          </p>
+            <p className="mt-4 text-gray-400">
+              Listed by {sellerDisplayName} · Created{" "}
+              {formatDate(product.created_at)}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/wishlist"
+              className="w-fit rounded-full border border-pink-400 px-5 py-2 font-bold text-pink-300 transition hover:bg-pink-400 hover:text-black"
+            >
+              Wishlist
+            </Link>
+
+            <Link
+              href={backToGameUrl}
+              className="w-fit rounded-full border border-cyan-400 px-5 py-2 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+            >
+              Back to Game
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -290,6 +386,12 @@ export default function ProductDetailPage() {
                 <img
                   src={product.image_url}
                   alt={product.title}
+                  className="h-full w-full object-cover"
+                />
+              ) : gameMaster?.image_url ? (
+                <img
+                  src={gameMaster.image_url}
+                  alt={gameMaster.name}
                   className="h-full w-full object-cover"
                 />
               ) : (
@@ -315,7 +417,7 @@ export default function ProductDetailPage() {
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
                 <p className="text-sm text-gray-400">Category</p>
-                <p className="mt-1 font-black">{product.category || "-"}</p>
+                <p className="mt-1 font-black">{categoryDisplayName}</p>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
@@ -411,7 +513,23 @@ export default function ProductDetailPage() {
               disabled={!isAvailable || buying}
               className="mt-6 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {buying ? "Creating Order..." : "Buy Now"}
+              {buying ? "Opening Checkout..." : "Buy Now"}
+            </button>
+
+            <button
+              onClick={toggleWishlist}
+              disabled={wishlistLoading}
+              className={`mt-4 w-full rounded-2xl border py-4 text-lg font-black transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                isWishlisted
+                  ? "border-pink-400 bg-pink-400 text-black hover:bg-pink-300"
+                  : "border-pink-400 text-pink-300 hover:bg-pink-400 hover:text-black"
+              }`}
+            >
+              {wishlistLoading
+                ? "Updating Wishlist..."
+                : isWishlisted
+                ? "♥ Remove from Wishlist"
+                : "♡ Add to Wishlist"}
             </button>
 
             <p className="mt-4 text-center text-sm text-gray-400">

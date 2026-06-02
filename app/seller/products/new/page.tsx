@@ -21,13 +21,22 @@ type Category = {
   icon: string | null;
 };
 
-type GameCategory = {
+type GameMaster = {
   id: number;
-  category_id: number;
   name: string;
   slug: string;
-  image_url: string | null;
+  first_letter: string | null;
   status: string | null;
+  image_url: string | null;
+};
+
+type CategoryGameMasterRow = {
+  id: number;
+  category_id: number;
+  game_master_id: number;
+  status: string | null;
+  sort_order: number | null;
+  game_master: GameMaster | null;
 };
 
 function createSlug(value: string) {
@@ -39,14 +48,15 @@ function createSlug(value: string) {
     .replace(/-+/g, "-");
 }
 
-export default function ProductUploadV2Page() {
+export default function ProductUploadV3Page() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const [categories, setCategories] = useState<Category[]>([]);
-  const [gameCategories, setGameCategories] = useState<GameCategory[]>([]);
+  const [games, setGames] = useState<GameMaster[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [gameLoading, setGameLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [title, setTitle] = useState("");
@@ -56,26 +66,22 @@ export default function ProductUploadV2Page() {
   const [imageUrl, setImageUrl] = useState("");
 
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
-  const [selectedGameCategoryId, setSelectedGameCategoryId] = useState("");
+  const [selectedGameId, setSelectedGameId] = useState("");
 
   const selectedCategory = categories.find(
     (category) => String(category.id) === selectedCategoryId
   );
 
-  const selectedGameCategory = gameCategories.find(
-    (game) => String(game.id) === selectedGameCategoryId
-  );
+  const selectedGame = games.find((game) => String(game.id) === selectedGameId);
 
   const productSlug = useMemo(() => {
     const baseSlug = createSlug(title);
-    const gameSlug = selectedGameCategory?.slug || "game";
+    const gameSlug = selectedGame?.slug || "game";
 
-    if (!baseSlug) {
-      return "";
-    }
+    if (!baseSlug) return "";
 
     return `${gameSlug}-${baseSlug}`;
-  }, [title, selectedGameCategory]);
+  }, [title, selectedGame]);
 
   useEffect(() => {
     initializePage();
@@ -83,7 +89,7 @@ export default function ProductUploadV2Page() {
 
   useEffect(() => {
     if (selectedCategoryId) {
-      loadGameCategories(Number(selectedCategoryId));
+      loadMappedGames(Number(selectedCategoryId));
     }
   }, [selectedCategoryId]);
 
@@ -111,7 +117,7 @@ export default function ProductUploadV2Page() {
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
         .select("*")
-        .eq("email", currentUser.email)
+        .eq("id", currentUser.id)
         .maybeSingle();
 
       if (profileError) {
@@ -160,27 +166,55 @@ export default function ProductUploadV2Page() {
     }
   }
 
-  async function loadGameCategories(categoryId: number) {
+  async function loadMappedGames(categoryId: number) {
+    setGameLoading(true);
+    setGames([]);
+    setSelectedGameId("");
+
     const { data, error } = await supabase
-      .from("game_categories")
-      .select("*")
+      .from("category_game_master")
+      .select(
+        `
+        id,
+        category_id,
+        game_master_id,
+        status,
+        sort_order,
+        game_master:game_master_id (
+          id,
+          name,
+          slug,
+          first_letter,
+          status,
+          image_url
+        )
+      `
+      )
       .eq("category_id", categoryId)
       .eq("status", "active")
-      .order("name", { ascending: true });
+      .order("sort_order", { ascending: true });
 
     if (error) {
       alert(error.message);
+      setGameLoading(false);
       return;
     }
 
-    const activeGames = data || [];
-    setGameCategories(activeGames);
+    const rows = (data || []) as unknown as CategoryGameMasterRow[];
 
-    if (activeGames.length > 0) {
-      setSelectedGameCategoryId(String(activeGames[0].id));
-    } else {
-      setSelectedGameCategoryId("");
+    const mappedGames = rows
+      .map((row) => row.game_master)
+      .filter((game): game is GameMaster => Boolean(game))
+      .filter((game) => game.status === "active")
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    setGames(mappedGames);
+
+    if (mappedGames.length > 0) {
+      setSelectedGameId(String(mappedGames[0].id));
     }
+
+    setGameLoading(false);
   }
 
   async function submitProduct(event: React.FormEvent) {
@@ -211,7 +245,7 @@ export default function ProductUploadV2Page() {
       return;
     }
 
-    if (!selectedGameCategory) {
+    if (!selectedGame) {
       alert("Please select a game.");
       return;
     }
@@ -223,6 +257,13 @@ export default function ProductUploadV2Page() {
       return;
     }
 
+    const parsedPrice = Number(price);
+
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      alert("Price must be greater than 0.");
+      return;
+    }
+
     setSubmitting(true);
 
     const sellerDisplayName =
@@ -231,20 +272,20 @@ export default function ProductUploadV2Page() {
     const { error } = await supabase.from("products").insert({
       title: title.trim(),
       description: description.trim(),
-      price: price.trim(),
+      price: parsedPrice,
       stock: parsedStock,
 
       category: selectedCategory.name,
       category_id: selectedCategory.id,
 
-      game_name: selectedGameCategory.name,
-      game_category_id: selectedGameCategory.id,
+      game_name: selectedGame.name,
+      game_category_id: selectedGame.id,
 
       seller: sellerDisplayName,
       seller_id: profile.id,
       seller_name: sellerDisplayName,
 
-      image_url: imageUrl.trim() || null,
+      image_url: imageUrl.trim() || selectedGame.image_url || null,
       slug: productSlug || createSlug(title),
 
       status: "active",
@@ -257,7 +298,7 @@ export default function ProductUploadV2Page() {
     }
 
     alert("Product created successfully.");
-    window.location.href = "/seller/products";
+    window.location.href = `/categories/${selectedCategory.slug}/${selectedGame.slug}-${selectedCategory.slug}`;
   }
 
   if (loading) {
@@ -272,49 +313,30 @@ export default function ProductUploadV2Page() {
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <nav className="sticky top-0 z-50 flex h-20 items-center justify-between border-b border-white/10 bg-[#020617]/90 px-8 backdrop-blur-xl">
-        <div className="flex items-center gap-5">
-          <Link href="/" className="flex items-center">
-            <img
-              src="/logo.png?v=2"
-              alt="ComePlayers"
-              className="h-16 w-auto object-contain md:h-20"
-            />
-          </Link>
-
-          <div className="hidden border-l border-white/10 pl-5 lg:block">
-            <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-gray-400">
-              Seller Center
-            </p>
-            <p className="bg-gradient-to-r from-cyan-300 to-blue-500 bg-clip-text text-lg font-black text-transparent">
-              Product Upload V2
-            </p>
-          </div>
-        </div>
-
-        <Link
-          href="/seller"
-          className="rounded-full border border-cyan-400 px-5 py-2 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-        >
-          Back to Dashboard
-        </Link>
-      </nav>
-
       <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
 
-        <div className="relative z-10">
-          <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-            Category → Game → Product
-          </p>
+        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
+          <div>
+            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              Product Upload V3
+            </p>
 
-          <h1 className="text-5xl font-black md:text-7xl">
-            Create Product Listing
-          </h1>
+            <h1 className="text-5xl font-black md:text-7xl">
+              Create Product Listing
+            </h1>
 
-          <p className="mt-5 max-w-2xl text-gray-300">
-            Add a product to the correct marketplace category and game page.
-          </p>
+            <p className="mt-5 max-w-2xl text-gray-300">
+              Select category and game from ComePlayers Game Master catalog.
+            </p>
+          </div>
+
+          <Link
+            href="/seller/products"
+            className="inline-flex h-12 shrink-0 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+          >
+            Back to Products
+          </Link>
         </div>
       </section>
 
@@ -334,7 +356,7 @@ export default function ProductUploadV2Page() {
               <select
                 value={selectedCategoryId}
                 onChange={(event) => setSelectedCategoryId(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400"
               >
                 {categories.map((category) => (
                   <option key={category.id} value={category.id}>
@@ -351,16 +373,17 @@ export default function ProductUploadV2Page() {
               </label>
 
               <select
-                value={selectedGameCategoryId}
-                onChange={(event) =>
-                  setSelectedGameCategoryId(event.target.value)
-                }
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
+                value={selectedGameId}
+                onChange={(event) => setSelectedGameId(event.target.value)}
+                disabled={gameLoading || games.length === 0}
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400 disabled:opacity-60"
               >
-                {gameCategories.length === 0 ? (
-                  <option value="">No games available</option>
+                {gameLoading ? (
+                  <option value="">Loading games...</option>
+                ) : games.length === 0 ? (
+                  <option value="">No games mapped to this category</option>
                 ) : (
-                  gameCategories.map((game) => (
+                  games.map((game) => (
                     <option key={game.id} value={game.id}>
                       {game.name}
                     </option>
@@ -379,8 +402,8 @@ export default function ProductUploadV2Page() {
               <input
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder="Example: AR60 Genshin Account"
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
+                placeholder="Example: 1000 Gold / Premium Account / Top Up"
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
               />
             </div>
 
@@ -393,7 +416,7 @@ export default function ProductUploadV2Page() {
                 value={price}
                 onChange={(event) => setPrice(event.target.value)}
                 placeholder="Example: 50000"
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
               />
             </div>
           </div>
@@ -409,7 +432,7 @@ export default function ProductUploadV2Page() {
                 min="1"
                 value={stock}
                 onChange={(event) => setStock(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400"
               />
             </div>
 
@@ -422,7 +445,7 @@ export default function ProductUploadV2Page() {
                 value={imageUrl}
                 onChange={(event) => setImageUrl(event.target.value)}
                 placeholder="https://example.com/product-image.jpg"
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
               />
             </div>
           </div>
@@ -437,7 +460,7 @@ export default function ProductUploadV2Page() {
               onChange={(event) => setDescription(event.target.value)}
               placeholder="Describe product details, delivery process, requirements, and important notes."
               rows={8}
-              className="w-full resize-none rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
+              className="w-full resize-none rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
             />
           </div>
 
@@ -445,14 +468,21 @@ export default function ProductUploadV2Page() {
             <h3 className="font-black text-yellow-300">Listing Notice</h3>
 
             <p className="mt-3 text-sm text-gray-300">
-              Your product will appear under the selected category and game page.
-              Make sure the title, price, and description are accurate.
+              This product will be listed under{" "}
+              <span className="font-black text-cyan-300">
+                {selectedCategory?.name || "Category"}
+              </span>{" "}
+              and{" "}
+              <span className="font-black text-cyan-300">
+                {selectedGame?.name || "Game"}
+              </span>
+              .
             </p>
           </div>
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || games.length === 0}
             className="mt-8 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting ? "Creating Product..." : "Create Product"}
@@ -464,21 +494,21 @@ export default function ProductUploadV2Page() {
 
           <div className="mt-7 overflow-hidden rounded-3xl border border-white/10 bg-black/30">
             <div className="flex h-56 items-center justify-center bg-black">
-              {imageUrl ? (
+              {imageUrl || selectedGame?.image_url ? (
                 <img
-                  src={imageUrl}
+                  src={imageUrl || selectedGame?.image_url || ""}
                   alt={title || "Product preview"}
                   className="h-full w-full object-cover"
                 />
               ) : (
-                <p className="text-gray-500">No Image</p>
+                <p className="text-6xl">🎮</p>
               )}
             </div>
 
             <div className="p-5">
               <p className="text-xs font-bold text-cyan-300">
                 {selectedCategory?.name || "Category"} /{" "}
-                {selectedGameCategory?.name || "Game"}
+                {selectedGame?.name || "Game"}
               </p>
 
               <h3 className="mt-2 text-2xl font-black">
@@ -494,7 +524,7 @@ export default function ProductUploadV2Page() {
               </p>
 
               <p className="mt-5 text-3xl font-black text-cyan-300">
-                Rp {price || "0"}
+                Rp {Number(price || 0).toLocaleString("id-ID")}
               </p>
 
               <p className="mt-2 text-sm text-gray-400">
@@ -510,6 +540,7 @@ export default function ProductUploadV2Page() {
 
           <div className="mt-7 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
             <h3 className="font-black text-cyan-300">Product URL Slug</h3>
+
             <p className="mt-2 break-words text-sm text-gray-300">
               {productSlug || "product-slug-preview"}
             </p>
@@ -517,9 +548,11 @@ export default function ProductUploadV2Page() {
 
           <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-5">
             <h3 className="font-black">Listing Path</h3>
+
             <p className="mt-2 break-words text-sm text-gray-400">
               /categories/{selectedCategory?.slug || "category"}/
-              {selectedGameCategory?.slug || "game"}
+              {selectedGame?.slug || "game"}-
+              {selectedCategory?.slug || "category"}
             </p>
           </div>
         </aside>

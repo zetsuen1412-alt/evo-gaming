@@ -1,650 +1,700 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import type { User } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase";
+import { createNotification } from "@/lib/createNotification";
 
-type MethodGroup = "wallet" | "bank" | "card" | "international" | "crypto";
+type Order = {
+  id: number;
+  buyer_id: string | null;
+  buyer: string | null;
+  seller_id: string | null;
+  product_id: number | null;
 
-type PaymentMethod = {
-  id: string;
-  name: string;
-  group: MethodGroup;
-  label: string;
-  detail: string;
-  fee: string;
-  logo: string;
-  accent: string;
+  product: string | null;
+  price: string | number | null;
+  quantity: number | null;
+  total_price: string | number | null;
+
+  category_id: number | null;
+  category_name: string | null;
+  game_master_id: number | null;
+  game_name: string | null;
+
+  status: string | null;
+  payment_proof: string | null;
+  payment_image: string | null;
+  created_at: string;
 };
 
-const paymentMethods: PaymentMethod[] = [
-  {
-    id: "qris",
-    name: "QRIS",
-    group: "wallet",
-    label: "Instant QR Payment",
-    detail: "Scan QR code to pay instantly.",
-    fee: "+ $1.00 service fee",
-    logo: "QR",
-    accent: "from-cyan-400 to-blue-500",
-  },
-  {
-    id: "dana",
-    name: "DANA",
-    group: "wallet",
-    label: "E-Wallet",
-    detail: "Transfer to DANA account.",
-    fee: "+ $0.50 service fee",
-    logo: "D",
-    accent: "from-blue-400 to-cyan-400",
-  },
-  {
-    id: "ovo",
-    name: "OVO",
-    group: "wallet",
-    label: "E-Wallet",
-    detail: "Transfer to OVO account.",
-    fee: "+ $0.50 service fee",
-    logo: "O",
-    accent: "from-purple-500 to-violet-300",
-  },
-  {
-    id: "gopay",
-    name: "GoPay",
-    group: "wallet",
-    label: "E-Wallet",
-    detail: "Transfer to GoPay account.",
-    fee: "+ $0.50 service fee",
-    logo: "G",
-    accent: "from-emerald-400 to-cyan-400",
-  },
-  {
-    id: "shopeepay",
-    name: "ShopeePay",
-    group: "wallet",
-    label: "E-Wallet",
-    detail: "Transfer to ShopeePay account.",
-    fee: "+ $0.50 service fee",
-    logo: "S",
-    accent: "from-orange-500 to-red-400",
-  },
-  {
-    id: "linkaja",
-    name: "LinkAja",
-    group: "wallet",
-    label: "E-Wallet",
-    detail: "Transfer to LinkAja account.",
-    fee: "+ $0.50 service fee",
-    logo: "LA",
-    accent: "from-red-500 to-pink-400",
-  },
+type Product = {
+  id: number;
+  title: string;
+  image_url: string | null;
+  seller_name: string | null;
+};
 
-  {
-    id: "bca",
-    name: "BCA",
-    group: "bank",
-    label: "Bank Central Asia",
-    detail: "Transfer via BCA bank.",
-    fee: "+ $0.75 service fee",
-    logo: "BCA",
-    accent: "from-blue-500 to-cyan-400",
-  },
-  {
-    id: "mandiri",
-    name: "Mandiri",
-    group: "bank",
-    label: "Bank Mandiri",
-    detail: "Transfer via Mandiri bank.",
-    fee: "+ $0.75 service fee",
-    logo: "M",
-    accent: "from-yellow-400 to-blue-500",
-  },
-  {
-    id: "bri",
-    name: "BRI",
-    group: "bank",
-    label: "Bank Rakyat Indonesia",
-    detail: "Transfer via BRI bank.",
-    fee: "+ $0.75 service fee",
-    logo: "BRI",
-    accent: "from-blue-600 to-sky-400",
-  },
-  {
-    id: "bni",
-    name: "BNI",
-    group: "bank",
-    label: "Bank Negara Indonesia",
-    detail: "Transfer via BNI bank.",
-    fee: "+ $0.75 service fee",
-    logo: "BNI",
-    accent: "from-orange-500 to-teal-400",
-  },
-  {
-    id: "cimb",
-    name: "CIMB Niaga",
-    group: "bank",
-    label: "Bank Transfer",
-    detail: "Transfer via CIMB Niaga bank.",
-    fee: "+ $0.75 service fee",
-    logo: "CIMB",
-    accent: "from-red-500 to-red-300",
-  },
-  {
-    id: "permata",
-    name: "PermataBank",
-    group: "bank",
-    label: "Bank Transfer",
-    detail: "Transfer via PermataBank.",
-    fee: "+ $0.75 service fee",
-    logo: "PB",
-    accent: "from-red-500 to-green-400",
-  },
-  {
-    id: "danamon",
-    name: "Danamon",
-    group: "bank",
-    label: "Bank Transfer",
-    detail: "Transfer via Danamon bank.",
-    fee: "+ $0.75 service fee",
-    logo: "DN",
-    accent: "from-orange-500 to-yellow-300",
-  },
-  {
-    id: "maybank",
-    name: "Maybank",
-    group: "bank",
-    label: "Bank Transfer",
-    detail: "Transfer via Maybank Indonesia.",
-    fee: "+ $0.75 service fee",
-    logo: "MY",
-    accent: "from-yellow-400 to-yellow-600",
-  },
-  {
-    id: "bsi",
-    name: "BSI",
-    group: "bank",
-    label: "Bank Syariah Indonesia",
-    detail: "Transfer via BSI bank.",
-    fee: "+ $0.75 service fee",
-    logo: "BSI",
-    accent: "from-cyan-400 to-emerald-400",
-  },
-  {
-    id: "panin",
-    name: "Panin Bank",
-    group: "bank",
-    label: "Bank Transfer",
-    detail: "Transfer via Panin Bank.",
-    fee: "+ $0.75 service fee",
-    logo: "PN",
-    accent: "from-blue-500 to-blue-300",
-  },
-  {
-    id: "uob",
-    name: "UOB",
-    group: "bank",
-    label: "Bank Transfer",
-    detail: "Transfer via UOB bank.",
-    fee: "+ $0.75 service fee",
-    logo: "UOB",
-    accent: "from-red-500 to-red-300",
-  },
-  {
-    id: "ocbc",
-    name: "OCBC NISP",
-    group: "bank",
-    label: "Bank Transfer",
-    detail: "Transfer via OCBC NISP.",
-    fee: "+ $0.75 service fee",
-    logo: "OCBC",
-    accent: "from-red-600 to-red-400",
-  },
+type GameMaster = {
+  id: number;
+  name: string;
+  slug: string;
+  image_url: string | null;
+};
 
-  {
-    id: "visa",
-    name: "Visa",
-    group: "card",
-    label: "Credit / Debit Card",
-    detail: "Pay securely with Visa card.",
-    fee: "+ $1.25 service fee",
-    logo: "VISA",
-    accent: "from-blue-600 to-cyan-400",
-  },
-  {
-    id: "mastercard",
-    name: "Mastercard",
-    group: "card",
-    label: "Credit / Debit Card",
-    detail: "Pay securely with Mastercard.",
-    fee: "+ $1.25 service fee",
-    logo: "MC",
-    accent: "from-red-500 to-orange-400",
-  },
-  {
-    id: "jcb",
-    name: "JCB",
-    group: "card",
-    label: "Credit / Debit Card",
-    detail: "Pay securely with JCB card.",
-    fee: "+ $1.25 service fee",
-    logo: "JCB",
-    accent: "from-green-400 to-blue-500",
-  },
-  {
-    id: "amex",
-    name: "American Express",
-    group: "card",
-    label: "Credit / Debit Card",
-    detail: "Pay securely with AMEX card.",
-    fee: "+ $1.25 service fee",
-    logo: "AMEX",
-    accent: "from-sky-400 to-blue-700",
-  },
+function formatPrice(value: string | number | null) {
+  const price = Number(value || 0);
 
-  {
-    id: "paypal",
-    name: "PayPal",
-    group: "international",
-    label: "Global Payment",
-    detail: "Pay using your PayPal account.",
-    fee: "+ $1.50 service fee",
-    logo: "PP",
-    accent: "from-blue-500 to-cyan-300",
-  },
-  {
-    id: "stripe",
-    name: "Stripe",
-    group: "international",
-    label: "Global Payment",
-    detail: "International card gateway.",
-    fee: "+ $1.50 service fee",
-    logo: "ST",
-    accent: "from-indigo-500 to-purple-400",
-  },
-  {
-    id: "crypto",
-    name: "Crypto",
-    group: "crypto",
-    label: "Cryptocurrency",
-    detail: "Pay with supported cryptocurrency.",
-    fee: "+ $2.00 service fee",
-    logo: "₿",
-    accent: "from-yellow-400 to-orange-500",
-  },
-];
+  if (!Number.isFinite(price)) {
+    return "Rp 0";
+  }
 
-const tabs: { id: "all" | MethodGroup; name: string; subtitle: string; icon: string }[] = [
-  { id: "all", name: "All Methods", subtitle: "All payment options", icon: "▦" },
-  { id: "wallet", name: "Digital Wallet", subtitle: "E-wallet and QR", icon: "▱" },
-  { id: "bank", name: "Bank Transfer", subtitle: "Indonesian banks", icon: "▤" },
-  { id: "card", name: "Cards", subtitle: "Credit / debit cards", icon: "▭" },
-  { id: "international", name: "International", subtitle: "Global payment", icon: "◎" },
-  { id: "crypto", name: "Crypto", subtitle: "Cryptocurrency", icon: "₿" },
-];
+  return `Rp ${price.toLocaleString("id-ID")}`;
+}
 
-export default function PaymentPage() {
-  const [activeTab, setActiveTab] = useState<"all" | MethodGroup>("all");
-  const [selectedMethodId, setSelectedMethodId] = useState("qris");
-  const [promoOpen, setPromoOpen] = useState(false);
+function normalizeStatus(status: string | null) {
+  if (status === "pending") return "Pending Payment";
+  if (status === "pending_payment") return "Pending Payment";
+  if (status === "Menunggu Pembayaran") return "Pending Payment";
+  if (status === "Menunggu Cek Pembayaran") return "Payment Verification";
+  if (status === "Diproses") return "Processing";
+  if (status === "Selesai") return "Completed";
+  if (status === "Dibatalkan") return "Cancelled";
+  return status || "Pending Payment";
+}
 
-  const selectedMethod =
-    paymentMethods.find((method) => method.id === selectedMethodId) ||
-    paymentMethods[0];
+function getStatusClass(status: string | null) {
+  const normalizedStatus = normalizeStatus(status);
 
-  const visibleMethods = useMemo(() => {
-    if (activeTab === "all") return paymentMethods;
-    return paymentMethods.filter((method) => method.group === activeTab);
-  }, [activeTab]);
+  if (normalizedStatus === "Payment Verification") {
+    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
+  }
 
-  const groupedMethods = useMemo(() => {
-    return {
-      wallet: visibleMethods.filter((method) => method.group === "wallet"),
-      bank: visibleMethods.filter((method) => method.group === "bank"),
-      card: visibleMethods.filter((method) => method.group === "card"),
-      international: visibleMethods.filter(
-        (method) => method.group === "international"
-      ),
-      crypto: visibleMethods.filter((method) => method.group === "crypto"),
+  if (normalizedStatus === "Processing") {
+    return "border-blue-400/20 bg-blue-400/10 text-blue-300";
+  }
+
+  if (normalizedStatus === "Completed") {
+    return "border-green-400/20 bg-green-400/10 text-green-300";
+  }
+
+  if (normalizedStatus === "Cancelled") {
+    return "border-red-400/20 bg-red-400/10 text-red-300";
+  }
+
+  return "border-cyan-400/20 bg-cyan-400/10 text-cyan-300";
+}
+
+function createSafeFileName(fileName: string) {
+  const extension = fileName.split(".").pop() || "jpg";
+
+  const baseName = fileName
+    .replace(`.${extension}`, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `${baseName || "payment-proof"}.${extension}`;
+}
+
+export default function PaymentUploadV3NotificationPage() {
+  const searchParams = useSearchParams();
+  const orderId = searchParams.get("order");
+
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  const [order, setOrder] = useState<Order | null>(null);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [gameMaster, setGameMaster] = useState<GameMaster | null>(null);
+
+  const [paymentMethod, setPaymentMethod] = useState("Bank Transfer");
+  const [senderName, setSenderName] = useState("");
+  const [senderAccount, setSenderAccount] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentNote, setPaymentNote] = useState("");
+
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState("");
+  const [uploadedProofUrl, setUploadedProofUrl] = useState("");
+
+  const normalizedStatus = useMemo(() => {
+    return normalizeStatus(order?.status || null);
+  }, [order]);
+
+  const totalAmount = useMemo(() => {
+    return Number(order?.total_price || order?.price || 0);
+  }, [order]);
+
+  const displayImage = useMemo(() => {
+    return product?.image_url || gameMaster?.image_url || null;
+  }, [product, gameMaster]);
+
+  useEffect(() => {
+    initializePage();
+  }, [orderId]);
+
+  useEffect(() => {
+    return () => {
+      if (proofPreviewUrl) {
+        URL.revokeObjectURL(proofPreviewUrl);
+      }
     };
-  }, [visibleMethods]);
+  }, [proofPreviewUrl]);
 
-  const itemPrice = 24.99;
-  const platformFee = 1.5;
-  const promoDiscount = promoOpen ? 2.5 : 0;
-  const total = itemPrice + platformFee - promoDiscount;
+  async function initializePage() {
+    setLoading(true);
 
-  function MethodCard({ method }: { method: PaymentMethod }) {
-    const isSelected = selectedMethodId === method.id;
+    const { data: userData, error: userError } = await supabase.auth.getUser();
 
+    if (userError) {
+      alert(userError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (!userData.user) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+
+    setUser(userData.user);
+
+    if (!orderId) {
+      setOrder(null);
+      setLoading(false);
+      return;
+    }
+
+    const { data: orderData, error: orderError } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", Number(orderId))
+      .maybeSingle();
+
+    if (orderError) {
+      alert(orderError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (!orderData) {
+      setOrder(null);
+      setLoading(false);
+      return;
+    }
+
+    if (
+      orderData.buyer_id &&
+      orderData.buyer_id !== userData.user.id &&
+      orderData.buyer !== userData.user.email
+    ) {
+      alert("You are not allowed to access this payment page.");
+      window.location.href = "/my-orders";
+      return;
+    }
+
+    setOrder(orderData);
+    setPaymentAmount(String(orderData.total_price || orderData.price || ""));
+
+    if (orderData.payment_image) {
+      setUploadedProofUrl(orderData.payment_image);
+    }
+
+    if (orderData.product_id) {
+      const { data: productData } = await supabase
+        .from("products")
+        .select("id,title,image_url,seller_name")
+        .eq("id", orderData.product_id)
+        .maybeSingle();
+
+      setProduct(productData || null);
+    }
+
+    if (orderData.game_master_id) {
+      const { data: gameData } = await supabase
+        .from("game_master")
+        .select("id,name,slug,image_url")
+        .eq("id", orderData.game_master_id)
+        .maybeSingle();
+
+      setGameMaster(gameData || null);
+    }
+
+    setLoading(false);
+  }
+
+  function handleProofFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] || null;
+
+    if (!file) {
+      setProofFile(null);
+      setProofPreviewUrl("");
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      alert("Please upload an image file.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Payment proof image must be less than 5MB.");
+      event.target.value = "";
+      return;
+    }
+
+    if (proofPreviewUrl) {
+      URL.revokeObjectURL(proofPreviewUrl);
+    }
+
+    setProofFile(file);
+    setProofPreviewUrl(URL.createObjectURL(file));
+  }
+
+  async function uploadPaymentProof(
+    file: File,
+    currentUser: User,
+    currentOrder: Order
+  ) {
+    const safeFileName = createSafeFileName(file.name);
+
+    const filePath = `${currentUser.id}/order-${
+      currentOrder.id
+    }/${Date.now()}-${safeFileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("payment-proofs")
+      .upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(uploadError.message);
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from("payment-proofs")
+      .getPublicUrl(filePath);
+
+    return publicUrlData.publicUrl;
+  }
+
+  async function submitPaymentProof(event: React.FormEvent) {
+    event.preventDefault();
+
+    if (!user) {
+      alert("User not found. Please login again.");
+      return;
+    }
+
+    if (!order) {
+      alert("Order not found.");
+      return;
+    }
+
+    if (!paymentMethod.trim()) {
+      alert("Please select payment method.");
+      return;
+    }
+
+    if (!senderName.trim()) {
+      alert("Please enter sender name.");
+      return;
+    }
+
+    if (!paymentAmount.trim()) {
+      alert("Please enter payment amount.");
+      return;
+    }
+
+    if (!proofFile && !uploadedProofUrl) {
+      alert("Please upload payment proof image.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+
+      let finalPaymentImageUrl = uploadedProofUrl;
+
+      if (proofFile) {
+        finalPaymentImageUrl = await uploadPaymentProof(proofFile, user, order);
+      }
+
+      const paymentProofText = [
+        `Payment Method: ${paymentMethod}`,
+        `Sender Name: ${senderName.trim()}`,
+        `Sender Account: ${senderAccount.trim() || "-"}`,
+        `Payment Amount: ${paymentAmount.trim()}`,
+        `Buyer Note: ${paymentNote.trim() || "-"}`,
+      ].join("\n");
+
+      const { error } = await supabase
+        .from("orders")
+        .update({
+          status: "Payment Verification",
+          payment_proof: paymentProofText,
+          payment_image: finalPaymentImageUrl,
+        })
+        .eq("id", order.id);
+
+      if (error) {
+        alert(`Payment Update Error: ${error.message}`);
+        setSubmitting(false);
+        return;
+      }
+
+      await createNotification({
+        userId: order.seller_id,
+        type: "payment",
+        title: "Payment Proof Submitted",
+        message: `${user.email || "Buyer"} uploaded payment proof for order #${
+          order.id
+        } (${order.product || "Product"}). Please verify the payment.`,
+        linkUrl: `/order/${order.id}`,
+      });
+
+      alert(
+        "Payment proof uploaded successfully. Waiting for seller/admin verification."
+      );
+
+      window.location.href = "/my-orders";
+    } catch (error) {
+      console.error("Payment upload error:", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to upload payment proof."
+      );
+      setSubmitting(false);
+    }
+  }
+
+  if (loading) {
     return (
-      <button
-        type="button"
-        onClick={() => setSelectedMethodId(method.id)}
-        className={`group relative rounded-2xl border p-4 text-left transition-all duration-300 ${
-          isSelected
-            ? "border-cyan-400 bg-cyan-400/10 shadow-lg shadow-cyan-500/20"
-            : "border-white/10 bg-white/[0.035] hover:-translate-y-1 hover:border-cyan-400/60 hover:bg-white/[0.065]"
-        }`}
-      >
-        <div className="flex items-start gap-4">
-          <span
-            className={`mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-              isSelected ? "border-cyan-300" : "border-slate-500"
-            }`}
-          >
-            {isSelected && <span className="h-2 w-2 rounded-full bg-cyan-300" />}
-          </span>
-
-          <div className="min-w-0 flex-1">
-            <div
-              className={`mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${method.accent} text-sm font-black text-white shadow-lg shadow-black/30`}
-            >
-              {method.logo}
-            </div>
-
-            <h3 className="font-black text-white group-hover:text-cyan-300">
-              {method.name}
-            </h3>
-
-            <p className="mt-1 text-xs text-slate-400">{method.label}</p>
-            <p className="mt-2 text-xs text-slate-500">{method.fee}</p>
-          </div>
-        </div>
-      </button>
+      <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
+        <p className="text-xl font-black text-cyan-300">Loading payment...</p>
+      </main>
     );
   }
 
-  function MethodSection({
-    title,
-    methods,
-  }: {
-    title: string;
-    methods: PaymentMethod[];
-  }) {
-    if (methods.length === 0) return null;
-
+  if (!user) {
     return (
-      <div className="mt-7">
-        <div className="mb-3 flex items-center gap-3">
-          <div className="h-px flex-1 bg-white/10" />
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">
-            {title}
+      <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
+        <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
+          <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
+
+          <p className="mt-4 text-gray-400">
+            Please login first to continue payment.
           </p>
-          <div className="h-px flex-1 bg-white/10" />
-        </div>
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {methods.map((method) => (
-            <MethodCard key={method.id} method={method} />
-          ))}
+          <Link
+            href="/"
+            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
+          >
+            Back to Home
+          </Link>
         </div>
-      </div>
+      </main>
     );
   }
+
+  if (!order) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
+        <div className="max-w-lg rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
+          <h1 className="text-3xl font-black text-red-300">Order Not Found</h1>
+
+          <p className="mt-4 text-gray-300">
+            Payment page requires a valid order ID.
+          </p>
+
+          <Link
+            href="/my-orders"
+            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
+          >
+            Open My Orders
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  const canSubmitPayment =
+    normalizedStatus === "Pending Payment" ||
+    normalizedStatus === "Payment Verification";
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_20%_0%,rgba(34,211,238,.16),transparent_28%),radial-gradient(circle_at_80%_20%,rgba(59,130,246,.14),transparent_32%),linear-gradient(180deg,#020617_0%,#050816_55%,#020617_100%)]" />
+      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
 
-      <nav className="sticky top-0 z-50 flex h-20 items-center justify-between border-b border-white/10 bg-[#020617]/90 px-8 backdrop-blur-xl">
-        <div className="flex items-center gap-5">
-          <Link href="/" className="flex items-center">
-            <img
-              src="/logo.png?v=2"
-              alt="ComePlayers"
-              className="h-16 w-auto object-contain md:h-20"
-            />
+        <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
+          <div>
+            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              Payment Upload V3
+            </p>
+
+            <h1 className="text-5xl font-black md:text-7xl">
+              Upload Payment Proof
+            </h1>
+
+            <p className="mt-5 max-w-2xl text-gray-300">
+              Upload your payment screenshot directly to ComePlayers secure
+              payment proof storage.
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <span
+                className={`rounded-full border px-4 py-2 text-sm font-black ${getStatusClass(
+                  order.status
+                )}`}
+              >
+                {normalizedStatus}
+              </span>
+
+              <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm font-bold text-gray-300">
+                Order #{order.id}
+              </span>
+            </div>
+          </div>
+
+          <Link
+            href="/my-orders"
+            className="inline-flex h-12 shrink-0 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+          >
+            My Orders
           </Link>
-
-          <div className="hidden border-l border-white/10 pl-5 lg:block">
-            <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-gray-400">
-              Powered By
-            </p>
-            <p className="bg-gradient-to-r from-cyan-300 to-blue-500 bg-clip-text text-lg font-black text-transparent">
-              EvoGaming
-            </p>
-          </div>
         </div>
+      </section>
 
-        <Link
-          href="/"
-          className="rounded-full border border-cyan-400/70 px-5 py-2 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+      <section className="mx-auto grid max-w-7xl gap-8 px-8 py-10 lg:grid-cols-[1fr_420px]">
+        <form
+          onSubmit={submitPaymentProof}
+          className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30"
         >
-          ← Back to Home
-        </Link>
-      </nav>
+          <h2 className="text-3xl font-black">Payment Confirmation</h2>
 
-      <section className="mx-auto max-w-7xl px-8 py-8">
-        <div className="grid gap-5 border-b border-white/10 pb-8 lg:grid-cols-3">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-cyan-400 bg-cyan-400 text-lg font-black text-black shadow-lg shadow-cyan-500/30">
-              1
-            </div>
-            <div>
-              <p className="font-black uppercase">Payment Method</p>
-              <p className="text-sm text-slate-400">
-                Choose how you want to pay
+          {!canSubmitPayment && (
+            <div className="mt-6 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-5">
+              <h3 className="font-black text-yellow-300">Payment Locked</h3>
+
+              <p className="mt-3 text-sm text-gray-300">
+                This order is already in {normalizedStatus} status. Payment
+                proof can no longer be edited from this page.
               </p>
+            </div>
+          )}
+
+          <div className="mt-7 grid gap-5 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm font-bold text-gray-300">
+                Payment Method
+              </label>
+
+              <select
+                value={paymentMethod}
+                onChange={(event) => setPaymentMethod(event.target.value)}
+                disabled={!canSubmitPayment}
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400 disabled:opacity-60"
+              >
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="DANA">DANA</option>
+                <option value="OVO">OVO</option>
+                <option value="GoPay">GoPay</option>
+                <option value="ShopeePay">ShopeePay</option>
+                <option value="PayPal">PayPal</option>
+                <option value="Crypto">Crypto</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-bold text-gray-300">
+                Payment Amount
+              </label>
+
+              <input
+                value={paymentAmount}
+                onChange={(event) => setPaymentAmount(event.target.value)}
+                disabled={!canSubmitPayment}
+                placeholder="Example: 50000"
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400 disabled:opacity-60"
+              />
             </div>
           </div>
 
-          <div className="flex items-center gap-4 opacity-70">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 text-lg font-black">
-              2
-            </div>
+          <div className="mt-5 grid gap-5 md:grid-cols-2">
             <div>
-              <p className="font-black uppercase">Review Order</p>
-              <p className="text-sm text-slate-400">
-                Review your order details
-              </p>
+              <label className="mb-2 block text-sm font-bold text-gray-300">
+                Sender Name
+              </label>
+
+              <input
+                value={senderName}
+                onChange={(event) => setSenderName(event.target.value)}
+                disabled={!canSubmitPayment}
+                placeholder="Name on bank/e-wallet account"
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400 disabled:opacity-60"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-bold text-gray-300">
+                Sender Account / Wallet ID
+              </label>
+
+              <input
+                value={senderAccount}
+                onChange={(event) => setSenderAccount(event.target.value)}
+                disabled={!canSubmitPayment}
+                placeholder="Account number, phone, wallet ID"
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400 disabled:opacity-60"
+              />
             </div>
           </div>
 
-          <div className="flex items-center gap-4 opacity-70">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-white/10 text-lg font-black">
-              3
-            </div>
-            <div>
-              <p className="font-black uppercase">Payment Gateway</p>
-              <p className="text-sm text-slate-400">
-                Complete your payment
-              </p>
-            </div>
+          <div className="mt-5">
+            <label className="mb-2 block text-sm font-bold text-gray-300">
+              Upload Payment Proof Image
+            </label>
+
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleProofFileChange}
+              disabled={!canSubmitPayment}
+              className="block w-full cursor-pointer rounded-2xl border border-white/10 bg-black px-5 py-4 text-sm text-gray-300 outline-none file:mr-4 file:rounded-full file:border-0 file:bg-cyan-400 file:px-5 file:py-2 file:font-black file:text-black hover:file:bg-cyan-300 disabled:opacity-60"
+            />
+
+            <p className="mt-2 text-xs text-gray-500">
+              Supported: JPG, PNG, WEBP. Max 5MB.
+            </p>
           </div>
-        </div>
 
-        <div className="mt-10 grid gap-8 xl:grid-cols-[1fr_420px]">
-          <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/40">
-            <div className="mb-7">
-              <p className="mb-3 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-black uppercase tracking-widest text-cyan-300">
-                Secure Checkout
-              </p>
-              <h1 className="text-4xl font-black">Choose a payment method</h1>
-              <p className="mt-2 text-slate-400">
-                Select one of the available payment options below.
-              </p>
-            </div>
+          {(proofPreviewUrl || uploadedProofUrl) && (
+            <div className="mt-5 overflow-hidden rounded-2xl border border-cyan-400/20 bg-black/30">
+              <div className="flex max-h-[420px] items-center justify-center bg-black">
+                <img
+                  src={proofPreviewUrl || uploadedProofUrl}
+                  alt="Payment proof preview"
+                  className="max-h-[420px] w-full object-contain"
+                />
+              </div>
 
-            <div className="grid gap-5 lg:grid-cols-[250px_1fr]">
-              <aside className="grid h-fit gap-3">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`rounded-2xl border p-4 text-left transition ${
-                      activeTab === tab.id
-                        ? "border-cyan-400 bg-cyan-400/10 shadow-lg shadow-cyan-500/20"
-                        : "border-white/10 bg-white/[0.03] hover:border-cyan-400/60"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-cyan-300">
-                        {tab.icon}
-                      </div>
-                      <div>
-                        <p className="font-black">{tab.name}</p>
-                        <p className="text-xs text-slate-400">{tab.subtitle}</p>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </aside>
-
-              <div>
-                <MethodSection
-                  title="Digital Wallet"
-                  methods={groupedMethods.wallet}
-                />
-                <MethodSection
-                  title="Indonesian Bank Transfer"
-                  methods={groupedMethods.bank}
-                />
-                <MethodSection
-                  title="Card Payment"
-                  methods={groupedMethods.card}
-                />
-                <MethodSection
-                  title="International Payment"
-                  methods={groupedMethods.international}
-                />
-                <MethodSection title="Crypto" methods={groupedMethods.crypto} />
-
-                <div className="mt-7 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-sm text-slate-300">
-                  ℹ You will be able to review your order details before
-                  proceeding to payment.
-                </div>
+              <div className="p-4">
+                <p className="text-sm font-bold text-cyan-300">
+                  Payment proof preview
+                </p>
               </div>
             </div>
-          </section>
+          )}
 
-          <aside className="h-fit rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/40">
+          <div className="mt-5">
+            <label className="mb-2 block text-sm font-bold text-gray-300">
+              Payment Note
+            </label>
+
+            <textarea
+              value={paymentNote}
+              onChange={(event) => setPaymentNote(event.target.value)}
+              disabled={!canSubmitPayment}
+              placeholder="Write transaction time, bank name, reference number, or additional notes."
+              rows={6}
+              className="w-full resize-none rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400 disabled:opacity-60"
+            />
+          </div>
+
+          <div className="mt-7 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-5">
+            <h3 className="font-black text-yellow-300">Important Notice</h3>
+
+            <p className="mt-3 text-sm leading-6 text-gray-300">
+              Only submit payment proof after sending the exact amount. False
+              payment proof may result in account restriction.
+            </p>
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting || !canSubmitPayment}
+            className="mt-8 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {submitting ? "Uploading Payment..." : "Upload Payment Proof"}
+          </button>
+        </form>
+
+        <aside className="h-fit space-y-6">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
             <h2 className="text-3xl font-black">Order Summary</h2>
 
-            <div className="mt-6 flex gap-4 rounded-2xl border border-white/10 bg-black/30 p-4">
-              <div className="flex h-20 w-20 items-center justify-center rounded-xl bg-cyan-400/10 text-3xl">
-                🎮
+            <div className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-black/30">
+              <div className="flex h-48 items-center justify-center bg-black">
+                {displayImage ? (
+                  <img
+                    src={displayImage}
+                    alt={order.product || "Order product"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="text-6xl">🎮</span>
+                )}
               </div>
 
-              <div className="min-w-0 flex-1">
-                <h3 className="font-black">JUNED</h3>
-                <p className="text-sm text-slate-400">Game Coins</p>
-                <p className="text-sm text-slate-500">Seller: ILHAM</p>
+              <div className="p-5">
+                <p className="text-xs font-black text-cyan-300">
+                  {order.category_name || "Marketplace"} /{" "}
+                  {order.game_name || gameMaster?.name || "Game"}
+                </p>
+
+                <h3 className="mt-2 text-2xl font-black">
+                  {order.product || product?.title || "Unknown Product"}
+                </h3>
+
+                <p className="mt-2 text-sm text-gray-400">
+                  Quantity: {order.quantity || 1}
+                </p>
+
+                <p className="mt-5 text-4xl font-black text-cyan-300">
+                  {formatPrice(totalAmount)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-7">
+            <h2 className="text-2xl font-black">Payment Destination</h2>
+
+            <div className="mt-5 space-y-4 rounded-2xl border border-white/10 bg-black/30 p-5">
+              <div>
+                <p className="text-sm text-gray-400">Bank</p>
+                <p className="mt-1 text-xl font-black">BCA</p>
+              </div>
+
+              <div>
+                <p className="text-sm text-gray-400">Account Number</p>
+                <p className="mt-1 text-xl font-black text-cyan-300">
+                  1234567890
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-gray-400">Account Name</p>
+                <p className="mt-1 font-black">ComePlayers Official</p>
               </div>
             </div>
 
-            <div className="mt-6 grid gap-4 border-b border-white/10 pb-6">
-              <div className="flex justify-between text-slate-300">
-                <span>Subtotal</span>
-                <span className="font-bold text-white">
-                  ${itemPrice.toFixed(2)}
-                </span>
-              </div>
-
-              <div className="flex justify-between text-slate-300">
-                <span>Platform Fee</span>
-                <span className="font-bold text-white">
-                  ${platformFee.toFixed(2)}
-                </span>
-              </div>
-
-              <button
-                onClick={() => setPromoOpen(!promoOpen)}
-                className="flex justify-between text-left text-slate-300"
-              >
-                <span>Promo Code</span>
-                <span
-                  className={`font-bold ${
-                    promoOpen ? "text-emerald-300" : "text-cyan-300"
-                  }`}
-                >
-                  {promoOpen ? "- $2.50" : "Add promo code"}
-                </span>
-              </button>
-            </div>
-
-            <div className="mt-6 flex items-end justify-between">
-              <p className="text-lg font-bold">Total Amount</p>
-              <p className="text-4xl font-black text-cyan-300">
-                ${total.toFixed(2)}
-              </p>
-            </div>
-
-            <div className="mt-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
-              <p className="text-sm text-slate-400">Selected Method</p>
-              <div className="mt-3 flex items-center gap-3">
-                <div
-                  className={`flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${selectedMethod.accent} font-black`}
-                >
-                  {selectedMethod.logo}
-                </div>
-                <div>
-                  <p className="font-black">{selectedMethod.name}</p>
-                  <p className="text-sm text-slate-400">
-                    {selectedMethod.fee}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={() =>
-                alert(
-                  `Selected payment method: ${selectedMethod.name}. Payment gateway will be connected next.`
-                )
-              }
-              className="mt-7 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300"
-            >
-              Proceed to Payment
-            </button>
-
-            <p className="mt-4 text-center text-xs leading-relaxed text-slate-500">
-              By placing an order, you agree to ComePlayers Terms of Use and
-              Privacy Policy.
+            <p className="mt-4 text-sm leading-6 text-gray-300">
+              Replace this payment destination later with your real payment
+              account or Midtrans integration.
             </p>
-
-            <div className="mt-7 grid gap-4 rounded-3xl border border-white/10 bg-black/30 p-5">
-              <div className="flex gap-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
-                  🛡️
-                </div>
-                <div>
-                  <p className="font-black">100% Secure</p>
-                  <p className="text-sm text-slate-400">
-                    Your payment is protected.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
-                  ⚡
-                </div>
-                <div>
-                  <p className="font-black">Fast Processing</p>
-                  <p className="text-sm text-slate-400">
-                    Orders are reviewed quickly.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
-                  🎧
-                </div>
-                <div>
-                  <p className="font-black">24/7 Support</p>
-                  <p className="text-sm text-slate-400">
-                    We are here when you need help.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </aside>
-        </div>
-
-        <footer className="mt-8 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-5 text-sm text-slate-400">
-          🔒 Protected by 256-bit SSL encryption. Your data is safe and secure.
-        </footer>
+          </div>
+        </aside>
       </section>
     </main>
   );

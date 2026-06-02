@@ -54,9 +54,7 @@ export default function SellerApplicationsAdminPage() {
   const [loading, setLoading] = useState(true);
   const [activeStatus, setActiveStatus] = useState("all");
   const [search, setSearch] = useState("");
-  const [updatingApplicationId, setUpdatingApplicationId] = useState<
-    number | null
-  >(null);
+  const [updatingApplicationId, setUpdatingApplicationId] = useState<number | null>(null);
 
   const isAdmin = adminProfile?.role?.trim().toLowerCase() === "admin";
 
@@ -78,8 +76,7 @@ export default function SellerApplicationsAdminPage() {
     async function initializePage() {
       setLoading(true);
 
-      const { data: userData, error: userError } =
-        await supabase.auth.getUser();
+      const { data: userData, error: userError } = await supabase.auth.getUser();
 
       if (userError) {
         alert(userError.message);
@@ -265,11 +262,6 @@ export default function SellerApplicationsAdminPage() {
     alert("Seller application reset to pending.");
   }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    window.location.href = "/";
-  }
-
   const filteredApplications = applications.filter((application) => {
     const matchesStatus =
       activeStatus === "all" || application.status === activeStatus;
@@ -312,14 +304,10 @@ export default function SellerApplicationsAdminPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
-          <h1 className="text-3xl font-black text-cyan-300">
-            Login Required
-          </h1>
-
+          <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
           <p className="mt-4 text-gray-400">
             Please login first to access the admin dashboard.
           </p>
-
           <Link
             href="/"
             className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black hover:bg-cyan-300"
@@ -336,16 +324,13 @@ export default function SellerApplicationsAdminPage() {
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
           <h1 className="text-3xl font-black text-red-300">Access Denied</h1>
-
           <p className="mt-4 text-gray-300">
             Only administrator accounts can access seller applications.
           </p>
-
           <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4 text-left text-sm text-gray-300">
             <p>Current user: {user.email}</p>
             <p>Detected role: {adminProfile?.role || "No profile found"}</p>
           </div>
-
           <Link
             href="/"
             className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black hover:bg-cyan-300"
@@ -359,54 +344,35 @@ export default function SellerApplicationsAdminPage() {
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <nav className="sticky top-0 z-50 flex h-20 items-center justify-between border-b border-white/10 bg-[#020617]/90 px-8 backdrop-blur-xl">
-        <div className="flex items-center gap-5">
-          <Link href="/" className="flex items-center">
-            <img
-              src="/logo.png?v=2"
-              alt="ComePlayers"
-              className="h-16 w-auto object-contain md:h-20"
-            />
-          </Link>
-
-          <div className="hidden border-l border-white/10 pl-5 lg:block">
-            <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-gray-400">
-              Powered By
-            </p>
-            <p className="bg-gradient-to-r from-cyan-300 to-blue-500 bg-clip-text text-lg font-black text-transparent">
-              EvoGaming
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={handleLogout}
-          className="rounded-full bg-cyan-400 px-5 py-2 font-black text-black transition hover:bg-cyan-300"
-        >
-          Logout
-        </button>
-      </nav>
-
       <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
 
-        <div className="relative z-10">
-          <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-            Admin Dashboard
-          </p>
+        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
+          <div>
+            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              Admin Dashboard
+            </p>
 
-          <h1 className="text-5xl font-black md:text-7xl">
-            Seller Applications
-          </h1>
+            <h1 className="text-5xl font-black md:text-7xl">
+              Seller Applications
+            </h1>
 
-          <p className="mt-5 max-w-2xl text-gray-300">
-            Review seller verification requests, approve trusted sellers, and
-            protect the ComePlayers marketplace.
-          </p>
+            <p className="mt-5 max-w-2xl text-gray-300">
+              Review seller verification requests, approve trusted sellers, and
+              protect the ComePlayers marketplace.
+            </p>
 
-          <p className="mt-3 text-sm text-gray-500">
-            Logged in as {user.email}
-          </p>
+            <p className="mt-3 text-sm text-gray-500">
+              Logged in as {user.email}
+            </p>
+          </div>
+
+          <Link
+            href="/admin"
+            className="inline-flex h-12 shrink-0 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+          >
+            Back to Admin
+          </Link>
         </div>
       </section>
 
@@ -471,7 +437,6 @@ export default function SellerApplicationsAdminPage() {
         {filteredApplications.length === 0 ? (
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-10 text-center">
             <h2 className="text-3xl font-black">No applications found.</h2>
-
             <p className="mt-3 text-gray-400">
               Seller applications will appear here after users submit their
               verification forms.
@@ -544,9 +509,7 @@ export default function SellerApplicationsAdminPage() {
                         <p className="text-xs text-gray-500">Submitted At</p>
                         <p className="mt-1 font-bold">
                           {application.created_at
-                            ? new Date(
-                                application.created_at
-                              ).toLocaleString()
+                            ? new Date(application.created_at).toLocaleString()
                             : "-"}
                         </p>
                       </div>
@@ -554,9 +517,7 @@ export default function SellerApplicationsAdminPage() {
 
                     {application.identity_image && (
                       <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4">
-                        <p className="text-xs text-gray-500">
-                          Identity Image
-                        </p>
+                        <p className="text-xs text-gray-500">Identity Image</p>
 
                         <a
                           href={application.identity_image}

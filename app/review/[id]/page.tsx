@@ -1,105 +1,220 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { createNotification } from "@/lib/createNotification";
 
 type Order = {
   id: number;
-  product: string | null;
+  buyer_id: string | null;
   buyer: string | null;
-  price: string | number | null;
-  status: string | null;
   seller_id: string | null;
+  product_id: number | null;
+  product: string | null;
+  price: string | number | null;
+  total_price: string | number | null;
+  category_name: string | null;
+  game_name: string | null;
+  status: string | null;
   created_at: string;
 };
 
-export default function ReviewPage() {
+type SellerProfile = {
+  id: string;
+  email: string | null;
+  username: string | null;
+  seller_name: string | null;
+  avatar_url: string | null;
+  seller_status: string | null;
+};
+
+type ExistingReview = {
+  id: number;
+  order_id: number;
+  seller_id: string;
+  buyer_id: string;
+  rating: number;
+  review_text: string | null;
+  created_at: string;
+};
+
+function normalizeStatus(status: string | null) {
+  if (status === "Selesai") return "Completed";
+  return status || "Pending Payment";
+}
+
+export default function ReviewPageV1NotificationSeller() {
   const params = useParams();
-  const orderId = String(params.id);
+  const orderId = String(params.id || "");
 
   const [user, setUser] = useState<User | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
+  const [seller, setSeller] = useState<SellerProfile | null>(null);
+  const [existingReview, setExistingReview] = useState<ExistingReview | null>(
+    null
+  );
+
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const [rating, setRating] = useState(5);
-  const [title, setTitle] = useState("");
-  const [message, setMessage] = useState("");
+  const [reviewText, setReviewText] = useState("");
+
+  const normalizedStatus = useMemo(() => {
+    return normalizeStatus(order?.status || null);
+  }, [order]);
 
   useEffect(() => {
-    async function loadReviewPage() {
-      const { data: userData } = await supabase.auth.getUser();
+    if (orderId) {
+      initializePage();
+    }
+  }, [orderId]);
 
-      if (!userData.user) {
-        setUser(null);
-        setLoading(false);
-        return;
-      }
+  async function initializePage() {
+    setLoading(true);
 
-      setUser(userData.user);
+    const { data: userData, error: userError } = await supabase.auth.getUser();
 
-      const { data, error } = await supabase
-        .from("orders")
-        .select("*")
-        .eq("id", orderId)
-        .maybeSingle();
-
-      if (error) {
-        alert(error.message);
-        setLoading(false);
-        return;
-      }
-
-      setOrder(data);
+    if (userError) {
+      alert(userError.message);
       setLoading(false);
+      return;
     }
 
-    loadReviewPage();
-  }, [orderId]);
+    if (!userData.user) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+
+    setUser(userData.user);
+
+    const { data: orderData, error: orderError } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", Number(orderId))
+      .maybeSingle();
+
+    if (orderError) {
+      alert(orderError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (!orderData) {
+      setOrder(null);
+      setLoading(false);
+      return;
+    }
+
+    const isBuyer =
+      orderData.buyer_id === userData.user.id ||
+      orderData.buyer === userData.user.email;
+
+    if (!isBuyer) {
+      alert("Only buyer can review this order.");
+      window.location.href = "/my-orders";
+      return;
+    }
+
+    setOrder(orderData);
+
+    if (orderData.seller_id) {
+      const { data: sellerData } = await supabase
+        .from("profiles")
+        .select("id,email,username,seller_name,avatar_url,seller_status")
+        .eq("id", orderData.seller_id)
+        .maybeSingle();
+
+      setSeller(sellerData || null);
+    }
+
+    const { data: reviewData, error: reviewError } = await supabase
+      .from("seller_reviews")
+      .select("*")
+      .eq("order_id", Number(orderId))
+      .eq("buyer_id", userData.user.id)
+      .maybeSingle();
+
+    if (reviewError) {
+      alert(reviewError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (reviewData) {
+      setExistingReview(reviewData);
+      setRating(reviewData.rating);
+      setReviewText(reviewData.review_text || "");
+    }
+
+    setLoading(false);
+  }
 
   async function submitReview(event: React.FormEvent) {
     event.preventDefault();
 
-    if (!user || !order) return;
-
-    if (order.buyer !== user.email) {
-      alert("You can only review your own order.");
+    if (!user) {
+      alert("User not found. Please login again.");
       return;
     }
 
-    if (order.status !== "Completed" && order.status !== "Selesai") {
+    if (!order) {
+      alert("Order not found.");
+      return;
+    }
+
+    if (!order.seller_id) {
+      alert("Seller not found.");
+      return;
+    }
+
+    if (normalizedStatus !== "Completed") {
       alert("You can only review completed orders.");
       return;
     }
 
-    if (!title || !message) {
-      alert("Please fill in review title and message.");
+    if (rating < 1 || rating > 5) {
+      alert("Rating must be between 1 and 5.");
       return;
     }
 
-    setSaving(true);
+    setSubmitting(true);
 
-    const { error } = await supabase.from("reviews").insert({
+    const payload = {
       order_id: order.id,
-      product: order.product,
-      buyer: user.email,
+      product_id: order.product_id,
       seller_id: order.seller_id,
+      buyer_id: user.id,
       rating,
-      title,
-      message,
+      review_text: reviewText.trim() || null,
+    };
+
+    const { error } = await supabase.from("seller_reviews").upsert(payload, {
+      onConflict: "order_id,buyer_id",
     });
 
     if (error) {
       alert(error.message);
-      setSaving(false);
+      setSubmitting(false);
       return;
     }
 
+    await createNotification({
+      userId: order.seller_id,
+      type: "review",
+      title: existingReview ? "Review Updated" : "New Review Received",
+      message: `${user.email || "A buyer"} rated your service ${rating}/5 stars for order #${
+        order.id
+      }${reviewText.trim() ? `: ${reviewText.trim()}` : "."}`,
+      linkUrl: `/seller-profile/${order.seller_id}`,
+    });
+
     alert("Review submitted successfully.");
-    window.location.href = "/my-orders";
+    window.location.href = `/seller-profile/${order.seller_id}`;
   }
 
   if (loading) {
@@ -115,12 +230,14 @@ export default function ReviewPage() {
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
           <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
+
           <p className="mt-4 text-gray-400">
             Please login first to leave a review.
           </p>
+
           <Link
             href="/"
-            className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black"
+            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
           >
             Back to Home
           </Link>
@@ -132,72 +249,78 @@ export default function ReviewPage() {
   if (!order) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
-        <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
-          <h1 className="text-3xl font-black text-cyan-300">Order Not Found</h1>
-          <p className="mt-4 text-gray-400">
-            The order you want to review does not exist.
-          </p>
+        <div className="max-w-md rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
+          <h1 className="text-3xl font-black text-red-300">Order Not Found</h1>
+
           <Link
             href="/my-orders"
-            className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black"
+            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
           >
-            Back to My Orders
+            My Orders
           </Link>
         </div>
       </main>
     );
   }
 
-  const canReview =
-    order.buyer === user.email &&
-    (order.status === "Completed" || order.status === "Selesai");
+  const canReview = normalizedStatus === "Completed";
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <nav className="sticky top-0 z-50 flex h-20 items-center justify-between border-b border-white/10 bg-[#020617]/90 px-8 backdrop-blur-xl">
-        <Link href="/" className="flex items-center">
-          <img
-            src="/logo.png?v=2"
-            alt="ComePlayers"
-            className="h-16 w-auto object-contain md:h-20"
-          />
-        </Link>
-
-        <Link
-          href="/my-orders"
-          className="rounded-full border border-cyan-400 px-5 py-2 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-        >
-          My Orders
-        </Link>
-      </nav>
-
       <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(250,204,21,.18),transparent_34%)]" />
 
-        <div className="relative z-10">
-          <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-            Review System
-          </p>
+        <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
+          <div>
+            <p className="mb-4 inline-flex rounded-full border border-yellow-400/30 bg-yellow-400/10 px-4 py-2 text-sm font-black text-yellow-300">
+              Seller Review
+            </p>
 
-          <h1 className="text-5xl font-black md:text-7xl">Leave a Review</h1>
+            <h1 className="text-5xl font-black md:text-7xl">
+              Leave a Review
+            </h1>
 
-          <p className="mt-5 max-w-2xl text-gray-300">
-            Share your experience and help other buyers trust great sellers.
-          </p>
+            <p className="mt-5 max-w-2xl text-gray-300">
+              Share your experience after completing your order.
+            </p>
+          </div>
+
+          <Link
+            href={`/order/${order.id}`}
+            className="inline-flex h-12 shrink-0 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+          >
+            Back to Order
+          </Link>
         </div>
       </section>
 
-      <section className="grid gap-8 px-8 py-10 lg:grid-cols-[1fr_420px]">
+      <section className="mx-auto grid max-w-7xl gap-8 px-8 py-10 lg:grid-cols-[1fr_420px]">
         <form
           onSubmit={submitReview}
           className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30"
         >
-          <h2 className="text-3xl font-black">Your Review</h2>
+          <h2 className="text-3xl font-black">Review Seller</h2>
 
           {!canReview && (
-            <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-5 text-yellow-200">
-              This order is not eligible for review yet. Only completed orders
-              can be reviewed.
+            <div className="mt-6 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-5">
+              <h3 className="font-black text-yellow-300">Review Locked</h3>
+
+              <p className="mt-3 text-sm text-gray-300">
+                You can only review orders with Completed status.
+              </p>
+            </div>
+          )}
+
+          {existingReview && (
+            <div className="mt-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
+              <h3 className="font-black text-cyan-300">
+                Existing Review Found
+              </h3>
+
+              <p className="mt-3 text-sm text-gray-300">
+                You already reviewed this order. Submitting again will update
+                your review.
+              </p>
             </div>
           )}
 
@@ -206,93 +329,135 @@ export default function ReviewPage() {
               Rating
             </label>
 
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               {[1, 2, 3, 4, 5].map((star) => (
                 <button
                   key={star}
                   type="button"
                   onClick={() => setRating(star)}
-                  className={`text-4xl transition ${
-                    star <= rating ? "text-yellow-300" : "text-gray-600"
+                  disabled={!canReview}
+                  className={`rounded-2xl border px-5 py-4 text-3xl transition disabled:opacity-60 ${
+                    rating >= star
+                      ? "border-yellow-400 bg-yellow-400/10 text-yellow-300"
+                      : "border-white/10 bg-black/30 text-gray-600"
                   }`}
                 >
                   ★
                 </button>
               ))}
             </div>
+
+            <p className="mt-3 text-sm text-gray-400">
+              Selected rating: {rating} / 5
+            </p>
           </div>
 
           <div className="mt-7">
-            <label className="mb-3 block text-sm font-bold text-gray-300">
-              Review Title
-            </label>
-
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Example: Fast and trusted seller"
-              className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
-            />
-          </div>
-
-          <div className="mt-7">
-            <label className="mb-3 block text-sm font-bold text-gray-300">
-              Review Message
+            <label className="mb-2 block text-sm font-bold text-gray-300">
+              Review Text
             </label>
 
             <textarea
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              placeholder="Write your honest experience..."
-              rows={7}
-              className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 outline-none focus:border-cyan-400"
+              value={reviewText}
+              onChange={(event) => setReviewText(event.target.value)}
+              disabled={!canReview}
+              placeholder="Tell other buyers about this seller, delivery speed, communication, and product quality."
+              rows={8}
+              className="w-full resize-none rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400 disabled:opacity-60"
             />
           </div>
 
           <button
-            disabled={!canReview || saving}
-            className="mt-8 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-gray-600 disabled:text-gray-300"
+            type="submit"
+            disabled={submitting || !canReview}
+            className="mt-8 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {saving ? "Submitting Review..." : "Submit Review"}
+            {submitting
+              ? "Submitting Review..."
+              : existingReview
+              ? "Update Review"
+              : "Submit Review"}
           </button>
         </form>
 
-        <aside className="h-fit rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-          <h2 className="text-3xl font-black">Order Summary</h2>
+        <aside className="h-fit space-y-6">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
+            <h2 className="text-3xl font-black">Order Summary</h2>
 
-          <div className="mt-6 grid gap-4">
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-              <p className="text-sm text-gray-400">Order ID</p>
-              <p className="mt-1 text-xl font-black">#{order.id}</p>
-            </div>
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5">
+              <p className="text-xs font-black text-cyan-300">
+                Order #{order.id}
+              </p>
 
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-              <p className="text-sm text-gray-400">Product</p>
-              <p className="mt-1 text-xl font-black">
+              <h3 className="mt-2 text-2xl font-black">
                 {order.product || "Unknown Product"}
-              </p>
-            </div>
+              </h3>
 
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-              <p className="text-sm text-gray-400">Price</p>
-              <p className="mt-1 text-3xl font-black text-cyan-300">
-                {order.price}
+              <p className="mt-2 text-sm text-gray-400">
+                {order.category_name || "Marketplace"} /{" "}
+                {order.game_name || "Game"}
               </p>
-            </div>
 
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-              <p className="text-sm text-gray-400">Status</p>
-              <p className="mt-1 font-black">{order.status}</p>
+              <p className="mt-5 text-3xl font-black text-cyan-300">
+                Rp{" "}
+                {Number(order.total_price || order.price || 0).toLocaleString(
+                  "id-ID"
+                )}
+              </p>
+
+              <p className="mt-3 text-sm text-gray-400">
+                Status: {normalizedStatus}
+              </p>
             </div>
           </div>
 
-          <div className="mt-7 rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-5">
-            <h3 className="font-black text-cyan-300">Review Protection</h3>
+          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-7 shadow-2xl shadow-black/30">
+            <h2 className="text-2xl font-black text-yellow-300">Seller</h2>
 
-            <p className="mt-3 text-sm text-gray-300">
-              Reviews are only available for completed orders to keep the
-              marketplace safe and trustworthy.
-            </p>
+            <div className="mt-5 flex items-center gap-4">
+              <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-yellow-400/30 bg-black/30">
+                {seller?.avatar_url ? (
+                  <img
+                    src={seller.avatar_url}
+                    alt={seller.seller_name || seller.username || "Seller"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="text-2xl font-black text-yellow-300">
+                    {(seller?.seller_name ||
+                      seller?.username ||
+                      seller?.email ||
+                      "S")
+                      .charAt(0)
+                      .toUpperCase()}
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <p className="text-xl font-black">
+                  {seller?.seller_name ||
+                    seller?.username ||
+                    seller?.email ||
+                    "Seller"}
+                </p>
+
+                <p className="text-sm text-green-300">
+                  {seller?.seller_status === "approved"
+                    ? "Verified Seller"
+                    : "Seller"}
+                </p>
+              </div>
+            </div>
+
+            {order.seller_id && (
+              <Link
+                href={`/seller-profile/${order.seller_id}`}
+                className="mt-6 block rounded-2xl border border-yellow-400 px-5 py-3 text-center font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black"
+              >
+                View Seller Profile
+              </Link>
+            )}
           </div>
         </aside>
       </section>

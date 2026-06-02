@@ -4,7 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
-import { createNotification } from "@/lib/createNotification";
+
+type Profile = {
+  id: string;
+  email: string | null;
+  username: string | null;
+  role: string | null;
+};
 
 type Order = {
   id: number;
@@ -29,17 +35,6 @@ type Order = {
   created_at: string;
 };
 
-type Wallet = {
-  id: number;
-  user_id: string;
-  balance: string | number;
-  pending_balance: string | number;
-  total_earned: string | number;
-  total_spent: string | number;
-  total_withdrawn: string | number;
-  status: string;
-};
-
 const orderStatuses = [
   "all",
   "Pending Payment",
@@ -47,6 +42,8 @@ const orderStatuses = [
   "Processing",
   "Completed",
   "Cancelled",
+  "Refunded",
+  "Disputed",
 ];
 
 const statusOptions = [
@@ -55,6 +52,8 @@ const statusOptions = [
   "Processing",
   "Completed",
   "Cancelled",
+  "Refunded",
+  "Disputed",
 ];
 
 function normalizeStatus(status: string | null) {
@@ -83,6 +82,14 @@ function getStatusClass(status: string | null) {
     return "border-red-400/20 bg-red-400/10 text-red-300";
   }
 
+  if (normalizedStatus === "Refunded") {
+    return "border-purple-400/20 bg-purple-400/10 text-purple-300";
+  }
+
+  if (normalizedStatus === "Disputed") {
+    return "border-orange-400/20 bg-orange-400/10 text-orange-300";
+  }
+
   if (normalizedStatus === "Payment Verification") {
     return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
   }
@@ -100,34 +107,17 @@ function formatPrice(value: string | number | null) {
   return `Rp ${price.toLocaleString("id-ID")}`;
 }
 
-function getBuyerNotificationMessage(status: string, order: Order) {
-  if (status === "Payment Verification") {
-    return `Your payment proof for order #${order.id} is waiting for verification.`;
-  }
-
-  if (status === "Processing") {
-    return `Your order #${order.id} is now being processed by the seller.`;
-  }
-
-  if (status === "Completed") {
-    return `Your order #${order.id} has been completed successfully. You can now leave a review.`;
-  }
-
-  if (status === "Cancelled") {
-    return `Your order #${order.id} was cancelled by the seller.`;
-  }
-
-  return `Your order #${order.id} status was updated to ${status}.`;
-}
-
-export default function SellerOrdersV3WalletReleasePage() {
+export default function AdminOrderManagementV1Page() {
   const [user, setUser] = useState<User | null>(null);
+  const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
 
+  const [loading, setLoading] = useState(true);
   const [activeStatus, setActiveStatus] = useState("all");
   const [search, setSearch] = useState("");
   const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
+
+  const isAdmin = adminProfile?.role?.trim().toLowerCase() === "admin";
 
   const filteredOrders = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -142,6 +132,8 @@ export default function SellerOrdersV3WalletReleasePage() {
         !query ||
         (order.product || "").toLowerCase().includes(query) ||
         (order.buyer || "").toLowerCase().includes(query) ||
+        (order.buyer_id || "").toLowerCase().includes(query) ||
+        (order.seller_id || "").toLowerCase().includes(query) ||
         (order.category_name || "").toLowerCase().includes(query) ||
         (order.game_name || "").toLowerCase().includes(query) ||
         String(order.id).includes(query);
@@ -159,10 +151,6 @@ export default function SellerOrdersV3WalletReleasePage() {
       );
   }, [orders]);
 
-  const pendingPaymentCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Pending Payment"
-  ).length;
-
   const verificationCount = orders.filter(
     (order) => normalizeStatus(order.status) === "Payment Verification"
   ).length;
@@ -175,11 +163,14 @@ export default function SellerOrdersV3WalletReleasePage() {
     (order) => normalizeStatus(order.status) === "Completed"
   ).length;
 
-  async function loadSellerOrders(userId: string) {
+  const disputeCount = orders.filter(
+    (order) => normalizeStatus(order.status) === "Disputed"
+  ).length;
+
+  async function loadOrders() {
     const { data, error } = await supabase
       .from("orders")
       .select("*")
-      .eq("seller_id", userId)
       .order("id", { ascending: false });
 
     if (error) {
@@ -190,130 +181,10 @@ export default function SellerOrdersV3WalletReleasePage() {
     setOrders(data || []);
   }
 
-  async function ensureSellerWallet(sellerId: string) {
-    const { data: existingWallet, error: walletFetchError } = await supabase
-      .from("wallets")
-      .select("*")
-      .eq("user_id", sellerId)
-      .maybeSingle();
-
-    if (walletFetchError) {
-      throw new Error(walletFetchError.message);
-    }
-
-    if (existingWallet) {
-      return existingWallet as Wallet;
-    }
-
-    const { data: createdWallet, error: walletCreateError } = await supabase
-      .from("wallets")
-      .insert({
-        user_id: sellerId,
-        balance: 0,
-        pending_balance: 0,
-        total_earned: 0,
-        total_spent: 0,
-        total_withdrawn: 0,
-        status: "active",
-      })
-      .select("*")
-      .single();
-
-    if (walletCreateError) {
-      throw new Error(walletCreateError.message);
-    }
-
-    return createdWallet as Wallet;
-  }
-
-  async function hasExistingReleaseTransaction(walletId: number, orderId: number) {
-    const { data, error } = await supabase
-      .from("wallet_transactions")
-      .select("id")
-      .eq("wallet_id", walletId)
-      .eq("order_id", orderId)
-      .eq("type", "sale_release")
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    return Boolean(data);
-  }
-
-  async function releaseSellerEarning(order: Order) {
-    if (!order.seller_id) return;
-
-    const wallet = await ensureSellerWallet(order.seller_id);
-
-    if (wallet.status !== "active") {
-      throw new Error("Seller wallet is frozen.");
-    }
-
-    const alreadyReleased = await hasExistingReleaseTransaction(
-      wallet.id,
-      order.id
-    );
-
-    if (alreadyReleased) {
-      return;
-    }
-
-    const earningAmount = Number(order.total_price || order.price || 0);
-
-    if (earningAmount <= 0) {
-      return;
-    }
-
-    const balanceBefore = Number(wallet.balance || 0);
-    const balanceAfter = balanceBefore + earningAmount;
-
-    const { error: walletUpdateError } = await supabase
-      .from("wallets")
-      .update({
-        balance: balanceAfter,
-        total_earned: Number(wallet.total_earned || 0) + earningAmount,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", wallet.id)
-      .eq("user_id", order.seller_id);
-
-    if (walletUpdateError) {
-      throw new Error(walletUpdateError.message);
-    }
-
-    const { error: transactionError } = await supabase
-      .from("wallet_transactions")
-      .insert({
-        wallet_id: wallet.id,
-        user_id: order.seller_id,
-        type: "sale_release",
-        amount: earningAmount,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        order_id: order.id,
-        description: `Seller earning released from completed order #${order.id}`,
-        status: "completed",
-      });
-
-    if (transactionError) {
-      throw new Error(transactionError.message);
-    }
-
-    await createNotification({
-      userId: order.seller_id,
-      type: "payment",
-      title: "Seller Earning Released",
-      message: `${formatPrice(
-        earningAmount
-      )} has been added to your wallet from completed order #${order.id}.`,
-      linkUrl: "/wallet",
-    });
-  }
-
   useEffect(() => {
     async function initializePage() {
+      setLoading(true);
+
       const { data: userData, error: userError } = await supabase.auth.getUser();
 
       if (userError) {
@@ -329,31 +200,42 @@ export default function SellerOrdersV3WalletReleasePage() {
       }
 
       setUser(userData.user);
-      await loadSellerOrders(userData.user.id);
+
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("id,email,username,role")
+        .eq("id", userData.user.id)
+        .maybeSingle();
+
+      if (profileError) {
+        alert(profileError.message);
+        setLoading(false);
+        return;
+      }
+
+      setAdminProfile(profileData || null);
+
+      if (profileData?.role?.trim().toLowerCase() === "admin") {
+        await loadOrders();
+      }
+
       setLoading(false);
     }
 
     initializePage();
   }, []);
 
-  async function updateOrderStatus(order: Order, newStatus: string) {
-    if (!user) return;
+  async function updateOrderStatus(orderId: number, newStatus: string) {
+    if (!isAdmin) return;
 
-    const previousStatus = normalizeStatus(order.status);
-
-    if (previousStatus === newStatus) {
-      return;
-    }
-
-    setUpdatingOrderId(order.id);
+    setUpdatingOrderId(orderId);
 
     const { error } = await supabase
       .from("orders")
       .update({
         status: newStatus,
       })
-      .eq("id", order.id)
-      .eq("seller_id", user.id);
+      .eq("id", orderId);
 
     if (error) {
       alert(error.message);
@@ -361,42 +243,38 @@ export default function SellerOrdersV3WalletReleasePage() {
       return;
     }
 
-    if (newStatus === "Completed") {
-      try {
-        await releaseSellerEarning({
-          ...order,
-          status: newStatus,
-        });
-      } catch (releaseError) {
-        console.error("Seller earning release error:", releaseError);
-        alert(
-          releaseError instanceof Error
-            ? releaseError.message
-            : "Order completed, but failed to release wallet earning."
-        );
-      }
-    }
-
-    await createNotification({
-      userId: order.buyer_id,
-      type: "order",
-      title: `Order ${newStatus}`,
-      message: getBuyerNotificationMessage(newStatus, order),
-      linkUrl:
-        newStatus === "Completed"
-          ? `/review/${order.id}`
-          : `/order/${order.id}`,
-    });
-
-    await loadSellerOrders(user.id);
+    await loadOrders();
     setUpdatingOrderId(null);
+  }
+
+  async function confirmPayment(orderId: number) {
+    await updateOrderStatus(orderId, "Processing");
+  }
+
+  async function markCompleted(orderId: number) {
+    await updateOrderStatus(orderId, "Completed");
+  }
+
+  async function cancelOrder(orderId: number) {
+    if (!confirm("Cancel this order?")) return;
+    await updateOrderStatus(orderId, "Cancelled");
+  }
+
+  async function refundOrder(orderId: number) {
+    if (!confirm("Mark this order as refunded?")) return;
+    await updateOrderStatus(orderId, "Refunded");
+  }
+
+  async function disputeOrder(orderId: number) {
+    if (!confirm("Mark this order as disputed?")) return;
+    await updateOrderStatus(orderId, "Disputed");
   }
 
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
         <p className="text-xl font-black text-cyan-300">
-          Loading seller orders...
+          Loading admin orders...
         </p>
       </main>
     );
@@ -406,11 +284,39 @@ export default function SellerOrdersV3WalletReleasePage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
-          <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
+          <h1 className="text-3xl font-black text-cyan-300">
+            Login Required
+          </h1>
 
           <p className="mt-4 text-gray-400">
-            Please login first to manage seller orders.
+            Please login first to access admin orders.
           </p>
+
+          <Link
+            href="/"
+            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
+          >
+            Back to Home
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
+        <div className="max-w-md rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
+          <h1 className="text-3xl font-black text-red-300">Access Denied</h1>
+
+          <p className="mt-4 text-gray-300">
+            Only administrator accounts can access order management.
+          </p>
+
+          <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4 text-left text-sm text-gray-300">
+            <p>Current user: {user.email}</p>
+            <p>Detected role: {adminProfile?.role || "No profile found"}</p>
+          </div>
 
           <Link
             href="/"
@@ -431,16 +337,16 @@ export default function SellerOrdersV3WalletReleasePage() {
         <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Seller Dashboard
+              Admin Dashboard
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">
-              Seller Orders
+              Order Management
             </h1>
 
             <p className="mt-5 max-w-2xl text-gray-300">
-              Manage buyer orders, verify payments, update delivery status, and
-              automatically release seller earnings to wallet when completed.
+              Verify payments, monitor order status, handle disputes, and manage
+              marketplace transactions.
             </p>
 
             <p className="mt-3 text-sm text-gray-500">
@@ -450,31 +356,17 @@ export default function SellerOrdersV3WalletReleasePage() {
 
           <div className="flex flex-wrap gap-3">
             <Link
-              href="/wallet"
-              className="inline-flex h-12 items-center justify-center rounded-full border border-green-400 px-6 font-bold text-green-300 transition hover:bg-green-400 hover:text-black"
-            >
-              Wallet
-            </Link>
-
-            <Link
-              href="/seller/products"
+              href="/admin"
               className="inline-flex h-12 items-center justify-center rounded-full border border-white/10 px-6 font-bold text-gray-300 transition hover:bg-white hover:text-black"
             >
-              Products
+              Admin Home
             </Link>
 
             <Link
-              href="/notifications"
-              className="inline-flex h-12 items-center justify-center rounded-full border border-yellow-400 px-6 font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-black"
-            >
-              Notifications
-            </Link>
-
-            <Link
-              href="/seller"
+              href="/admin/seller-applications"
               className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
             >
-              Dashboard
+              Seller Applications
             </Link>
           </div>
         </div>
@@ -486,13 +378,6 @@ export default function SellerOrdersV3WalletReleasePage() {
             <p className="text-sm text-gray-400">Total Orders</p>
             <p className="mt-2 text-3xl font-black text-cyan-300">
               {orders.length}
-            </p>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Pending Payment</p>
-            <p className="mt-2 text-3xl font-black text-cyan-300">
-              {pendingPaymentCount}
             </p>
           </div>
 
@@ -511,19 +396,34 @@ export default function SellerOrdersV3WalletReleasePage() {
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Completed Revenue</p>
+            <p className="text-sm text-gray-400">Completed</p>
+            <p className="mt-2 text-3xl font-black text-green-300">
+              {completedCount}
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+            <p className="text-sm text-gray-400">Revenue</p>
             <p className="mt-2 text-2xl font-black text-green-300">
               {formatPrice(totalRevenue)}
             </p>
           </div>
         </div>
 
+        {disputeCount > 0 && (
+          <div className="mb-8 rounded-3xl border border-orange-400/20 bg-orange-400/10 p-5">
+            <p className="font-black text-orange-300">
+              ⚠ {disputeCount} disputed order(s) need admin attention.
+            </p>
+          </div>
+        )}
+
         <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
           <input
             type="text"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search by product, buyer, category, game, or order ID..."
+            placeholder="Search by order ID, buyer, seller, product, category, or game..."
             className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
           />
 
@@ -546,10 +446,10 @@ export default function SellerOrdersV3WalletReleasePage() {
 
         {filteredOrders.length === 0 ? (
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-10 text-center">
-            <h2 className="text-3xl font-black">No seller orders found.</h2>
+            <h2 className="text-3xl font-black">No orders found.</h2>
 
             <p className="mt-3 text-gray-400">
-              Buyer orders will appear here after checkout.
+              Orders will appear here after buyers complete checkout.
             </p>
           </div>
         ) : (
@@ -563,7 +463,7 @@ export default function SellerOrdersV3WalletReleasePage() {
                   key={order.id}
                   className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30"
                 >
-                  <div className="grid gap-6 xl:grid-cols-[1fr_280px]">
+                  <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
                     <div>
                       <div className="flex flex-wrap items-center gap-3">
                         <h2 className="text-2xl font-black">
@@ -592,7 +492,21 @@ export default function SellerOrdersV3WalletReleasePage() {
                         <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
                           <p className="text-xs text-gray-500">Buyer</p>
                           <p className="mt-1 break-words font-bold">
-                            {order.buyer || order.buyer_id || "Unknown Buyer"}
+                            {order.buyer || order.buyer_id || "-"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Seller ID</p>
+                          <p className="mt-1 break-words font-bold">
+                            {order.seller_id || "-"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Product ID</p>
+                          <p className="mt-1 font-bold">
+                            {order.product_id || "-"}
                           </p>
                         </div>
 
@@ -663,13 +577,13 @@ export default function SellerOrdersV3WalletReleasePage() {
 
                     <div className="flex flex-col gap-3">
                       <label className="text-sm font-bold text-gray-400">
-                        Update Status
+                        Admin Status Control
                       </label>
 
                       <select
                         value={normalizedStatus}
                         onChange={(event) =>
-                          updateOrderStatus(order, event.target.value)
+                          updateOrderStatus(order.id, event.target.value)
                         }
                         disabled={updatingOrderId === order.id}
                         className="rounded-2xl border border-white/10 bg-black px-4 py-3 font-bold text-white outline-none focus:border-cyan-400 disabled:opacity-60"
@@ -682,54 +596,60 @@ export default function SellerOrdersV3WalletReleasePage() {
                       </select>
 
                       <button
-                        onClick={() =>
-                          updateOrderStatus(order, "Payment Verification")
-                        }
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-yellow-400 px-5 py-3 font-black text-black hover:bg-yellow-300 disabled:opacity-60"
-                      >
-                        Mark Verification
-                      </button>
-
-                      <button
-                        onClick={() => updateOrderStatus(order, "Processing")}
+                        onClick={() => confirmPayment(order.id)}
                         disabled={updatingOrderId === order.id}
                         className="rounded-2xl bg-blue-500 px-5 py-3 font-black text-white hover:bg-blue-400 disabled:opacity-60"
                       >
-                        Mark Processing
+                        Confirm Payment
                       </button>
 
                       <button
-                        onClick={() => updateOrderStatus(order, "Completed")}
+                        onClick={() => markCompleted(order.id)}
                         disabled={updatingOrderId === order.id}
                         className="rounded-2xl bg-green-500 px-5 py-3 font-black text-white hover:bg-green-400 disabled:opacity-60"
                       >
-                        Mark Completed + Release Wallet
+                        Mark Completed
                       </button>
 
                       <button
-                        onClick={() => updateOrderStatus(order, "Cancelled")}
+                        onClick={() => cancelOrder(order.id)}
                         disabled={updatingOrderId === order.id}
                         className="rounded-2xl bg-red-500 px-5 py-3 font-black text-white hover:bg-red-400 disabled:opacity-60"
                       >
                         Cancel Order
                       </button>
 
+                      <button
+                        onClick={() => refundOrder(order.id)}
+                        disabled={updatingOrderId === order.id}
+                        className="rounded-2xl bg-purple-500 px-5 py-3 font-black text-white hover:bg-purple-400 disabled:opacity-60"
+                      >
+                        Mark Refunded
+                      </button>
+
+                      <button
+                        onClick={() => disputeOrder(order.id)}
+                        disabled={updatingOrderId === order.id}
+                        className="rounded-2xl bg-orange-500 px-5 py-3 font-black text-white hover:bg-orange-400 disabled:opacity-60"
+                      >
+                        Mark Disputed
+                      </button>
+
+                      <Link
+                        href={`/order/${order.id}`}
+                        className="rounded-2xl border border-cyan-400/40 px-5 py-3 text-center font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+                      >
+                        View Order Detail
+                      </Link>
+
                       {order.product_id && (
                         <Link
                           href={`/product/${order.product_id}`}
-                          className="rounded-2xl border border-cyan-400/40 px-5 py-3 text-center font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+                          className="rounded-2xl border border-white/10 px-5 py-3 text-center font-black text-gray-300 transition hover:bg-white hover:text-black"
                         >
                           View Product
                         </Link>
                       )}
-
-                      <Link
-                        href={`/order/${order.id}`}
-                        className="rounded-2xl border border-white/10 px-5 py-3 text-center font-black text-gray-300 transition hover:bg-white hover:text-black"
-                      >
-                        View Order Detail
-                      </Link>
 
                       {updatingOrderId === order.id && (
                         <p className="text-center text-sm text-gray-400">

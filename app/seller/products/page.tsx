@@ -4,10 +4,30 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
+type SellerProfile = {
+  id: string;
+  email: string | null;
+  seller_name: string | null;
+  username: string | null;
+};
+
+type Product = {
+  id: number;
+  title: string;
+  description: string | null;
+  price: string | number | null;
+  stock: number | null;
+  image_url: string | null;
+  status: string | null;
+  category_name: string | null;
+  category: string | null;
+  created_at: string;
+};
+
 export default function SellerProductsPage() {
   const [loading, setLoading] = useState(true);
-  const [seller, setSeller] = useState<any>(null);
-  const [products, setProducts] = useState<any[]>([]);
+  const [seller, setSeller] = useState<SellerProfile | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
 
   useEffect(() => {
     loadProducts();
@@ -20,32 +40,43 @@ export default function SellerProductsPage() {
       } = await supabase.auth.getUser();
 
       if (!user) {
-        location.href = "/login";
+        window.location.href = "/";
         return;
       }
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("*")
         .eq("email", user.email)
-        .single();
+        .maybeSingle();
+
+      if (profileError) {
+        alert(profileError.message);
+        return;
+      }
 
       if (!profile) {
-        alert("Profile not found");
+        alert("Profile not found.");
         return;
       }
 
       setSeller(profile);
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("products")
         .select("*")
         .eq("seller_id", profile.id)
         .order("created_at", { ascending: false });
 
+      if (error) {
+        alert(error.message);
+        return;
+      }
+
       setProducts(data || []);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
+      alert("Failed to load products.");
     } finally {
       setLoading(false);
     }
@@ -54,275 +85,251 @@ export default function SellerProductsPage() {
   async function deleteProduct(id: number) {
     if (!confirm("Delete this product?")) return;
 
-    await supabase.from("products").delete().eq("id", id);
+    const { error } = await supabase.from("products").delete().eq("id", id);
 
-    loadProducts();
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    await loadProducts();
   }
 
-  async function toggleStatus(product: any) {
-    const nextStatus =
-      product.status === "active" ? "inactive" : "active";
+  async function toggleStatus(product: Product) {
+    const nextStatus = product.status === "active" ? "inactive" : "active";
 
-    await supabase
+    const { error } = await supabase
       .from("products")
       .update({
         status: nextStatus,
       })
       .eq("id", product.id);
 
-    loadProducts();
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    await loadProducts();
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#020b2d] flex items-center justify-center text-cyan-400 text-2xl">
-        Loading Products...
-      </div>
+      <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
+        <p className="text-xl font-black text-cyan-300">
+          Loading products...
+        </p>
+      </main>
     );
   }
 
   const activeProducts = products.filter(
-    (p) => p.status === "active"
+    (product) => product.status === "active"
   ).length;
 
   const inactiveProducts = products.filter(
-    (p) => p.status !== "active"
+    (product) => product.status !== "active"
   ).length;
 
   const totalStock = products.reduce(
-    (sum, p) => sum + Number(p.stock || 0),
+    (sum, product) => sum + Number(product.stock || 0),
     0
   );
 
   return (
-    <div className="min-h-screen bg-[#020b2d] text-white">
+    <main className="min-h-screen bg-[#020617] text-white">
+      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
 
-      <div className="max-w-7xl mx-auto px-8 py-10">
-
-        {/* HEADER */}
-
-        <div className="flex justify-between items-center mb-10">
-
+        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
-            <h1 className="text-5xl font-bold">
-              My Products
-            </h1>
+            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              Seller Products
+            </p>
 
-            <p className="text-gray-400 mt-2">
-              Seller: {seller?.seller_name}
+            <h1 className="text-5xl font-black md:text-7xl">My Products</h1>
+
+            <p className="mt-5 max-w-2xl text-gray-300">
+              Manage your listings, update product status, and control your
+              seller inventory.
+            </p>
+
+            <p className="mt-3 text-sm text-gray-500">
+              Seller:{" "}
+              {seller?.seller_name || seller?.username || seller?.email || "-"}
             </p>
           </div>
 
-          <div className="flex gap-3">
-
+          <div className="flex flex-wrap gap-3">
             <Link
               href="/seller"
-              className="px-5 py-3 bg-[#07153f] rounded-xl"
+              className="rounded-full border border-white/10 px-5 py-2 font-bold text-gray-300 transition hover:bg-white hover:text-black"
             >
               Dashboard
             </Link>
 
             <Link
               href="/seller/products/new"
-              className="px-5 py-3 bg-cyan-500 text-black font-bold rounded-xl"
+              className="rounded-full bg-cyan-400 px-5 py-2 font-black text-black transition hover:bg-cyan-300"
             >
               Add Product
             </Link>
-
           </div>
         </div>
+      </section>
 
-        {/* STATS */}
-
-        <div className="grid md:grid-cols-4 gap-5 mb-10">
-
-          <div className="bg-[#07153f] rounded-xl p-5">
-            <p className="text-gray-400">Total Products</p>
-            <h2 className="text-4xl font-bold text-cyan-400">
+      <section className="px-8 py-10">
+        <div className="mb-10 grid gap-5 md:grid-cols-4">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
+            <p className="text-sm font-bold text-gray-400">Total Products</p>
+            <h2 className="mt-3 text-4xl font-black text-cyan-300">
               {products.length}
             </h2>
           </div>
 
-          <div className="bg-[#07153f] rounded-xl p-5">
-            <p className="text-gray-400">Active</p>
-            <h2 className="text-4xl font-bold text-green-400">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
+            <p className="text-sm font-bold text-gray-400">Active</p>
+            <h2 className="mt-3 text-4xl font-black text-green-300">
               {activeProducts}
             </h2>
           </div>
 
-          <div className="bg-[#07153f] rounded-xl p-5">
-            <p className="text-gray-400">Inactive</p>
-            <h2 className="text-4xl font-bold text-red-400">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
+            <p className="text-sm font-bold text-gray-400">Inactive</p>
+            <h2 className="mt-3 text-4xl font-black text-yellow-300">
               {inactiveProducts}
             </h2>
           </div>
 
-          <div className="bg-[#07153f] rounded-xl p-5">
-            <p className="text-gray-400">Total Stock</p>
-            <h2 className="text-4xl font-bold text-yellow-400">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
+            <p className="text-sm font-bold text-gray-400">Total Stock</p>
+            <h2 className="mt-3 text-4xl font-black text-cyan-300">
               {totalStock}
             </h2>
           </div>
-
         </div>
 
-        {/* PRODUCTS */}
-
         {products.length === 0 ? (
-          <div className="bg-[#07153f] rounded-xl p-10 text-center">
-            <h2 className="text-3xl font-bold mb-2">
-              No Products Yet
-            </h2>
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-12 text-center shadow-2xl shadow-black/30">
+            <h2 className="text-3xl font-black">No Products Yet</h2>
 
-            <p className="text-gray-400 mb-6">
-              Create your first listing.
-            </p>
+            <p className="mt-3 text-gray-400">Create your first listing.</p>
 
             <Link
               href="/seller/products/new"
-              className="bg-cyan-500 text-black px-6 py-3 rounded-xl font-bold"
+              className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black transition hover:bg-cyan-300"
             >
               Add Product
             </Link>
           </div>
         ) : (
-
-          <div className="grid md:grid-cols-2 gap-6">
-
+          <div className="grid gap-6">
             {products.map((product) => (
-
               <div
                 key={product.id}
-                className="bg-[#07153f] rounded-2xl overflow-hidden border border-cyan-900"
+                className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30"
               >
+                <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
+                  <div className="flex h-64 items-center justify-center bg-black/50 lg:h-full">
+                    {product.image_url ? (
+                      <img
+                        src={product.image_url}
+                        alt={product.title}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-6xl">🎮</span>
+                    )}
+                  </div>
 
-                {/* IMAGE */}
+                  <div className="p-6">
+                    <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-start">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <h2 className="text-2xl font-black">
+                            {product.title}
+                          </h2>
 
-                <div className="h-56 bg-black">
+                          {product.status === "active" ? (
+                            <span className="rounded-full bg-green-400/10 px-3 py-1 text-xs font-black text-green-300">
+                              Active
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-yellow-400/10 px-3 py-1 text-xs font-black text-yellow-300">
+                              Inactive
+                            </span>
+                          )}
+                        </div>
 
-                  {product.image_url ? (
-                    <img
-                      src={product.image_url}
-                      alt={product.title}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-7xl">
-                      🎮
+                        <p className="mt-2 text-sm font-bold text-cyan-300">
+                          {product.category_name ||
+                            product.category ||
+                            "Game Product"}
+                        </p>
+
+                        <p className="mt-4 line-clamp-3 max-w-3xl text-gray-400">
+                          {product.description || "No description provided."}
+                        </p>
+                      </div>
+
+                      <div className="grid min-w-[220px] gap-4 rounded-2xl border border-white/10 bg-black/30 p-5">
+                        <div>
+                          <p className="text-sm text-gray-400">Price</p>
+                          <h3 className="mt-1 text-2xl font-black text-cyan-300">
+                            Rp{" "}
+                            {Number(product.price || 0).toLocaleString(
+                              "id-ID"
+                            )}
+                          </h3>
+                        </div>
+
+                        <div>
+                          <p className="text-sm text-gray-400">Stock</p>
+                          <h3 className="mt-1 text-2xl font-black">
+                            {product.stock || 0}
+                          </h3>
+                        </div>
+                      </div>
                     </div>
-                  )}
 
+                    <div className="mt-6 flex flex-wrap gap-3">
+                      <Link
+                        href={`/seller/products/${product.id}/edit`}
+                        className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-black transition hover:bg-cyan-300"
+                      >
+                        Edit
+                      </Link>
+
+                      <button
+                        onClick={() => toggleStatus(product)}
+                        className="rounded-xl bg-yellow-500 px-5 py-3 font-black text-black transition hover:bg-yellow-400"
+                      >
+                        {product.status === "active"
+                          ? "Deactivate"
+                          : "Activate"}
+                      </button>
+
+                      <button
+                        onClick={() => deleteProduct(product.id)}
+                        className="rounded-xl bg-red-500 px-5 py-3 font-black text-white transition hover:bg-red-400"
+                      >
+                        Delete
+                      </button>
+
+                      <Link
+                        href={`/product/${product.id}`}
+                        className="rounded-xl border border-white/10 px-5 py-3 font-black text-gray-300 transition hover:bg-white hover:text-black"
+                      >
+                        View Product
+                      </Link>
+                    </div>
+                  </div>
                 </div>
-
-                {/* CONTENT */}
-
-                <div className="p-6">
-
-                  <div className="flex justify-between mb-4">
-
-                    <div>
-
-                      <h2 className="text-2xl font-bold">
-                        {product.title}
-                      </h2>
-
-                      <p className="text-cyan-400">
-                        {product.category_name ||
-                          product.category ||
-                          "Game Product"}
-                      </p>
-
-                    </div>
-
-                    <div>
-
-                      {product.status === "active" ? (
-                        <span className="bg-green-500 text-black px-4 py-1 rounded-full font-bold">
-                          Active
-                        </span>
-                      ) : (
-                        <span className="bg-red-500 text-white px-4 py-1 rounded-full font-bold">
-                          Inactive
-                        </span>
-                      )}
-
-                    </div>
-
-                  </div>
-
-                  <p className="text-gray-300 mb-5 line-clamp-2">
-                    {product.description}
-                  </p>
-
-                  <div className="grid grid-cols-2 gap-5 mb-6">
-
-                    <div>
-                      <p className="text-gray-400 text-sm">
-                        Price
-                      </p>
-
-                      <h3 className="text-2xl font-bold text-cyan-400">
-                        Rp{" "}
-                        {Number(
-                          product.price || 0
-                        ).toLocaleString()}
-                      </h3>
-                    </div>
-
-                    <div>
-                      <p className="text-gray-400 text-sm">
-                        Stock
-                      </p>
-
-                      <h3 className="text-2xl font-bold">
-                        {product.stock}
-                      </h3>
-                    </div>
-
-                  </div>
-
-                  <div className="flex gap-3">
-
-                    <Link
-                      href={`/seller/products/edit/${product.id}`}
-                      className="flex-1 bg-cyan-500 text-black text-center py-3 rounded-xl font-bold"
-                    >
-                      Edit
-                    </Link>
-
-                    <button
-                      onClick={() =>
-                        toggleStatus(product)
-                      }
-                      className="flex-1 bg-yellow-500 text-black py-3 rounded-xl font-bold"
-                    >
-                      {product.status === "active"
-                        ? "Deactivate"
-                        : "Activate"}
-                    </button>
-
-                    <button
-                      onClick={() =>
-                        deleteProduct(product.id)
-                      }
-                      className="bg-red-500 px-5 rounded-xl font-bold"
-                    >
-                      Delete
-                    </button>
-
-                  </div>
-
-                </div>
-
               </div>
-
             ))}
-
           </div>
-
         )}
-
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

@@ -1,19 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
   id: number;
-  product: string | null;
+  buyer_id: string | null;
   buyer: string | null;
+  seller_id: string | null;
+  product_id: number | null;
+
+  product: string | null;
   price: string | number | null;
+  quantity: number | null;
+  total_price: string | number | null;
+
+  category_id: number | null;
+  category_name: string | null;
+  game_master_id: number | null;
+  game_name: string | null;
+
   status: string | null;
   payment_proof: string | null;
   payment_image: string | null;
-  seller_id: string | null;
   created_at: string;
 };
 
@@ -27,45 +38,105 @@ const orderStatuses = [
 ];
 
 function normalizeStatus(status: string | null) {
+  if (status === "pending") return "Pending Payment";
+  if (status === "pending_payment") return "Pending Payment";
   if (status === "Menunggu Pembayaran") return "Pending Payment";
   if (status === "Menunggu Cek Pembayaran") return "Payment Verification";
   if (status === "Diproses") return "Processing";
   if (status === "Selesai") return "Completed";
   if (status === "Dibatalkan") return "Cancelled";
-  return status || "Unknown";
+  return status || "Pending Payment";
 }
 
 function getStatusClass(status: string | null) {
   const normalizedStatus = normalizeStatus(status);
 
   if (normalizedStatus === "Completed") {
-    return "bg-green-400/10 text-green-300";
+    return "border-green-400/20 bg-green-400/10 text-green-300";
   }
 
   if (normalizedStatus === "Processing") {
-    return "bg-blue-400/10 text-blue-300";
+    return "border-blue-400/20 bg-blue-400/10 text-blue-300";
   }
 
   if (normalizedStatus === "Cancelled") {
-    return "bg-red-400/10 text-red-300";
+    return "border-red-400/20 bg-red-400/10 text-red-300";
   }
 
   if (normalizedStatus === "Payment Verification") {
-    return "bg-yellow-400/10 text-yellow-300";
+    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
   }
 
-  return "bg-cyan-400/10 text-cyan-300";
+  return "border-cyan-400/20 bg-cyan-400/10 text-cyan-300";
 }
 
-export default function MyOrdersPage() {
+function formatPrice(value: string | number | null) {
+  const price = Number(value || 0);
+
+  if (!Number.isFinite(price)) {
+    return "Rp 0";
+  }
+
+  return `Rp ${price.toLocaleString("id-ID")}`;
+}
+
+export default function MyOrdersV3Page() {
   const [user, setUser] = useState<User | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+
   const [activeStatus, setActiveStatus] = useState("all");
+  const [search, setSearch] = useState("");
+
+  const filteredOrders = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return orders.filter((order) => {
+      const normalizedStatus = normalizeStatus(order.status);
+
+      const matchesStatus =
+        activeStatus === "all" || normalizedStatus === activeStatus;
+
+      const matchesSearch =
+        !query ||
+        (order.product || "").toLowerCase().includes(query) ||
+        (order.category_name || "").toLowerCase().includes(query) ||
+        (order.game_name || "").toLowerCase().includes(query) ||
+        String(order.id).includes(query);
+
+      return matchesStatus && matchesSearch;
+    });
+  }, [orders, activeStatus, search]);
+
+  const pendingPaymentCount = orders.filter(
+    (order) => normalizeStatus(order.status) === "Pending Payment"
+  ).length;
+
+  const verificationCount = orders.filter(
+    (order) => normalizeStatus(order.status) === "Payment Verification"
+  ).length;
+
+  const processingCount = orders.filter(
+    (order) => normalizeStatus(order.status) === "Processing"
+  ).length;
+
+  const completedCount = orders.filter(
+    (order) => normalizeStatus(order.status) === "Completed"
+  ).length;
+
+  const totalSpent = orders
+    .filter((order) => normalizeStatus(order.status) === "Completed")
+    .reduce((sum, order) => sum + Number(order.total_price || order.price || 0), 0);
 
   useEffect(() => {
     async function loadOrders() {
-      const { data: userData } = await supabase.auth.getUser();
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+
+      if (userError) {
+        alert(userError.message);
+        setLoading(false);
+        return;
+      }
 
       if (!userData.user) {
         setUser(null);
@@ -78,7 +149,7 @@ export default function MyOrdersPage() {
       const { data, error } = await supabase
         .from("orders")
         .select("*")
-        .eq("buyer", userData.user.email)
+        .or(`buyer_id.eq.${userData.user.id},buyer.eq.${userData.user.email}`)
         .order("id", { ascending: false });
 
       if (error) {
@@ -93,23 +164,6 @@ export default function MyOrdersPage() {
 
     loadOrders();
   }, []);
-
-  const filteredOrders =
-    activeStatus === "all"
-      ? orders
-      : orders.filter((order) => normalizeStatus(order.status) === activeStatus);
-
-  const pendingPaymentCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Pending Payment"
-  ).length;
-
-  const processingCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Processing"
-  ).length;
-
-  const completedCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Completed"
-  ).length;
 
   if (loading) {
     return (
@@ -135,7 +189,7 @@ export default function MyOrdersPage() {
 
           <Link
             href="/"
-            className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black hover:bg-cyan-300"
+            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
           >
             Back to Home
           </Link>
@@ -146,57 +200,37 @@ export default function MyOrdersPage() {
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <nav className="sticky top-0 z-50 flex h-20 items-center justify-between border-b border-white/10 bg-[#020617]/90 px-8 backdrop-blur-xl">
-        <div className="flex items-center gap-5">
-          <Link href="/" className="flex items-center">
-            <img
-              src="/logo.png?v=2"
-              alt="ComePlayers"
-              className="h-16 w-auto object-contain md:h-20"
-            />
-          </Link>
-
-          <div className="hidden border-l border-white/10 pl-5 lg:block">
-            <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-gray-400">
-              Powered By
-            </p>
-            <p className="bg-gradient-to-r from-cyan-300 to-blue-500 bg-clip-text text-lg font-black text-transparent">
-              EvoGaming
-            </p>
-          </div>
-        </div>
-
-        <Link
-          href="/"
-          className="rounded-full border border-cyan-400 px-5 py-2 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-        >
-          Back to Home
-        </Link>
-      </nav>
-
       <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
 
-        <div className="relative z-10">
-          <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-            Buyer Dashboard
-          </p>
+        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
+          <div>
+            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              Buyer Dashboard
+            </p>
 
-          <h1 className="text-5xl font-black md:text-7xl">My Orders</h1>
+            <h1 className="text-5xl font-black md:text-7xl">My Orders</h1>
 
-          <p className="mt-5 max-w-2xl text-gray-300">
-            Track your purchases, payment status, and order progress in one
-            place.
-          </p>
+            <p className="mt-5 max-w-2xl text-gray-300">
+              Track your purchases, payment status, and delivery progress.
+            </p>
 
-          <p className="mt-3 text-sm text-gray-500">
-            Logged in as {user.email}
-          </p>
+            <p className="mt-3 text-sm text-gray-500">
+              Logged in as {user.email}
+            </p>
+          </div>
+
+          <Link
+            href="/"
+            className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+          >
+            Browse Products
+          </Link>
         </div>
       </section>
 
       <section className="px-8 py-10">
-        <div className="mb-8 grid gap-5 md:grid-cols-4">
+        <div className="mb-8 grid gap-5 md:grid-cols-5">
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
             <p className="text-sm text-gray-400">Total Orders</p>
             <p className="mt-2 text-3xl font-black text-cyan-300">
@@ -206,8 +240,15 @@ export default function MyOrdersPage() {
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
             <p className="text-sm text-gray-400">Pending Payment</p>
-            <p className="mt-2 text-3xl font-black text-yellow-300">
+            <p className="mt-2 text-3xl font-black text-cyan-300">
               {pendingPaymentCount}
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+            <p className="text-sm text-gray-400">Verification</p>
+            <p className="mt-2 text-3xl font-black text-yellow-300">
+              {verificationCount}
             </p>
           </div>
 
@@ -219,27 +260,37 @@ export default function MyOrdersPage() {
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Completed</p>
-            <p className="mt-2 text-3xl font-black text-green-300">
-              {completedCount}
+            <p className="text-sm text-gray-400">Completed Spent</p>
+            <p className="mt-2 text-2xl font-black text-green-300">
+              {formatPrice(totalSpent)}
             </p>
           </div>
         </div>
 
-        <div className="mb-8 flex flex-wrap gap-3">
-          {orderStatuses.map((status) => (
-            <button
-              key={status}
-              onClick={() => setActiveStatus(status)}
-              className={`rounded-full px-5 py-2 text-sm font-bold transition ${
-                activeStatus === status
-                  ? "bg-cyan-400 text-black"
-                  : "border border-white/10 bg-white/[0.04] text-gray-300 hover:border-cyan-400 hover:text-white"
-              }`}
-            >
-              {status === "all" ? "All" : status}
-            </button>
-          ))}
+        <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
+          <input
+            type="text"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search by product, category, game, or order ID..."
+            className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+          />
+
+          <div className="flex flex-wrap gap-3">
+            {orderStatuses.map((status) => (
+              <button
+                key={status}
+                onClick={() => setActiveStatus(status)}
+                className={`rounded-full px-5 py-3 text-sm font-bold transition ${
+                  activeStatus === status
+                    ? "bg-cyan-400 text-black"
+                    : "border border-white/10 bg-white/[0.04] text-gray-300 hover:border-cyan-400 hover:text-white"
+                }`}
+              >
+                {status === "all" ? "All" : status}
+              </button>
+            ))}
+          </div>
         </div>
 
         {filteredOrders.length === 0 ? (
@@ -247,12 +298,12 @@ export default function MyOrdersPage() {
             <h2 className="text-3xl font-black">No orders found.</h2>
 
             <p className="mt-3 text-gray-400">
-              You do not have any orders with this status yet.
+              You do not have any orders with this filter yet.
             </p>
 
             <Link
               href="/"
-              className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black hover:bg-cyan-300"
+              className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
             >
               Browse Products
             </Link>
@@ -261,6 +312,12 @@ export default function MyOrdersPage() {
           <div className="grid gap-6">
             {filteredOrders.map((order) => {
               const normalizedStatus = normalizeStatus(order.status);
+              const totalPrice = Number(order.total_price || order.price || 0);
+
+              const canPay =
+                normalizedStatus === "Pending Payment" ||
+                normalizedStatus === "Payment Verification";
+
               const canReview = normalizedStatus === "Completed";
 
               return (
@@ -268,7 +325,7 @@ export default function MyOrdersPage() {
                   key={order.id}
                   className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30"
                 >
-                  <div className="flex flex-col justify-between gap-6 lg:flex-row">
+                  <div className="grid gap-6 xl:grid-cols-[1fr_260px]">
                     <div>
                       <div className="flex flex-wrap items-center gap-3">
                         <h2 className="text-2xl font-black">
@@ -276,7 +333,7 @@ export default function MyOrdersPage() {
                         </h2>
 
                         <span
-                          className={`rounded-full px-3 py-1 text-xs font-black ${getStatusClass(
+                          className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClass(
                             order.status
                           )}`}
                         >
@@ -284,28 +341,61 @@ export default function MyOrdersPage() {
                         </span>
                       </div>
 
-                      <p className="mt-3 text-2xl font-black text-cyan-300">
-                        {order.price}
+                      <p className="mt-3 text-3xl font-black text-cyan-300">
+                        {formatPrice(totalPrice)}
                       </p>
 
-                      <p className="mt-3 text-sm text-gray-400">
-                        Order ID: #{order.id}
-                      </p>
+                      <div className="mt-5 grid gap-4 md:grid-cols-2">
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Order ID</p>
+                          <p className="mt-1 font-bold">#{order.id}</p>
+                        </div>
 
-                      <p className="mt-1 text-sm text-gray-500">
-                        Created:{" "}
-                        {order.created_at
-                          ? new Date(order.created_at).toLocaleString()
-                          : "-"}
-                      </p>
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Category</p>
+                          <p className="mt-1 font-bold">
+                            {order.category_name || "-"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Game</p>
+                          <p className="mt-1 font-bold">
+                            {order.game_name || "-"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Quantity</p>
+                          <p className="mt-1 font-bold">
+                            {order.quantity || 1}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Created</p>
+                          <p className="mt-1 font-bold">
+                            {order.created_at
+                              ? new Date(order.created_at).toLocaleString()
+                              : "-"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Seller ID</p>
+                          <p className="mt-1 break-words font-bold">
+                            {order.seller_id || "-"}
+                          </p>
+                        </div>
+                      </div>
 
                       {order.payment_proof && (
-                        <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-sm font-bold text-cyan-300">
-                            Order Notes
+                        <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+                          <p className="text-sm font-black text-cyan-300">
+                            Payment Details
                           </p>
 
-                          <p className="mt-2 text-sm text-gray-300">
+                          <p className="mt-3 whitespace-pre-line text-sm leading-6 text-gray-300">
                             {order.payment_proof}
                           </p>
                         </div>
@@ -314,45 +404,55 @@ export default function MyOrdersPage() {
                       {order.payment_image && (
                         <div className="mt-5">
                           <p className="mb-3 font-bold text-cyan-300">
-                            Payment Proof
+                            Payment Proof Image
                           </p>
 
                           <a
                             href={order.payment_image}
                             target="_blank"
                             rel="noopener noreferrer"
+                            className="inline-block"
                           >
                             <img
                               src={order.payment_image}
                               alt="Payment Proof"
-                              className="h-32 w-56 rounded-xl border border-white/10 object-cover transition hover:scale-105"
+                              className="h-40 w-72 rounded-xl border border-white/10 object-cover transition hover:scale-105"
                             />
                           </a>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex min-w-[220px] flex-col gap-3">
-                      {normalizedStatus === "Pending Payment" && (
+                    <div className="flex flex-col gap-3">
+                      {canPay && (
                         <Link
-                          href="/payment"
-                          className="rounded-2xl bg-cyan-400 px-5 py-3 text-center font-black text-black hover:bg-cyan-300"
+                          href={`/payment?order=${order.id}`}
+                          className="rounded-2xl bg-cyan-400 px-5 py-3 text-center font-black text-black transition hover:bg-cyan-300"
                         >
                           Continue Payment
                         </Link>
                       )}
 
+                      {order.product_id && (
+                        <Link
+                          href={`/product/${order.product_id}`}
+                          className="rounded-2xl border border-cyan-400/40 px-5 py-3 text-center font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+                        >
+                          View Product
+                        </Link>
+                      )}
+
                       <Link
-                        href={`/order-detail/${order.id}`}
-                        className="rounded-2xl border border-white/10 px-5 py-3 text-center font-black text-white hover:bg-white hover:text-black"
+                        href={`/order/${order.id}`}
+                        className="rounded-2xl border border-white/10 px-5 py-3 text-center font-black text-white transition hover:bg-white hover:text-black"
                       >
-                        View Details
+                        View Order Detail
                       </Link>
 
                       {canReview && (
                         <Link
                           href={`/review/${order.id}`}
-                          className="rounded-2xl bg-yellow-400 px-5 py-3 text-center font-black text-black hover:bg-yellow-300"
+                          className="rounded-2xl bg-yellow-400 px-5 py-3 text-center font-black text-black transition hover:bg-yellow-300"
                         >
                           Leave Review
                         </Link>
@@ -362,7 +462,7 @@ export default function MyOrdersPage() {
                         onClick={() =>
                           alert("Support chat will be connected later.")
                         }
-                        className="rounded-2xl border border-cyan-400/40 px-5 py-3 font-black text-cyan-300 hover:bg-cyan-400 hover:text-black"
+                        className="rounded-2xl border border-white/10 px-5 py-3 font-black text-gray-300 transition hover:bg-white hover:text-black"
                       >
                         Contact Support
                       </button>
