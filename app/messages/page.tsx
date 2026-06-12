@@ -13,8 +13,8 @@ type Profile = {
   role: string | null;
 };
 
-type Conversation = {
-  id: number;
+type ChatRoom = {
+  id: string;
   buyer_id: string;
   seller_id: string;
   product_id: number | null;
@@ -22,27 +22,31 @@ type Conversation = {
   last_message: string | null;
   last_message_at: string | null;
   created_at: string;
+};
+
+type ChatRoomView = ChatRoom & {
   buyer?: Profile | null;
   seller?: Profile | null;
   product?: Product | null;
   order?: Order | null;
 };
 
-type Message = {
-  id: number;
-  conversation_id: number;
+type ChatMessage = {
+  id: string;
+  room_id: string;
   sender_id: string;
+  receiver_id: string;
   message: string | null;
-  message_type: string | null;
-  attachment_url: string | null;
+  is_read: boolean | null;
   created_at: string;
   sender?: Profile | null;
 };
 
 type Product = {
   id: number;
-  title: string | null;
-  price: string | number | null;
+  title?: string | null;
+  name?: string | null;
+  price?: string | number | null;
   image_url?: string | null;
   thumbnail_url?: string | null;
   status?: string | null;
@@ -86,100 +90,198 @@ function getDisplayName(profile?: Profile | null) {
   return profile?.username || profile?.email || "Unknown User";
 }
 
-function getOtherProfile(conversation: Conversation, userId: string) {
-  return conversation.buyer_id === userId ? conversation.seller : conversation.buyer;
+function getOtherProfile(room: ChatRoomView, userId: string) {
+  return room.buyer_id === userId ? room.seller : room.buyer;
+}
+
+function getOtherUserId(room: ChatRoomView, userId: string) {
+  return room.buyer_id === userId ? room.seller_id : room.buyer_id;
+}
+
+function getProductTitle(product?: Product | null) {
+  return product?.title || product?.name || "Product";
 }
 
 function getProductImage(product?: Product | null) {
   return product?.image_url || product?.thumbnail_url || null;
 }
 
+function isImageUrl(text: string | null | undefined) {
+  if (!text) return false;
+  return /^https?:\/\/.+\.(png|jpg|jpeg|gif|webp)(\?.*)?$/i.test(text.trim());
+}
+
 export default function MessagesG2GStylePage() {
   const [user, setUser] = useState<User | null>(null);
   const [myProfile, setMyProfile] = useState<Profile | null>(null);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [selectedConversation, setSelectedConversation] =
-    useState<Conversation | null>(null);
+  const [rooms, setRooms] = useState<ChatRoomView[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [selectedRoom, setSelectedRoom] = useState<ChatRoomView | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
-  const [attachmentUrl, setAttachmentUrl] = useState("");
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const filteredConversations = useMemo(() => {
+  const filteredRooms = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return conversations.filter((conversation) => {
+    return rooms.filter((room) => {
       if (!query) return true;
 
-      const other = user ? getOtherProfile(conversation, user.id) : null;
+      const other = user ? getOtherProfile(room, user.id) : null;
 
       return (
-        String(conversation.id).includes(query) ||
-        String(conversation.order_id || "").includes(query) ||
-        String(conversation.product_id || "").includes(query) ||
-        (conversation.last_message || "").toLowerCase().includes(query) ||
-        (conversation.product?.title || "").toLowerCase().includes(query) ||
+        String(room.id).toLowerCase().includes(query) ||
+        String(room.order_id || "").includes(query) ||
+        String(room.product_id || "").includes(query) ||
+        (room.last_message || "").toLowerCase().includes(query) ||
+        getProductTitle(room.product).toLowerCase().includes(query) ||
         (other?.username || "").toLowerCase().includes(query) ||
         (other?.email || "").toLowerCase().includes(query)
       );
     });
-  }, [conversations, search, user]);
+  }, [rooms, search, user]);
 
-  async function loadConversations(currentUser: User) {
-    const { data: conversationData, error: conversationError } = await supabase
-      .from("conversations")
-      .select(
-        `
-        *,
-        buyer:buyer_id(id,email,username,avatar_url,role),
-        seller:seller_id(id,email,username,avatar_url,role),
-        product:product_id(id,title,price,image_url,thumbnail_url,status),
-        order:order_id(id,status,total_price,escrow_status)
-      `
-      )
+  async function hydrateRooms(rawRooms: ChatRoom[]) {
+    const profileIds = Array.from(
+      new Set(rawRooms.flatMap((room) => [room.buyer_id, room.seller_id]).filter(Boolean))
+    );
+
+    const productIds = Array.from(
+      new Set(rawRooms.map((room) => room.product_id).filter((id): id is number => Boolean(id)))
+    );
+
+    const orderIds = Array.from(
+      new Set(rawRooms.map((room) => room.order_id).filter((id): id is number => Boolean(id)))
+    );
+
+    const [profilesResult, productsResult, ordersResult] = await Promise.all([
+      profileIds.length
+        ? supabase
+            .from("profiles")
+            .select("id,email,username,avatar_url,role")
+            .in("id", profileIds)
+        : Promise.resolve({ data: [], error: null }),
+      productIds.length
+        ? supabase
+            .from("products")
+            .select("id,title,name,price,image_url,thumbnail_url,status")
+            .in("id", productIds)
+        : Promise.resolve({ data: [], error: null }),
+      orderIds.length
+        ? supabase
+            .from("orders")
+            .select("id,status,total_price,escrow_status")
+            .in("id", orderIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (profilesResult.error) {
+      alert(profilesResult.error.message);
+      return rawRooms;
+    }
+
+    if (productsResult.error) alert(productsResult.error.message);
+    if (ordersResult.error) alert(ordersResult.error.message);
+
+    const profiles = new Map(
+      ((profilesResult.data || []) as Profile[]).map((profile) => [profile.id, profile])
+    );
+
+    const products = new Map(
+      ((productsResult.data || []) as Product[]).map((product) => [product.id, product])
+    );
+
+    const orders = new Map(
+      ((ordersResult.data || []) as Order[]).map((order) => [order.id, order])
+    );
+
+    return rawRooms.map((room) => ({
+      ...room,
+      buyer: profiles.get(room.buyer_id) || null,
+      seller: profiles.get(room.seller_id) || null,
+      product: room.product_id ? products.get(room.product_id) || null : null,
+      order: room.order_id ? orders.get(room.order_id) || null : null,
+    }));
+  }
+
+  async function loadRooms(currentUser: User) {
+    const { data, error } = await supabase
+      .from("chat_rooms")
+      .select("*")
       .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
-      .order("last_message_at", { ascending: false, nullsFirst: false });
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
 
-    if (conversationError) {
-      alert(conversationError.message);
+    if (error) {
+      alert(error.message);
       return;
     }
 
-    const loaded = (conversationData || []) as Conversation[];
-    setConversations(loaded);
+    const hydrated = (await hydrateRooms((data || []) as ChatRoom[])) as ChatRoomView[];
+    setRooms(hydrated);
 
-    if (!selectedConversation && loaded.length > 0) {
-      setSelectedConversation(loaded[0]);
-      await loadMessages(loaded[0].id);
+    if (!selectedRoom && hydrated.length > 0) {
+      setSelectedRoom(hydrated[0]);
+      await loadMessages(hydrated[0]);
     }
   }
 
-  async function loadMessages(conversationId: number) {
+  async function hydrateMessages(rawMessages: ChatMessage[]) {
+    const profileIds = Array.from(
+      new Set(rawMessages.map((message) => message.sender_id).filter(Boolean))
+    );
+
+    if (!profileIds.length) return rawMessages;
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id,email,username,avatar_url,role")
+      .in("id", profileIds);
+
+    if (error) {
+      alert(error.message);
+      return rawMessages;
+    }
+
+    const profiles = new Map(((data || []) as Profile[]).map((profile) => [profile.id, profile]));
+
+    return rawMessages.map((message) => ({
+      ...message,
+      sender: profiles.get(message.sender_id) || null,
+    }));
+  }
+
+  async function loadMessages(room: ChatRoomView) {
     setLoadingMessages(true);
 
-    const { data: messageData, error: messageError } = await supabase
-      .from("messages")
-      .select(
-        `
-        *,
-        sender:sender_id(id,email,username,avatar_url,role)
-      `
-      )
-      .eq("conversation_id", conversationId)
+    const { data, error } = await supabase
+      .from("chat_messages")
+      .select("*")
+      .eq("room_id", room.id)
       .order("created_at", { ascending: true });
 
-    if (messageError) {
-      alert(messageError.message);
+    if (error) {
+      alert(error.message);
       setLoadingMessages(false);
       return;
     }
 
-    setMessages((messageData || []) as Message[]);
+    const hydrated = (await hydrateMessages((data || []) as ChatMessage[])) as ChatMessage[];
+    setMessages(hydrated);
+
+    if (user) {
+      await supabase
+        .from("chat_messages")
+        .update({ is_read: true })
+        .eq("room_id", room.id)
+        .eq("receiver_id", user.id)
+        .eq("is_read", false);
+    }
+
     setLoadingMessages(false);
 
     setTimeout(() => {
@@ -187,30 +289,27 @@ export default function MessagesG2GStylePage() {
     }, 100);
   }
 
-  async function selectConversation(conversation: Conversation) {
-    setSelectedConversation(conversation);
-    await loadMessages(conversation.id);
+  async function selectRoom(room: ChatRoomView) {
+    setSelectedRoom(room);
+    await loadMessages(room);
   }
 
   async function sendMessage() {
-    if (!user || !selectedConversation) return;
+    if (!user || !selectedRoom) return;
 
-    const messageText = draft.trim();
-    const imageUrl = attachmentUrl.trim();
+    const text = draft.trim();
+    if (!text) return;
 
-    if (!messageText && !imageUrl) return;
+    const receiverId = getOtherUserId(selectedRoom, user.id);
 
     setSending(true);
 
-    const messageType = imageUrl ? "image" : "text";
-    const finalMessage = messageText || "Sent an attachment.";
-
-    const { error: insertError } = await supabase.from("messages").insert({
-      conversation_id: selectedConversation.id,
+    const { error: insertError } = await supabase.from("chat_messages").insert({
+      room_id: selectedRoom.id,
       sender_id: user.id,
-      message: finalMessage,
-      message_type: messageType,
-      attachment_url: imageUrl || null,
+      receiver_id: receiverId,
+      message: text,
+      is_read: false,
     });
 
     if (insertError) {
@@ -220,12 +319,12 @@ export default function MessagesG2GStylePage() {
     }
 
     const { error: updateError } = await supabase
-      .from("conversations")
+      .from("chat_rooms")
       .update({
-        last_message: finalMessage,
+        last_message: text,
         last_message_at: new Date().toISOString(),
       })
-      .eq("id", selectedConversation.id);
+      .eq("id", selectedRoom.id);
 
     if (updateError) {
       alert(updateError.message);
@@ -234,13 +333,12 @@ export default function MessagesG2GStylePage() {
     }
 
     setDraft("");
-    setAttachmentUrl("");
-    await loadMessages(selectedConversation.id);
-    await loadConversations(user);
+    await loadMessages(selectedRoom);
+    await loadRooms(user);
     setSending(false);
   }
 
-  async function sendQuickMessage(text: string) {
+  function sendQuickMessage(text: string) {
     setDraft(text);
   }
 
@@ -271,7 +369,7 @@ export default function MessagesG2GStylePage() {
         .maybeSingle();
 
       setMyProfile((profileData || null) as Profile | null);
-      await loadConversations(userData.user);
+      await loadRooms(userData.user);
 
       setLoading(false);
     }
@@ -280,21 +378,21 @@ export default function MessagesG2GStylePage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedConversation) return;
+    if (!selectedRoom) return;
 
     const channel = supabase
-      .channel(`conversation-${selectedConversation.id}`)
+      .channel(`chat-room-${selectedRoom.id}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
-          table: "messages",
-          filter: `conversation_id=eq.${selectedConversation.id}`,
+          table: "chat_messages",
+          filter: `room_id=eq.${selectedRoom.id}`,
         },
         async () => {
-          await loadMessages(selectedConversation.id);
-          if (user) await loadConversations(user);
+          await loadMessages(selectedRoom);
+          if (user) await loadRooms(user);
         }
       )
       .subscribe();
@@ -302,7 +400,7 @@ export default function MessagesG2GStylePage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [selectedConversation?.id, user?.id]);
+  }, [selectedRoom?.id, user?.id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -333,9 +431,7 @@ export default function MessagesG2GStylePage() {
     );
   }
 
-  const selectedOther = selectedConversation
-    ? getOtherProfile(selectedConversation, user.id)
-    : null;
+  const selectedOther = selectedRoom ? getOtherProfile(selectedRoom, user.id) : null;
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
@@ -386,25 +482,25 @@ export default function MessagesG2GStylePage() {
           <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
             <h2 className="font-black">Direct Messages</h2>
             <span className="rounded-full bg-cyan-400 px-3 py-1 text-xs font-black text-black">
-              {filteredConversations.length}
+              {filteredRooms.length}
             </span>
           </div>
 
           <div className="max-h-[620px] overflow-y-auto">
-            {filteredConversations.length === 0 ? (
+            {filteredRooms.length === 0 ? (
               <div className="p-8 text-center text-sm text-gray-400">
                 No conversations yet.
               </div>
             ) : (
-              filteredConversations.map((conversation) => {
-                const other = getOtherProfile(conversation, user.id);
-                const active = selectedConversation?.id === conversation.id;
-                const image = getProductImage(conversation.product);
+              filteredRooms.map((room) => {
+                const other = getOtherProfile(room, user.id);
+                const active = selectedRoom?.id === room.id;
+                const image = getProductImage(room.product);
 
                 return (
                   <button
-                    key={conversation.id}
-                    onClick={() => selectConversation(conversation)}
+                    key={room.id}
+                    onClick={() => selectRoom(room)}
                     className={`flex w-full gap-3 border-b border-white/10 p-4 text-left transition hover:bg-white/5 ${
                       active ? "bg-white/10" : ""
                     }`}
@@ -428,17 +524,17 @@ export default function MessagesG2GStylePage() {
                       <div className="flex items-center justify-between gap-3">
                         <p className="truncate font-black">{getDisplayName(other)}</p>
                         <p className="shrink-0 text-xs text-gray-500">
-                          {formatDate(conversation.last_message_at || conversation.created_at)}
+                          {formatDate(room.last_message_at || room.created_at)}
                         </p>
                       </div>
 
                       <p className="mt-1 truncate text-sm text-gray-400">
-                        {conversation.last_message || "No messages yet."}
+                        {room.last_message || "No messages yet."}
                       </p>
 
-                      {conversation.order_id && (
+                      {room.order_id && (
                         <p className="mt-1 text-xs font-bold text-yellow-300">
-                          Order #{conversation.order_id}
+                          Order #{room.order_id}
                         </p>
                       )}
                     </div>
@@ -450,7 +546,7 @@ export default function MessagesG2GStylePage() {
         </aside>
 
         <section className="flex min-h-[760px] flex-col overflow-hidden rounded-b-3xl border border-t-0 border-white/10 bg-[#070b16] lg:rounded-r-3xl lg:rounded-bl-none lg:border-l-0 lg:border-t">
-          {!selectedConversation ? (
+          {!selectedRoom ? (
             <div className="flex flex-1 items-center justify-center p-10 text-center">
               <div>
                 <h2 className="text-3xl font-black">No conversation selected</h2>
@@ -475,12 +571,12 @@ export default function MessagesG2GStylePage() {
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {selectedConversation.order_id && (
+                  {selectedRoom.order_id && (
                     <Link
-                      href={`/order/${selectedConversation.order_id}`}
+                      href={`/order/${selectedRoom.order_id}`}
                       className="rounded-full border border-yellow-400 px-4 py-2 text-sm font-black text-yellow-300 hover:bg-yellow-400 hover:text-black"
                     >
-                      Order #{selectedConversation.order_id}
+                      Order #{selectedRoom.order_id}
                     </Link>
                   )}
 
@@ -493,13 +589,13 @@ export default function MessagesG2GStylePage() {
                 </div>
               </div>
 
-              {selectedConversation.product && (
+              {selectedRoom.product && (
                 <div className="border-b border-white/10 bg-cyan-400/5 p-4">
                   <div className="flex flex-col gap-4 rounded-2xl border border-cyan-400/20 bg-black/30 p-4 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-4">
-                      {getProductImage(selectedConversation.product) ? (
+                      {getProductImage(selectedRoom.product) ? (
                         <img
-                          src={getProductImage(selectedConversation.product) || ""}
+                          src={getProductImage(selectedRoom.product) || ""}
                           alt=""
                           className="h-16 w-16 rounded-2xl object-cover"
                         />
@@ -513,18 +609,16 @@ export default function MessagesG2GStylePage() {
                         <p className="text-xs font-black uppercase tracking-wider text-cyan-300">
                           Product Context
                         </p>
-                        <h3 className="font-black">
-                          {selectedConversation.product.title || "Product"}
-                        </h3>
+                        <h3 className="font-black">{getProductTitle(selectedRoom.product)}</h3>
                         <p className="text-sm text-green-300">
-                          {formatPrice(selectedConversation.product.price)}
+                          {formatPrice(selectedRoom.product.price)}
                         </p>
                       </div>
                     </div>
 
-                    {selectedConversation.product_id && (
+                    {selectedRoom.product_id && (
                       <Link
-                        href={`/product/${selectedConversation.product_id}`}
+                        href={`/product/${selectedRoom.product_id}`}
                         className="rounded-full bg-cyan-400 px-5 py-3 text-center font-black text-black hover:bg-cyan-300"
                       >
                         View Product
@@ -552,16 +646,7 @@ export default function MessagesG2GStylePage() {
                   <div className="space-y-5">
                     {messages.map((message) => {
                       const mine = message.sender_id === user.id;
-
-                      if (message.message_type === "system") {
-                        return (
-                          <div key={message.id} className="text-center">
-                            <span className="inline-flex rounded-full border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300">
-                              {message.message}
-                            </span>
-                          </div>
-                        );
-                      }
+                      const imageMessage = isImageUrl(message.message);
 
                       return (
                         <div
@@ -575,24 +660,26 @@ export default function MessagesG2GStylePage() {
                                 : "bg-white/10 text-white"
                             }`}
                           >
-                            {message.attachment_url && (
+                            {imageMessage && (
                               <a
-                                href={message.attachment_url}
+                                href={message.message || ""}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="mb-3 block overflow-hidden rounded-2xl border border-white/20 bg-black/20"
                               >
                                 <img
-                                  src={message.attachment_url}
+                                  src={message.message || ""}
                                   alt="attachment"
                                   className="max-h-72 w-full object-cover"
                                 />
                               </a>
                             )}
 
-                            <p className="whitespace-pre-wrap text-sm leading-6">
-                              {message.message}
-                            </p>
+                            {!imageMessage && (
+                              <p className="whitespace-pre-wrap text-sm leading-6">
+                                {message.message}
+                              </p>
+                            )}
 
                             <p
                               className={`mt-2 text-right text-[11px] ${
@@ -631,14 +718,13 @@ export default function MessagesG2GStylePage() {
                   >
                     Payment done
                   </button>
+                  <button
+                    onClick={() => sendQuickMessage("https://example.com/payment-proof.png")}
+                    className="rounded-full border border-white/10 px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white hover:text-black"
+                  >
+                    Image URL
+                  </button>
                 </div>
-
-                <input
-                  value={attachmentUrl}
-                  onChange={(event) => setAttachmentUrl(event.target.value)}
-                  placeholder="Optional image URL / attachment URL..."
-                  className="mb-3 w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-sm outline-none placeholder:text-gray-500 focus:border-cyan-400"
-                />
 
                 <div className="flex gap-3">
                   <textarea
@@ -657,7 +743,7 @@ export default function MessagesG2GStylePage() {
 
                   <button
                     onClick={sendMessage}
-                    disabled={sending || (!draft.trim() && !attachmentUrl.trim())}
+                    disabled={sending || !draft.trim()}
                     className="w-24 rounded-2xl bg-cyan-400 font-black text-black hover:bg-cyan-300 disabled:opacity-50"
                   >
                     {sending ? "..." : "Send"}
