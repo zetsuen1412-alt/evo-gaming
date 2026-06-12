@@ -2,12 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
-type ChatRoom = {
+type Profile = {
   id: string;
+  email: string | null;
+  username: string | null;
+  avatar_url: string | null;
+  role: string | null;
+};
+
+type Conversation = {
+  id: number;
   buyer_id: string;
   seller_id: string;
   product_id: number | null;
@@ -15,277 +22,230 @@ type ChatRoom = {
   last_message: string | null;
   last_message_at: string | null;
   created_at: string;
+  buyer?: Profile | null;
+  seller?: Profile | null;
+  product?: Product | null;
+  order?: Order | null;
 };
 
-type ChatMessage = {
-  id: string;
-  room_id: string;
+type Message = {
+  id: number;
+  conversation_id: number;
   sender_id: string;
-  receiver_id: string;
-  message: string;
-  is_read: boolean;
+  message: string | null;
+  message_type: string | null;
+  attachment_url: string | null;
   created_at: string;
+  sender?: Profile | null;
 };
 
-type Profile = {
-  id: string;
-  email: string | null;
-  username: string | null;
-  seller_name: string | null;
-  avatar_url: string | null;
-};
-
-type ProductInfo = {
+type Product = {
   id: number;
   title: string | null;
-  image_url: string | null;
+  price: string | number | null;
+  image_url?: string | null;
+  thumbnail_url?: string | null;
+  status?: string | null;
 };
 
-type OrderInfo = {
+type Order = {
   id: number;
-  product: string | null;
   status: string | null;
   total_price: string | number | null;
-  price: string | number | null;
-  created_at: string | null;
+  escrow_status?: string | null;
 };
 
-function formatTime(value: string | null | undefined) {
-  if (!value) return "-";
+function formatPrice(value: string | number | null | undefined) {
+  const price = Number(value || 0);
+  if (!Number.isFinite(price)) return "Rp 0";
+  return `Rp ${price.toLocaleString("id-ID")}`;
+}
 
-  return new Date(value).toLocaleString("id-ID", {
-    day: "numeric",
-    month: "short",
+function formatTime(value: string | null | undefined) {
+  if (!value) return "";
+  return new Date(value).toLocaleTimeString("id-ID", {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function formatPrice(value: string | number | null | undefined) {
-  const amount = Number(value || 0);
-  if (!Number.isFinite(amount)) return "Rp 0";
-  return `Rp ${amount.toLocaleString("id-ID")}`;
+function formatDate(value: string | null | undefined) {
+  if (!value) return "";
+  return new Date(value).toLocaleDateString("id-ID", {
+    day: "2-digit",
+    month: "short",
+  });
 }
 
-function normalizeStatus(status: string | null | undefined) {
-  if (status === "pending") return "Pending Payment";
-  if (status === "pending_payment") return "Pending Payment";
-  if (status === "Menunggu Pembayaran") return "Pending Payment";
-  if (status === "Menunggu Cek Pembayaran") return "Payment Verification";
-  if (status === "Diproses") return "Processing";
-  if (status === "Selesai") return "Completed";
-  if (status === "Dibatalkan") return "Cancelled";
-  return status || "Chat";
+function getAvatarLabel(profile?: Profile | null) {
+  const source = profile?.username || profile?.email || "?";
+  return source.slice(0, 1).toUpperCase();
 }
 
 function getDisplayName(profile?: Profile | null) {
-  return (
-    profile?.seller_name ||
-    profile?.username ||
-    profile?.email ||
-    "Unknown User"
-  );
+  return profile?.username || profile?.email || "Unknown User";
 }
 
-function getInitial(profile?: Profile | null) {
-  return getDisplayName(profile).charAt(0).toUpperCase();
+function getOtherProfile(conversation: Conversation, userId: string) {
+  return conversation.buyer_id === userId ? conversation.seller : conversation.buyer;
 }
 
-function getRoomContextTitle(
-  room: ChatRoom,
-  productsById: Record<number, ProductInfo>,
-  ordersById: Record<number, OrderInfo>
-) {
-  if (room.order_id) {
-    const order = ordersById[room.order_id];
-    return `Order #${room.order_id}${order?.product ? ` · ${order.product}` : ""}`;
-  }
-
-  if (room.product_id) {
-    const product = productsById[room.product_id];
-    return product?.title ? `Product · ${product.title}` : `Product #${room.product_id}`;
-  }
-
-  return "General conversation";
+function getProductImage(product?: Product | null) {
+  return product?.image_url || product?.thumbnail_url || null;
 }
 
-export default function MessagesPage() {
-  const searchParams = useSearchParams();
-  const roomIdFromUrl = searchParams.get("room");
+export default function MessagesG2GStylePage() {
+  const [user, setUser] = useState<User | null>(null);
+  const [myProfile, setMyProfile] = useState<Profile | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [selectedConversation, setSelectedConversation] =
+    useState<Conversation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [search, setSearch] = useState("");
+  const [draft, setDraft] = useState("");
+  const [attachmentUrl, setAttachmentUrl] = useState("");
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const [user, setUser] = useState<User | null>(null);
-  const [rooms, setRooms] = useState<ChatRoom[]>([]);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [profiles, setProfiles] = useState<Record<string, Profile>>({});
-  const [productsById, setProductsById] = useState<Record<number, ProductInfo>>({});
-  const [ordersById, setOrdersById] = useState<Record<number, OrderInfo>>({});
+  const filteredConversations = useMemo(() => {
+    const query = search.trim().toLowerCase();
 
-  const [selectedRoom, setSelectedRoom] = useState<ChatRoom | null>(null);
-  const [messageText, setMessageText] = useState("");
+    return conversations.filter((conversation) => {
+      if (!query) return true;
 
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
+      const other = user ? getOtherProfile(conversation, user.id) : null;
 
-  const selectedReceiverId = useMemo(() => {
-    if (!user || !selectedRoom) return null;
+      return (
+        String(conversation.id).includes(query) ||
+        String(conversation.order_id || "").includes(query) ||
+        String(conversation.product_id || "").includes(query) ||
+        (conversation.last_message || "").toLowerCase().includes(query) ||
+        (conversation.product?.title || "").toLowerCase().includes(query) ||
+        (other?.username || "").toLowerCase().includes(query) ||
+        (other?.email || "").toLowerCase().includes(query)
+      );
+    });
+  }, [conversations, search, user]);
 
-    return selectedRoom.buyer_id === user.id
-      ? selectedRoom.seller_id
-      : selectedRoom.buyer_id;
-  }, [user, selectedRoom]);
+  async function loadConversations(currentUser: User) {
+    const { data: conversationData, error: conversationError } = await supabase
+      .from("conversations")
+      .select(
+        `
+        *,
+        buyer:buyer_id(id,email,username,avatar_url,role),
+        seller:seller_id(id,email,username,avatar_url,role),
+        product:product_id(id,title,price,image_url,thumbnail_url,status),
+        order:order_id(id,status,total_price,escrow_status)
+      `
+      )
+      .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
+      .order("last_message_at", { ascending: false, nullsFirst: false });
 
-  const selectedReceiverProfile = selectedReceiverId
-    ? profiles[selectedReceiverId]
-    : null;
-
-  const selectedOrder = selectedRoom?.order_id
-    ? ordersById[selectedRoom.order_id]
-    : null;
-
-  const selectedProduct = selectedRoom?.product_id
-    ? productsById[selectedRoom.product_id]
-    : null;
-
-  async function loadProfiles(userIds: string[]) {
-    const uniqueIds = Array.from(new Set(userIds.filter(Boolean)));
-
-    if (uniqueIds.length === 0) return;
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,email,username,seller_name,avatar_url")
-      .in("id", uniqueIds);
-
-    if (error) {
-      console.error("Load profiles error:", error.message);
+    if (conversationError) {
+      alert(conversationError.message);
       return;
     }
 
-    const map: Record<string, Profile> = {};
+    const loaded = (conversationData || []) as Conversation[];
+    setConversations(loaded);
 
-    (data || []).forEach((profile) => {
-      map[profile.id] = profile;
-    });
-
-    setProfiles((current) => ({
-      ...current,
-      ...map,
-    }));
-  }
-
-  async function loadRoomMetadata(roomData: ChatRoom[]) {
-    const productIds = Array.from(
-      new Set(roomData.map((room) => room.product_id).filter(Boolean))
-    ) as number[];
-
-    const orderIds = Array.from(
-      new Set(roomData.map((room) => room.order_id).filter(Boolean))
-    ) as number[];
-
-    if (productIds.length > 0) {
-      const { data, error } = await supabase
-        .from("products")
-        .select("id,title,image_url")
-        .in("id", productIds);
-
-      if (error) {
-        console.error("Load chat product metadata error:", error.message);
-      } else {
-        const map: Record<number, ProductInfo> = {};
-        (data || []).forEach((item) => {
-          map[item.id] = item;
-        });
-        setProductsById((current) => ({ ...current, ...map }));
-      }
-    }
-
-    if (orderIds.length > 0) {
-      const { data, error } = await supabase
-        .from("orders")
-        .select("id,product,status,total_price,price,created_at")
-        .in("id", orderIds);
-
-      if (error) {
-        console.error("Load chat order metadata error:", error.message);
-      } else {
-        const map: Record<number, OrderInfo> = {};
-        (data || []).forEach((item) => {
-          map[item.id] = item;
-        });
-        setOrdersById((current) => ({ ...current, ...map }));
-      }
+    if (!selectedConversation && loaded.length > 0) {
+      setSelectedConversation(loaded[0]);
+      await loadMessages(loaded[0].id);
     }
   }
 
-  async function loadMessages(room: ChatRoom, currentUser: User) {
-    const { data, error } = await supabase
-      .from("chat_messages")
-      .select("*")
-      .eq("room_id", room.id)
+  async function loadMessages(conversationId: number) {
+    setLoadingMessages(true);
+
+    const { data: messageData, error: messageError } = await supabase
+      .from("messages")
+      .select(
+        `
+        *,
+        sender:sender_id(id,email,username,avatar_url,role)
+      `
+      )
+      .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
 
-    if (error) {
-      alert(error.message);
+    if (messageError) {
+      alert(messageError.message);
+      setLoadingMessages(false);
       return;
     }
 
-    setMessages(data || []);
-
-    await supabase
-      .from("chat_messages")
-      .update({ is_read: true })
-      .eq("room_id", room.id)
-      .eq("receiver_id", currentUser.id)
-      .eq("is_read", false);
+    setMessages((messageData || []) as Message[]);
+    setLoadingMessages(false);
 
     setTimeout(() => {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, 100);
   }
 
-  async function loadRooms(currentUser: User) {
-    const { data, error } = await supabase
-      .from("chat_rooms")
-      .select("*")
-      .or(`buyer_id.eq.${currentUser.id},seller_id.eq.${currentUser.id}`)
-      .order("last_message_at", { ascending: false });
+  async function selectConversation(conversation: Conversation) {
+    setSelectedConversation(conversation);
+    await loadMessages(conversation.id);
+  }
 
-    if (error) {
-      alert(error.message);
+  async function sendMessage() {
+    if (!user || !selectedConversation) return;
+
+    const messageText = draft.trim();
+    const imageUrl = attachmentUrl.trim();
+
+    if (!messageText && !imageUrl) return;
+
+    setSending(true);
+
+    const messageType = imageUrl ? "image" : "text";
+    const finalMessage = messageText || "Sent an attachment.";
+
+    const { error: insertError } = await supabase.from("messages").insert({
+      conversation_id: selectedConversation.id,
+      sender_id: user.id,
+      message: finalMessage,
+      message_type: messageType,
+      attachment_url: imageUrl || null,
+    });
+
+    if (insertError) {
+      alert(insertError.message);
+      setSending(false);
       return;
     }
 
-    const roomData = data || [];
-    setRooms(roomData);
+    const { error: updateError } = await supabase
+      .from("conversations")
+      .update({
+        last_message: finalMessage,
+        last_message_at: new Date().toISOString(),
+      })
+      .eq("id", selectedConversation.id);
 
-    const ids = roomData.flatMap((room) => [room.buyer_id, room.seller_id]);
-    await Promise.all([loadProfiles(ids), loadRoomMetadata(roomData)]);
-
-    const roomFromUrl = roomIdFromUrl
-      ? roomData.find((room) => room.id === roomIdFromUrl)
-      : null;
-
-    const nextSelectedRoom =
-      roomFromUrl ||
-      (selectedRoom
-        ? roomData.find((room) => room.id === selectedRoom.id) || null
-        : null) ||
-      roomData[0] ||
-      null;
-
-    setSelectedRoom(nextSelectedRoom);
-
-    if (nextSelectedRoom) {
-      await loadMessages(nextSelectedRoom, currentUser);
-    } else {
-      setMessages([]);
+    if (updateError) {
+      alert(updateError.message);
+      setSending(false);
+      return;
     }
+
+    setDraft("");
+    setAttachmentUrl("");
+    await loadMessages(selectedConversation.id);
+    await loadConversations(user);
+    setSending(false);
+  }
+
+  async function sendQuickMessage(text: string) {
+    setDraft(text);
   }
 
   useEffect(() => {
-    async function initializePage() {
+    async function initialize() {
       setLoading(true);
 
       const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -303,106 +263,50 @@ export default function MessagesPage() {
       }
 
       setUser(userData.user);
-      await loadRooms(userData.user);
+
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("id,email,username,avatar_url,role")
+        .eq("id", userData.user.id)
+        .maybeSingle();
+
+      setMyProfile((profileData || null) as Profile | null);
+      await loadConversations(userData.user);
+
       setLoading(false);
     }
 
-    initializePage();
-  }, [roomIdFromUrl]);
+    initialize();
+  }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!selectedConversation) return;
 
-    const roomChannel = supabase
-      .channel(`chat-rooms-${user.id}`)
+    const channel = supabase
+      .channel(`conversation-${selectedConversation.id}`)
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
-          table: "chat_rooms",
+          table: "messages",
+          filter: `conversation_id=eq.${selectedConversation.id}`,
         },
-        () => {
-          loadRooms(user);
-        }
-      )
-      .subscribe();
-
-    const messageChannel = supabase
-      .channel(`chat-messages-${user.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "chat_messages",
-        },
-        () => {
-          if (selectedRoom) {
-            loadMessages(selectedRoom, user);
-          }
-          loadRooms(user);
+        async () => {
+          await loadMessages(selectedConversation.id);
+          if (user) await loadConversations(user);
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(roomChannel);
-      supabase.removeChannel(messageChannel);
+      supabase.removeChannel(channel);
     };
-  }, [user, selectedRoom]);
+  }, [selectedConversation?.id, user?.id]);
 
-  async function selectRoom(room: ChatRoom) {
-    if (!user) return;
-
-    setSelectedRoom(room);
-    await loadMessages(room, user);
-
-    window.history.replaceState(null, "", `/messages?room=${room.id}`);
-  }
-
-  async function sendMessage(event: React.FormEvent) {
-    event.preventDefault();
-
-    if (!user || !selectedRoom || !selectedReceiverId) return;
-
-    const cleanMessage = messageText.trim();
-
-    if (!cleanMessage) return;
-
-    setSending(true);
-
-    const { error: messageError } = await supabase.from("chat_messages").insert({
-      room_id: selectedRoom.id,
-      sender_id: user.id,
-      receiver_id: selectedReceiverId,
-      message: cleanMessage,
-      is_read: false,
-    });
-
-    if (messageError) {
-      alert(messageError.message);
-      setSending(false);
-      return;
-    }
-
-    const { error: roomError } = await supabase
-      .from("chat_rooms")
-      .update({
-        last_message: cleanMessage,
-        last_message_at: new Date().toISOString(),
-      })
-      .eq("id", selectedRoom.id);
-
-    if (roomError) {
-      console.error("Update chat room error:", roomError.message);
-    }
-
-    setMessageText("");
-    await loadMessages(selectedRoom, user);
-    await loadRooms(user);
-    setSending(false);
-  }
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   if (loading) {
     return (
@@ -415,119 +319,128 @@ export default function MessagesPage() {
   if (!user) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
-        <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
+        <div className="max-w-md rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-8 text-center">
           <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
-
-          <p className="mt-4 text-gray-400">
-            Please login first to view messages.
-          </p>
-
+          <p className="mt-4 text-gray-300">Please login to open your messages.</p>
           <Link
-            href="/"
+            href="/login"
             className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
           >
-            Back to Home
+            Login
           </Link>
         </div>
       </main>
     );
   }
 
+  const selectedOther = selectedConversation
+    ? getOtherProfile(selectedConversation, user.id)
+    : null;
+
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
-
-        <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-6 lg:flex-row lg:items-start">
+      <section className="border-b border-white/10 bg-[#020817] px-4 py-5 md:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
-            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+            <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
               Message Center
             </p>
 
-            <h1 className="text-5xl font-black md:text-7xl">Messages</h1>
-
-            <p className="mt-5 max-w-2xl text-gray-300">
+            <h1 className="mt-4 text-4xl font-black md:text-6xl">Messages</h1>
+            <p className="mt-2 text-gray-400">
               Chat with buyers and sellers in real time.
             </p>
           </div>
 
           <Link
             href="/"
-            className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+            className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-black text-cyan-300 hover:bg-cyan-400 hover:text-black"
           >
             Browse Marketplace
           </Link>
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-6 px-8 py-10 lg:grid-cols-[380px_1fr]">
-        <aside className="h-[720px] overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30">
+      <section className="mx-auto grid max-w-7xl gap-0 px-4 py-8 md:px-8 lg:grid-cols-[360px_1fr]">
+        <aside className="overflow-hidden rounded-t-3xl border border-white/10 bg-[#0b1020] lg:rounded-l-3xl lg:rounded-tr-none">
           <div className="border-b border-white/10 p-5">
-            <h2 className="text-2xl font-black">Inbox</h2>
-            <p className="mt-1 text-sm text-gray-400">
-              {rooms.length} conversation{rooms.length === 1 ? "" : "s"}
-            </p>
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-400 font-black text-black">
+                {getAvatarLabel(myProfile)}
+              </div>
+
+              <div>
+                <p className="font-black">{getDisplayName(myProfile)}</p>
+                <p className="text-xs text-green-300">● Online</p>
+              </div>
+            </div>
+
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search name or order no."
+              className="mt-5 w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-sm outline-none placeholder:text-gray-500 focus:border-cyan-400"
+            />
           </div>
 
-          <div className="h-[640px] overflow-y-auto">
-            {rooms.length === 0 ? (
-              <div className="p-6 text-center text-gray-400">
+          <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+            <h2 className="font-black">Direct Messages</h2>
+            <span className="rounded-full bg-cyan-400 px-3 py-1 text-xs font-black text-black">
+              {filteredConversations.length}
+            </span>
+          </div>
+
+          <div className="max-h-[620px] overflow-y-auto">
+            {filteredConversations.length === 0 ? (
+              <div className="p-8 text-center text-sm text-gray-400">
                 No conversations yet.
               </div>
             ) : (
-              rooms.map((room) => {
-                const otherUserId =
-                  room.buyer_id === user.id ? room.seller_id : room.buyer_id;
-                const otherProfile = profiles[otherUserId];
-                const contextTitle = getRoomContextTitle(room, productsById, ordersById);
-                const orderInfo = room.order_id ? ordersById[room.order_id] : null;
+              filteredConversations.map((conversation) => {
+                const other = getOtherProfile(conversation, user.id);
+                const active = selectedConversation?.id === conversation.id;
+                const image = getProductImage(conversation.product);
 
                 return (
                   <button
-                    key={room.id}
-                    onClick={() => selectRoom(room)}
-                    className={`flex w-full gap-4 border-b border-white/10 p-5 text-left transition hover:bg-cyan-400/10 ${
-                      selectedRoom?.id === room.id
-                        ? "bg-cyan-400/10"
-                        : "bg-transparent"
+                    key={conversation.id}
+                    onClick={() => selectConversation(conversation)}
+                    className={`flex w-full gap-3 border-b border-white/10 p-4 text-left transition hover:bg-white/5 ${
+                      active ? "bg-white/10" : ""
                     }`}
                   >
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-cyan-400/30 bg-cyan-400/10">
-                      {otherProfile?.avatar_url ? (
+                    <div className="relative shrink-0">
+                      {image ? (
                         <img
-                          src={otherProfile.avatar_url}
-                          alt={getDisplayName(otherProfile)}
-                          className="h-full w-full object-cover"
+                          src={image}
+                          alt=""
+                          className="h-12 w-12 rounded-full object-cover"
                         />
                       ) : (
-                        <span className="font-black text-cyan-300">
-                          {getInitial(otherProfile)}
-                        </span>
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/10 font-black text-cyan-300">
+                          {getAvatarLabel(other)}
+                        </div>
                       )}
+                      <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#0b1020] bg-green-400" />
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-black text-white">
-                        {getDisplayName(otherProfile)}
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="truncate font-black">{getDisplayName(other)}</p>
+                        <p className="shrink-0 text-xs text-gray-500">
+                          {formatDate(conversation.last_message_at || conversation.created_at)}
+                        </p>
+                      </div>
+
+                      <p className="mt-1 truncate text-sm text-gray-400">
+                        {conversation.last_message || "No messages yet."}
                       </p>
 
-                      <p className="mt-1 truncate text-xs font-black text-cyan-300">
-                        {contextTitle}
-                      </p>
-
-                      {orderInfo && (
-                        <p className="mt-1 text-xs text-yellow-300">
-                          {normalizeStatus(orderInfo.status)} · {formatPrice(orderInfo.total_price || orderInfo.price)}
+                      {conversation.order_id && (
+                        <p className="mt-1 text-xs font-bold text-yellow-300">
+                          Order #{conversation.order_id}
                         </p>
                       )}
-
-                      <p className="mt-1 line-clamp-2 text-sm text-gray-400">
-                        {room.last_message || "No messages yet."}
-                      </p>
-
-                      <p className="mt-2 text-xs text-gray-500">
-                        {formatTime(room.last_message_at || room.created_at)}
-                      </p>
                     </div>
                   </button>
                 );
@@ -536,156 +449,221 @@ export default function MessagesPage() {
           </div>
         </aside>
 
-        <section className="flex h-[720px] flex-col overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30">
-          {!selectedRoom ? (
-            <div className="flex flex-1 items-center justify-center p-8 text-center">
+        <section className="flex min-h-[760px] flex-col overflow-hidden rounded-b-3xl border border-t-0 border-white/10 bg-[#070b16] lg:rounded-r-3xl lg:rounded-bl-none lg:border-l-0 lg:border-t">
+          {!selectedConversation ? (
+            <div className="flex flex-1 items-center justify-center p-10 text-center">
               <div>
                 <h2 className="text-3xl font-black">No conversation selected</h2>
-                <p className="mt-3 text-gray-400">
-                  Select a conversation from inbox.
-                </p>
+                <p className="mt-3 text-gray-400">Select a conversation from inbox.</p>
               </div>
             </div>
           ) : (
             <>
-              <div className="border-b border-white/10 p-5">
-                <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-cyan-400/30 bg-cyan-400/10">
-                      {selectedReceiverProfile?.avatar_url ? (
-                        <img
-                          src={selectedReceiverProfile.avatar_url}
-                          alt={getDisplayName(selectedReceiverProfile)}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="font-black text-cyan-300">
-                          {getInitial(selectedReceiverProfile)}
-                        </span>
-                      )}
+              <div className="flex items-center justify-between border-b border-white/10 bg-[#0b1020] p-5">
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-400 font-black text-black">
+                      {getAvatarLabel(selectedOther)}
                     </div>
-
-                    <div>
-                      <h2 className="text-xl font-black">
-                        {getDisplayName(selectedReceiverProfile)}
-                      </h2>
-                      <p className="text-sm text-gray-400">
-                        Real-time conversation
-                      </p>
-                    </div>
+                    <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#0b1020] bg-green-400" />
                   </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    {selectedRoom.order_id && (
-                      <Link
-                        href={`/order/${selectedRoom.order_id}`}
-                        className="rounded-full border border-yellow-400 px-4 py-2 text-xs font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black"
-                      >
-                        View Order #{selectedRoom.order_id}
-                      </Link>
-                    )}
+                  <div>
+                    <h2 className="font-black">{getDisplayName(selectedOther)}</h2>
+                    <p className="text-xs text-green-300">Online</p>
+                  </div>
+                </div>
 
-                    {selectedRoom.product_id && (
+                <div className="flex items-center gap-3">
+                  {selectedConversation.order_id && (
+                    <Link
+                      href={`/order/${selectedConversation.order_id}`}
+                      className="rounded-full border border-yellow-400 px-4 py-2 text-sm font-black text-yellow-300 hover:bg-yellow-400 hover:text-black"
+                    >
+                      Order #{selectedConversation.order_id}
+                    </Link>
+                  )}
+
+                  <Link
+                    href="/"
+                    className="rounded-full border border-white/10 px-4 py-2 text-sm font-black text-gray-300 hover:bg-white hover:text-black"
+                  >
+                    Marketplace
+                  </Link>
+                </div>
+              </div>
+
+              {selectedConversation.product && (
+                <div className="border-b border-white/10 bg-cyan-400/5 p-4">
+                  <div className="flex flex-col gap-4 rounded-2xl border border-cyan-400/20 bg-black/30 p-4 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-4">
+                      {getProductImage(selectedConversation.product) ? (
+                        <img
+                          src={getProductImage(selectedConversation.product) || ""}
+                          alt=""
+                          className="h-16 w-16 rounded-2xl object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-cyan-400/10 text-2xl">
+                          🎮
+                        </div>
+                      )}
+
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-wider text-cyan-300">
+                          Product Context
+                        </p>
+                        <h3 className="font-black">
+                          {selectedConversation.product.title || "Product"}
+                        </h3>
+                        <p className="text-sm text-green-300">
+                          {formatPrice(selectedConversation.product.price)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {selectedConversation.product_id && (
                       <Link
-                        href={`/product/${selectedRoom.product_id}`}
-                        className="rounded-full border border-cyan-400 px-4 py-2 text-xs font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+                        href={`/product/${selectedConversation.product_id}`}
+                        className="rounded-full bg-cyan-400 px-5 py-3 text-center font-black text-black hover:bg-cyan-300"
                       >
                         View Product
                       </Link>
                     )}
                   </div>
                 </div>
+              )}
 
-                {(selectedRoom.order_id || selectedRoom.product_id) && (
-                  <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <p className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">
-                      Conversation Context
-                    </p>
-
-                    <h3 className="mt-2 text-lg font-black text-white">
-                      {getRoomContextTitle(selectedRoom, productsById, ordersById)}
-                    </h3>
-
-                    {selectedOrder && (
-                      <div className="mt-3 flex flex-wrap gap-3 text-sm">
-                        <span className="rounded-full border border-yellow-400/20 bg-yellow-400/10 px-3 py-1 font-bold text-yellow-300">
-                          {normalizeStatus(selectedOrder.status)}
-                        </span>
-                        <span className="rounded-full border border-green-400/20 bg-green-400/10 px-3 py-1 font-bold text-green-300">
-                          {formatPrice(selectedOrder.total_price || selectedOrder.price)}
-                        </span>
-                      </div>
-                    )}
-
-                    {!selectedOrder && selectedProduct && (
-                      <p className="mt-2 text-sm text-gray-400">
-                        Product chat about {selectedProduct.title || `Product #${selectedProduct.id}`}.
-                      </p>
-                    )}
+              <div className="flex-1 overflow-y-auto p-5">
+                {loadingMessages ? (
+                  <div className="flex h-full items-center justify-center text-gray-400">
+                    Loading chat...
                   </div>
-                )}
-              </div>
-
-              <div className="flex-1 space-y-4 overflow-y-auto p-6">
-                {messages.length === 0 ? (
-                  <div className="flex h-full items-center justify-center text-center text-gray-400">
-                    No messages yet. Say hello.
+                ) : messages.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-center">
+                    <div>
+                      <h2 className="text-2xl font-black">Start the conversation</h2>
+                      <p className="mt-2 text-gray-400">
+                        Send a message to buyer or seller.
+                      </p>
+                    </div>
                   </div>
                 ) : (
-                  messages.map((message) => {
-                    const isMine = message.sender_id === user.id;
+                  <div className="space-y-5">
+                    {messages.map((message) => {
+                      const mine = message.sender_id === user.id;
 
-                    return (
-                      <div
-                        key={message.id}
-                        className={`flex ${isMine ? "justify-end" : "justify-start"}`}
-                      >
+                      if (message.message_type === "system") {
+                        return (
+                          <div key={message.id} className="text-center">
+                            <span className="inline-flex rounded-full border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300">
+                              {message.message}
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      return (
                         <div
-                          className={`max-w-[78%] rounded-3xl px-5 py-4 ${
-                            isMine
-                              ? "bg-cyan-400 text-black"
-                              : "bg-black/40 text-white"
-                          }`}
+                          key={message.id}
+                          className={`flex ${mine ? "justify-end" : "justify-start"}`}
                         >
-                          <p className="whitespace-pre-line text-sm font-semibold leading-6">
-                            {message.message}
-                          </p>
-
-                          <p
-                            className={`mt-2 text-[11px] ${
-                              isMine ? "text-black/60" : "text-gray-500"
+                          <div
+                            className={`max-w-[78%] rounded-3xl px-5 py-4 shadow-xl ${
+                              mine
+                                ? "bg-cyan-400 text-black"
+                                : "bg-white/10 text-white"
                             }`}
                           >
-                            {formatTime(message.created_at)}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+                            {message.attachment_url && (
+                              <a
+                                href={message.attachment_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mb-3 block overflow-hidden rounded-2xl border border-white/20 bg-black/20"
+                              >
+                                <img
+                                  src={message.attachment_url}
+                                  alt="attachment"
+                                  className="max-h-72 w-full object-cover"
+                                />
+                              </a>
+                            )}
 
-                <div ref={bottomRef} />
+                            <p className="whitespace-pre-wrap text-sm leading-6">
+                              {message.message}
+                            </p>
+
+                            <p
+                              className={`mt-2 text-right text-[11px] ${
+                                mine ? "text-black/60" : "text-gray-500"
+                              }`}
+                            >
+                              {formatTime(message.created_at)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    <div ref={bottomRef} />
+                  </div>
+                )}
               </div>
 
-              <form
-                onSubmit={sendMessage}
-                className="grid gap-3 border-t border-white/10 p-5 md:grid-cols-[1fr_140px]"
-              >
-                <textarea
-                  value={messageText}
-                  onChange={(event) => setMessageText(event.target.value)}
-                  placeholder="Type your message..."
-                  rows={2}
-                  className="resize-none rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+              <div className="border-t border-white/10 bg-[#0b1020] p-5">
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => sendQuickMessage("Halo kak, produk masih tersedia?")}
+                    className="rounded-full border border-white/10 px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white hover:text-black"
+                  >
+                    Produk tersedia?
+                  </button>
+                  <button
+                    onClick={() => sendQuickMessage("Terima kasih, pesanan akan segera diproses.")}
+                    className="rounded-full border border-white/10 px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white hover:text-black"
+                  >
+                    Auto reply seller
+                  </button>
+                  <button
+                    onClick={() => sendQuickMessage("Saya sudah menyelesaikan pembayaran.")}
+                    className="rounded-full border border-white/10 px-4 py-2 text-xs font-bold text-gray-300 hover:bg-white hover:text-black"
+                  >
+                    Payment done
+                  </button>
+                </div>
+
+                <input
+                  value={attachmentUrl}
+                  onChange={(event) => setAttachmentUrl(event.target.value)}
+                  placeholder="Optional image URL / attachment URL..."
+                  className="mb-3 w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-sm outline-none placeholder:text-gray-500 focus:border-cyan-400"
                 />
 
-                <button
-                  disabled={sending || !messageText.trim()}
-                  className="rounded-2xl bg-cyan-400 px-5 py-4 font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {sending ? "Sending..." : "Send"}
-                </button>
-              </form>
+                <div className="flex gap-3">
+                  <textarea
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        sendMessage();
+                      }
+                    }}
+                    placeholder="Type message here..."
+                    rows={2}
+                    className="min-h-[56px] flex-1 resize-none rounded-2xl border border-white/10 bg-black px-4 py-3 text-sm outline-none placeholder:text-gray-500 focus:border-cyan-400"
+                  />
+
+                  <button
+                    onClick={sendMessage}
+                    disabled={sending || (!draft.trim() && !attachmentUrl.trim())}
+                    className="w-24 rounded-2xl bg-cyan-400 font-black text-black hover:bg-cyan-300 disabled:opacity-50"
+                  >
+                    {sending ? "..." : "Send"}
+                  </button>
+                </div>
+              </div>
             </>
           )}
         </section>
