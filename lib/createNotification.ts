@@ -22,14 +22,18 @@ export async function createNotification({
     };
   }
 
-  const { error } = await supabase.from("notifications").insert({
-    user_id: userId,
-    type,
-    title,
-    message,
-    link_url: linkUrl,
-    is_read: false,
-  });
+  const { data, error } = await supabase
+    .from("notifications")
+    .insert({
+      user_id: userId,
+      type,
+      title,
+      message,
+      link_url: linkUrl,
+      is_read: false,
+    })
+    .select()
+    .single();
 
   if (error) {
     console.error("Create notification error:", error.message);
@@ -42,6 +46,7 @@ export async function createNotification({
 
   return {
     success: true,
+    data,
     error: null,
   };
 }

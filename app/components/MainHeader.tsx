@@ -1,9 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import {
+  FaBell,
+  FaBullhorn,
+  FaCommentDots,
+  FaDiscord,
+  FaShoppingBag,
+  FaSignOutAlt,
+  FaStore,
+  FaWallet,
+} from "react-icons/fa";
+import { FcGoogle } from "react-icons/fc";
 import { supabase } from "@/lib/supabase";
 
 type Category = {
@@ -13,16 +24,119 @@ type Category = {
   icon: string | null;
 };
 
+type Announcement = {
+  id: number;
+  title: string;
+  slug: string;
+  summary: string | null;
+  type: string;
+  priority: string;
+  status: string;
+  is_pinned: boolean;
+  publish_at: string | null;
+  expire_at: string | null;
+  created_at: string;
+};
+
+type NotificationItem = {
+  id: number;
+  user_id: string;
+  type: string;
+  title: string;
+  message: string | null;
+  link_url: string | null;
+  is_read: boolean;
+  created_at: string;
+};
+
+type Profile = {
+  id: string;
+  email: string | null;
+  username: string | null;
+  role: string | null;
+  seller_status: string | null;
+  avatar_url: string | null;
+};
+
 type AuthMode = "login" | "register";
+type OAuthProvider = "google" | "discord";
+
+function isVisibleAnnouncement(item: Announcement) {
+  const now = Date.now();
+
+  if (item.status !== "published") return false;
+  if (item.publish_at && new Date(item.publish_at).getTime() > now) return false;
+  if (item.expire_at && new Date(item.expire_at).getTime() < now) return false;
+
+  return true;
+}
+
+function formatShortDate(value: string | null | undefined) {
+  if (!value) return "-";
+
+  return new Date(value).toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
+function formatRupiah(value: number | string | null | undefined) {
+  const amount = Number(value || 0);
+
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function getOAuthUsername(user: User) {
+  const metadata = user.user_metadata || {};
+  const rawName =
+    metadata.user_name ||
+    metadata.preferred_username ||
+    metadata.name ||
+    metadata.full_name ||
+    user.email?.split("@")[0] ||
+    "player";
+
+  return String(rawName)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 20);
+}
+
+function getInitial(name?: string | null) {
+  if (!name) return "U";
+  return name.trim().charAt(0).toUpperCase();
+}
 
 export default function MainHeader() {
   const router = useRouter();
 
   const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [walletBalance, setWalletBalance] = useState(0);
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
+
   const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [announcementUnreadCount, setAnnouncementUnreadCount] = useState(0);
+  const [latestNotifications, setLatestNotifications] = useState<
+    NotificationItem[]
+  >([]);
+  const [latestAnnouncements, setLatestAnnouncements] = useState<
+    Announcement[]
+  >([]);
+
+  const [showNotificationDropdown, setShowNotificationDropdown] =
+    useState(false);
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
 
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
@@ -33,20 +147,232 @@ export default function MainHeader() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  async function loadUnreadNotifications(userId: string) {
-    const { count, error } = await supabase
-      .from("notifications")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("is_read", false);
+  const totalHeaderUnread = unreadCount + announcementUnreadCount;
+
+  const visibleLatestAnnouncements = useMemo(() => {
+    return latestAnnouncements.filter(isVisibleAnnouncement).slice(0, 4);
+  }, [latestAnnouncements]);
+
+  async function createInitialWallet(userId: string) {
+    const { error } = await supabase.from("wallets").upsert(
+      {
+        user_id: userId,
+        balance: 0,
+        pending_balance: 0,
+        total_earned: 0,
+        total_spent: 0,
+        total_withdrawn: 0,
+        status: "active",
+      },
+      {
+        onConflict: "user_id",
+        ignoreDuplicates: true,
+      }
+    );
 
     if (error) {
-      console.error("Unread notification count error:", error.message);
-      setUnreadCount(0);
+      console.error("Create initial wallet error:", error.message);
+      return false;
+    }
+
+    return true;
+  }
+
+  async function ensureOAuthProfile(currentUser: User) {
+    const { data: existingProfile, error: profileCheckError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", currentUser.id)
+      .maybeSingle();
+
+    if (profileCheckError) {
+      console.error("OAuth profile check error:", profileCheckError.message);
       return;
     }
 
-    setUnreadCount(count || 0);
+    if (existingProfile) {
+      await createInitialWallet(currentUser.id);
+      return;
+    }
+
+    const baseUsername = getOAuthUsername(currentUser) || "player";
+    let finalUsername = baseUsername;
+
+    const { data: usernameData } = await supabase
+      .from("profiles")
+      .select("id")
+      .ilike("username", finalUsername)
+      .maybeSingle();
+
+    if (usernameData) {
+      finalUsername = `${baseUsername}_${currentUser.id.slice(0, 6)}`;
+    }
+
+    const { error: insertError } = await supabase.from("profiles").insert({
+      id: currentUser.id,
+      email: currentUser.email || "",
+      username: finalUsername,
+      role: "user",
+      seller_status: "not_applied",
+      avatar_url:
+        currentUser.user_metadata?.avatar_url ||
+        currentUser.user_metadata?.picture ||
+        null,
+      bio: "ComePlayers user.",
+      discord: null,
+    });
+
+    if (insertError) {
+      console.error("OAuth profile insert error:", insertError.message);
+      return;
+    }
+
+    await createInitialWallet(currentUser.id);
+  }
+
+  async function loadUserProfile(userId: string) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id,email,username,role,seller_status,avatar_url")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Profile load error:", error.message);
+      setProfile(null);
+      return;
+    }
+
+    setProfile(data || null);
+  }
+
+  async function loadWallet(userId: string) {
+    const { data, error } = await supabase
+      .from("wallets")
+      .select("balance")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Wallet load error:", error.message);
+      setWalletBalance(0);
+      return;
+    }
+
+    setWalletBalance(Number(data?.balance || 0));
+  }
+
+  async function loadNotifications(userId: string) {
+    const [countResult, listResult] = await Promise.all([
+      supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("is_read", false),
+      supabase
+        .from("notifications")
+        .select("id,user_id,type,title,message,link_url,is_read,created_at")
+        .eq("user_id", userId)
+        .order("id", { ascending: false })
+        .limit(5),
+    ]);
+
+    if (countResult.error) {
+      console.error(
+        "Unread notification count error:",
+        countResult.error.message
+      );
+      setUnreadCount(0);
+    } else {
+      setUnreadCount(countResult.count || 0);
+    }
+
+    if (listResult.error) {
+      console.error("Latest notifications error:", listResult.error.message);
+      setLatestNotifications([]);
+    } else {
+      setLatestNotifications(listResult.data || []);
+    }
+  }
+
+  async function loadUnreadMessages(userId: string) {
+    const { count, error } = await supabase
+      .from("chat_messages")
+      .select("*", {
+        count: "exact",
+        head: true,
+      })
+      .eq("receiver_id", userId)
+      .eq("is_read", false);
+
+    if (error) {
+      console.error("Unread message count error:", error.message);
+      setUnreadMessageCount(0);
+      return;
+    }
+
+    setUnreadMessageCount(count || 0);
+  }
+
+  async function loadAnnouncements(currentUserId?: string) {
+    const { data: announcementData, error: announcementError } = await supabase
+      .from("announcements")
+      .select(
+        "id,title,slug,summary,type,priority,status,is_pinned,publish_at,expire_at,created_at"
+      )
+      .eq("status", "published")
+      .order("is_pinned", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(12);
+
+    if (announcementError) {
+      console.error("Announcement load error:", announcementError.message);
+      setLatestAnnouncements([]);
+      setAnnouncementUnreadCount(0);
+      return;
+    }
+
+    const visible = (announcementData || []).filter(isVisibleAnnouncement);
+    setLatestAnnouncements(visible);
+
+    if (!currentUserId || visible.length === 0) {
+      setAnnouncementUnreadCount(0);
+      return;
+    }
+
+    const announcementIds = visible.map((item) => item.id);
+
+    const { data: readData, error: readError } = await supabase
+      .from("announcement_reads")
+      .select("announcement_id")
+      .eq("user_id", currentUserId)
+      .in("announcement_id", announcementIds);
+
+    if (readError) {
+      console.error("Announcement reads error:", readError.message);
+      setAnnouncementUnreadCount(0);
+      return;
+    }
+
+    const readIds = new Set(
+      (readData || []).map((item) => item.announcement_id)
+    );
+    setAnnouncementUnreadCount(
+      announcementIds.filter((id) => !readIds.has(id)).length
+    );
+  }
+
+  async function loadUserHeaderData(currentUser: User) {
+    await ensureOAuthProfile(currentUser);
+    await createInitialWallet(currentUser.id);
+
+    await Promise.all([
+      loadUserProfile(currentUser.id),
+      loadWallet(currentUser.id),
+      loadNotifications(currentUser.id),
+      loadUnreadMessages(currentUser.id),
+      loadAnnouncements(currentUser.id),
+    ]);
   }
 
   useEffect(() => {
@@ -57,9 +383,15 @@ export default function MainHeader() {
       setUser(currentUser);
 
       if (currentUser) {
-        await loadUnreadNotifications(currentUser.id);
+        await loadUserHeaderData(currentUser);
       } else {
+        setProfile(null);
+        setWalletBalance(0);
         setUnreadCount(0);
+        setUnreadMessageCount(0);
+        setAnnouncementUnreadCount(0);
+        setLatestNotifications([]);
+        await loadAnnouncements();
       }
 
       const { data: categoryData } = await supabase
@@ -80,9 +412,17 @@ export default function MainHeader() {
       setUser(currentUser);
 
       if (currentUser) {
-        loadUnreadNotifications(currentUser.id);
+        loadUserHeaderData(currentUser);
       } else {
+        setProfile(null);
+        setWalletBalance(0);
         setUnreadCount(0);
+        setUnreadMessageCount(0);
+        setAnnouncementUnreadCount(0);
+        setLatestNotifications([]);
+        setShowProfileDropdown(false);
+        setShowNotificationDropdown(false);
+        loadAnnouncements();
       }
     });
 
@@ -92,9 +432,7 @@ export default function MainHeader() {
   useEffect(() => {
     if (!user) return;
 
-    loadUnreadNotifications(user.id);
-
-    const channel = supabase
+    const notificationChannel = supabase
       .channel(`main-header-notifications-${user.id}`)
       .on(
         "postgres_changes",
@@ -104,14 +442,71 @@ export default function MainHeader() {
           table: "notifications",
           filter: `user_id=eq.${user.id}`,
         },
-        () => {
-          loadUnreadNotifications(user.id);
-        }
+        () => loadNotifications(user.id)
+      )
+      .subscribe();
+
+    const messageChannel = supabase
+      .channel(`main-header-messages-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "chat_messages",
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        () => loadUnreadMessages(user.id)
+      )
+      .subscribe();
+
+    const walletChannel = supabase
+      .channel(`main-header-wallet-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "wallets",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => loadWallet(user.id)
+      )
+      .subscribe();
+
+    const announcementReadChannel = supabase
+      .channel(`main-header-announcement-reads-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "announcement_reads",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => loadAnnouncements(user.id)
+      )
+      .subscribe();
+
+    const announcementChannel = supabase
+      .channel("main-header-announcements")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "announcements",
+        },
+        () => loadAnnouncements(user.id)
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(notificationChannel);
+      supabase.removeChannel(messageChannel);
+      supabase.removeChannel(walletChannel);
+      supabase.removeChannel(announcementReadChannel);
+      supabase.removeChannel(announcementChannel);
     };
   }, [user]);
 
@@ -259,6 +654,16 @@ export default function MainHeader() {
         setAuthLoading(false);
         return;
       }
+
+      const walletCreated = await createInitialWallet(userId);
+
+      if (!walletCreated) {
+        alert(
+          "Account created, but wallet creation failed. Please contact support."
+        );
+        setAuthLoading(false);
+        return;
+      }
     }
 
     alert("Account created successfully.");
@@ -266,7 +671,9 @@ export default function MainHeader() {
     setAuthLoading(false);
   }
 
-  async function handleOAuthLogin(provider: "google" | "discord" | "facebook") {
+  async function handleOAuthLogin(provider: OAuthProvider) {
+    setAuthLoading(true);
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
@@ -276,6 +683,7 @@ export default function MainHeader() {
 
     if (error) {
       alert(error.message);
+      setAuthLoading(false);
     }
   }
 
@@ -285,7 +693,7 @@ export default function MainHeader() {
       return;
     }
 
-    const { data: profile, error } = await supabase
+    const { data: currentProfile, error } = await supabase
       .from("profiles")
       .select("seller_status")
       .eq("id", user.id)
@@ -296,12 +704,12 @@ export default function MainHeader() {
       return;
     }
 
-    if (profile?.seller_status === "approved") {
+    if (currentProfile?.seller_status === "approved") {
       router.push("/seller");
       return;
     }
 
-    if (profile?.seller_status === "pending") {
+    if (currentProfile?.seller_status === "pending") {
       alert("Your seller application is still under review.");
       return;
     }
@@ -312,12 +720,19 @@ export default function MainHeader() {
   async function handleLogout() {
     await supabase.auth.signOut();
     setUser(null);
+    setProfile(null);
+    setWalletBalance(0);
     setUnreadCount(0);
+    setUnreadMessageCount(0);
+    setAnnouncementUnreadCount(0);
+    setLatestNotifications([]);
+    setShowProfileDropdown(false);
+    setShowNotificationDropdown(false);
   }
 
   return (
     <>
-      <nav className="sticky top-0 z-50 flex min-h-24 items-center gap-6 border-b border-white/10 bg-[#020617]/90 px-8 backdrop-blur-xl">
+      <nav className="sticky top-0 z-50 flex min-h-24 w-full items-center gap-6 border-b border-white/10 bg-[#020617] px-8 shadow-2xl shadow-black/40">
         <div className="flex shrink-0 items-center gap-5">
           <Link href="/" className="flex items-center">
             <img
@@ -327,7 +742,7 @@ export default function MainHeader() {
             />
           </Link>
 
-          <div className="hidden border-l border-white/10 pl-5 lg:block">
+          <div className="hidden border-l border-slate-800 pl-5 lg:block">
             <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-gray-400">
               Powered By
             </p>
@@ -337,11 +752,11 @@ export default function MainHeader() {
           </div>
         </div>
 
-        <div className="flex min-w-[360px] flex-1 items-center rounded-full border border-white/10 bg-white/[0.07] shadow-xl shadow-cyan-500/5 focus-within:border-cyan-400">
+        <div className="flex min-w-[320px] flex-1 items-center rounded-full border border-slate-700 bg-[#111827] shadow-xl shadow-black/20 focus-within:border-cyan-400">
           <select
             value={selectedCategory}
             onChange={(event) => setSelectedCategory(event.target.value)}
-            className="w-44 rounded-l-full border-r border-white/10 bg-[#020617] px-4 py-3 text-sm font-bold text-white outline-none"
+            className="w-44 rounded-l-full border-r border-slate-700 bg-[#020617] px-4 py-3 text-sm font-bold text-white outline-none"
           >
             <option value="">All Categories</option>
 
@@ -382,31 +797,55 @@ export default function MainHeader() {
           {user ? (
             <>
               <Link
-                href="/notifications"
-                className="relative rounded-full border border-white/10 px-4 py-2 font-bold text-gray-300 transition hover:bg-white hover:text-black"
-                title="Notifications"
+                href="/messages"
+                className="relative flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-[#111827] text-gray-300 transition hover:bg-[#1f2937] hover:text-white"
+                title="Messages"
               >
-                🔔
+                <FaCommentDots />
 
-                {unreadCount > 0 && (
-                  <span className="absolute -right-2 -top-2 flex h-6 min-w-6 items-center justify-center rounded-full bg-red-500 px-2 text-xs font-black text-white">
-                    {unreadCount > 99 ? "99+" : unreadCount}
+                {unreadMessageCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-black text-white">
+                    {unreadMessageCount > 99 ? "99+" : unreadMessageCount}
                   </span>
                 )}
               </Link>
 
-              <Link
-                href="/my-orders"
-                className="rounded-full border border-white/10 px-5 py-2 font-bold text-gray-300 transition hover:bg-white hover:text-black"
+              <button
+                onClick={() => {
+                  setShowNotificationDropdown(!showNotificationDropdown);
+                  setShowProfileDropdown(false);
+                }}
+                className="relative flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-[#111827] text-yellow-300 transition hover:bg-[#1f2937] hover:text-yellow-200"
+                title="Notifications"
               >
-                My Orders
-              </Link>
+                <FaBell />
+
+                {totalHeaderUnread > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-black text-white">
+                    {totalHeaderUnread > 99 ? "99+" : totalHeaderUnread}
+                  </span>
+                )}
+              </button>
 
               <button
-                onClick={handleLogout}
-                className="rounded-full bg-cyan-400 px-5 py-2 font-black text-black transition hover:bg-cyan-300"
+                onClick={() => {
+                  setShowProfileDropdown(!showProfileDropdown);
+                  setShowNotificationDropdown(false);
+                }}
+                className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-cyan-400/50 bg-[#0b1220] transition hover:border-cyan-400"
+                title="Profile"
               >
-                Logout
+                {profile?.avatar_url ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt={profile.username || "Profile"}
+                    className="h-7 w-7 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 text-xs font-black text-black">
+                    {getInitial(profile?.username || user?.email || "U")}
+                  </div>
+                )}
               </button>
             </>
           ) : (
@@ -420,9 +859,200 @@ export default function MainHeader() {
         </div>
       </nav>
 
+      {showNotificationDropdown && user && (
+        <div
+          className="fixed right-6 top-[92px] z-[99999] w-[380px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-slate-700 shadow-[0_20px_60px_rgba(0,0,0,0.95)]"
+          style={{
+            backgroundColor: "#111827",
+            opacity: 1,
+            backdropFilter: "none",
+          }}
+        >
+          <div className="flex items-center justify-between border-b border-slate-700 bg-[#1b2436] p-4">
+            <div>
+              <p className="font-black text-white">Notifications</p>
+              <p className="text-xs text-gray-400">
+                {totalHeaderUnread} unread updates
+              </p>
+            </div>
+
+            <Link
+              href="/notifications"
+              onClick={() => setShowNotificationDropdown(false)}
+              className="text-xs font-black text-cyan-300 hover:text-cyan-200"
+            >
+              View all →
+            </Link>
+          </div>
+
+          <div className="max-h-[70vh] overflow-y-auto bg-[#111827]">
+            {latestNotifications.length === 0 &&
+            visibleLatestAnnouncements.length === 0 ? (
+              <div className="p-5 text-center text-sm text-gray-400">
+                No new updates.
+              </div>
+            ) : (
+              <>
+                {latestNotifications.map((notification) => (
+                  <Link
+                    key={`notification-${notification.id}`}
+                    href={notification.link_url || "/notifications"}
+                    onClick={() => setShowNotificationDropdown(false)}
+                    className="flex gap-3 border-b border-slate-800 bg-[#111827] p-4 transition hover:bg-[#202b42]"
+                  >
+                    <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#123142] text-cyan-300">
+                      <FaBell />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="line-clamp-1 font-black text-white">
+                          {notification.title}
+                        </p>
+
+                        {!notification.is_read && (
+                          <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                        )}
+                      </div>
+
+                      <p className="mt-1 line-clamp-2 text-sm text-gray-400">
+                        {notification.message || notification.type}
+                      </p>
+
+                      <p className="mt-2 text-xs text-gray-500">
+                        {formatShortDate(notification.created_at)}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+
+                {visibleLatestAnnouncements.map((announcement) => (
+                  <Link
+                    key={`announcement-${announcement.id}`}
+                    href={`/announcements/${announcement.slug}`}
+                    onClick={() => setShowNotificationDropdown(false)}
+                    className="flex gap-3 border-b border-slate-800 bg-[#111827] p-4 transition hover:bg-[#202b42]"
+                  >
+                    <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#332b12] text-yellow-300">
+                      <FaBullhorn />
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="line-clamp-1 font-black text-white">
+                        {announcement.title}
+                      </p>
+
+                      <p className="mt-1 line-clamp-2 text-sm text-gray-400">
+                        {announcement.summary ||
+                          `${announcement.type} announcement`}
+                      </p>
+
+                      <p className="mt-2 text-xs text-gray-500">
+                        {formatShortDate(
+                          announcement.publish_at || announcement.created_at
+                        )}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showProfileDropdown && user && (
+        <div
+          className="fixed right-6 top-[92px] z-[99999] w-[300px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-slate-700 shadow-[0_20px_60px_rgba(0,0,0,0.95)]"
+          style={{
+            backgroundColor: "#111827",
+            opacity: 1,
+            backdropFilter: "none",
+          }}
+        >
+          <div className="border-b border-slate-700 bg-[#1b2436] p-5">
+            <div className="flex items-center gap-4">
+              {profile?.avatar_url ? (
+                <img
+                  src={profile.avatar_url}
+                  alt={profile.username || "User"}
+                  className="h-14 w-14 rounded-full border border-cyan-400/30 object-cover"
+                />
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-600 text-xl font-black text-black">
+                  {getInitial(profile?.username || user.email)}
+                </div>
+              )}
+
+              <div className="min-w-0">
+                <p className="truncate font-black text-white">
+                  {profile?.username || user.email?.split("@")[0] || "User"}
+                </p>
+                <p className="truncate text-xs text-gray-400">
+                  {profile?.email || user.email}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-b border-slate-700 bg-[#111827] p-4">
+            <div className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-[#162b24] p-4">
+              <div>
+                <p className="text-xs font-bold text-gray-400">
+                  Wallet Credit
+                </p>
+                <p className="mt-1 text-lg font-black text-emerald-300">
+                  {formatRupiah(walletBalance)}
+                </p>
+              </div>
+              <FaWallet className="text-2xl text-emerald-300" />
+            </div>
+          </div>
+
+          <div className="grid gap-1 bg-[#111827] p-3">
+            <Link
+              href="/wallet"
+              onClick={() => setShowProfileDropdown(false)}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 font-bold text-gray-300 transition hover:bg-[#202b42] hover:text-white"
+            >
+              <FaWallet />
+              Wallet
+            </Link>
+
+            <Link
+              href="/my-orders"
+              onClick={() => setShowProfileDropdown(false)}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 font-bold text-gray-300 transition hover:bg-[#202b42] hover:text-white"
+            >
+              <FaShoppingBag />
+              My Orders
+            </Link>
+
+            <button
+              onClick={() => {
+                setShowProfileDropdown(false);
+                handleSellWithUs();
+              }}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-left font-bold text-gray-300 transition hover:bg-[#202b42] hover:text-white"
+            >
+              <FaStore />
+              Seller Dashboard
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-3 rounded-xl px-4 py-3 text-left font-bold text-red-300 transition hover:bg-[#3a1d24] hover:text-red-200"
+            >
+              <FaSignOutAlt />
+              Log Out
+            </button>
+          </div>
+        </div>
+      )}
+
       {showAuthModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 px-6 backdrop-blur-md">
-          <div className="relative w-full max-w-md rounded-3xl border border-white/10 bg-[#171b3a] p-7 shadow-2xl shadow-black/50">
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 px-6 backdrop-blur-md">
+          <div className="relative w-full max-w-md rounded-3xl border border-slate-700 bg-[#171b3a] p-7 shadow-2xl shadow-black/80">
             <button
               onClick={closeAuthModal}
               className="absolute right-6 top-5 text-2xl font-black text-gray-400 hover:text-white"
@@ -442,13 +1072,11 @@ export default function MainHeader() {
               </p>
             </div>
 
-            <div className="mt-6 grid grid-cols-2 rounded-2xl border border-white/10 bg-black/30 p-1">
+            <div className="mt-6 grid grid-cols-2 rounded-2xl border border-slate-700 bg-[#0b1024] p-1">
               <button
                 onClick={() => setAuthMode("login")}
                 className={`rounded-xl py-3 font-black transition ${
-                  authMode === "login"
-                    ? "bg-cyan-400 text-black"
-                    : "text-white"
+                  authMode === "login" ? "bg-cyan-400 text-black" : "text-white"
                 }`}
               >
                 Login
@@ -473,7 +1101,7 @@ export default function MainHeader() {
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   placeholder="Username"
-                  className="w-full rounded-xl border border-white/10 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
+                  className="w-full rounded-xl border border-slate-700 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
                 />
               )}
 
@@ -482,7 +1110,7 @@ export default function MainHeader() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="Email"
-                className="w-full rounded-xl border border-white/10 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
+                className="w-full rounded-xl border border-slate-700 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
               />
 
               <input
@@ -490,7 +1118,7 @@ export default function MainHeader() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Password"
-                className="w-full rounded-xl border border-white/10 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
+                className="w-full rounded-xl border border-slate-700 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
               />
 
               {authMode === "register" && (
@@ -499,7 +1127,7 @@ export default function MainHeader() {
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
                   placeholder="Confirm Password"
-                  className="w-full rounded-xl border border-white/10 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
+                  className="w-full rounded-xl border border-slate-700 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
                 />
               )}
 
@@ -516,31 +1144,30 @@ export default function MainHeader() {
             </form>
 
             <div className="my-6 flex items-center gap-4">
-              <div className="h-px flex-1 bg-white/10" />
+              <div className="h-px flex-1 bg-slate-700" />
               <p className="text-sm text-gray-400">OR</p>
-              <div className="h-px flex-1 bg-white/10" />
+              <div className="h-px flex-1 bg-slate-700" />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <button
+                type="button"
+                disabled={authLoading}
                 onClick={() => handleOAuthLogin("google")}
-                className="rounded-xl border border-white/10 bg-white/10 py-3 font-black hover:bg-white/20"
+                className="flex h-11 items-center justify-center rounded-xl border border-slate-700 bg-[#111827] transition hover:border-cyan-400/60 hover:bg-[#202b42] disabled:cursor-not-allowed disabled:opacity-60"
+                title="Continue with Google"
               >
-                G
+                <FcGoogle className="h-5 w-5" />
               </button>
 
               <button
+                type="button"
+                disabled={authLoading}
                 onClick={() => handleOAuthLogin("discord")}
-                className="rounded-xl border border-white/10 bg-white/10 py-3 font-black hover:bg-white/20"
+                className="flex h-11 items-center justify-center rounded-xl border border-slate-700 bg-[#111827] transition hover:border-[#5865F2]/70 hover:bg-[#202b42] disabled:cursor-not-allowed disabled:opacity-60"
+                title="Continue with Discord"
               >
-                🎮
-              </button>
-
-              <button
-                onClick={() => handleOAuthLogin("facebook")}
-                className="rounded-xl border border-white/10 bg-white/10 py-3 font-black hover:bg-white/20"
-              >
-                f
+                <FaDiscord className="h-5 w-5 text-[#5865F2]" />
               </button>
             </div>
 

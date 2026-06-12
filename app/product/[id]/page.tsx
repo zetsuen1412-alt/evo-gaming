@@ -59,6 +59,17 @@ type WishlistRow = {
   product_id: number;
 };
 
+type SellerReview = {
+  id: number;
+  order_id: number;
+  product_id: number | null;
+  seller_id: string;
+  buyer_id: string;
+  rating: number;
+  review_text: string | null;
+  created_at: string;
+};
+
 function formatPrice(value: string | number | null) {
   const numberValue = Number(value || 0);
 
@@ -79,6 +90,15 @@ function formatDate(value: string | null | undefined) {
   });
 }
 
+function renderStars(rating: number) {
+  const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
+
+  return "★★★★★"
+    .split("")
+    .map((star, index) => (index < safeRating ? "★" : "☆"))
+    .join("");
+}
+
 export default function ProductDetailV5WishlistPage() {
   const params = useParams();
   const productId = String(params.id || "");
@@ -87,6 +107,7 @@ export default function ProductDetailV5WishlistPage() {
 
   const [loading, setLoading] = useState(true);
   const [buying, setBuying] = useState(false);
+  const [messaging, setMessaging] = useState(false);
   const [wishlistLoading, setWishlistLoading] = useState(false);
 
   const [product, setProduct] = useState<Product | null>(null);
@@ -97,6 +118,7 @@ export default function ProductDetailV5WishlistPage() {
   const [gameMaster, setGameMaster] = useState<GameMaster | null>(null);
   const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
   const [wishlistRow, setWishlistRow] = useState<WishlistRow | null>(null);
+  const [sellerReviews, setSellerReviews] = useState<SellerReview[]>([]);
 
   const sellerDisplayName = useMemo(() => {
     return (
@@ -115,6 +137,21 @@ export default function ProductDetailV5WishlistPage() {
   const gameDisplayName = useMemo(() => {
     return gameMaster?.name || product?.game_name || "-";
   }, [gameMaster, product]);
+
+  const averageRating = useMemo(() => {
+    if (sellerReviews.length === 0) return 0;
+
+    const total = sellerReviews.reduce(
+      (sum, review) => sum + Number(review.rating || 0),
+      0
+    );
+
+    return total / sellerReviews.length;
+  }, [sellerReviews]);
+
+  const latestReviews = useMemo(() => {
+    return sellerReviews.slice(0, 5);
+  }, [sellerReviews]);
 
   const backToGameUrl = useMemo(() => {
     if (!category?.slug || !gameMaster?.slug) {
@@ -177,6 +214,19 @@ export default function ProductDetailV5WishlistPage() {
           .maybeSingle();
 
         setSellerProfile(sellerData || null);
+
+        const { data: reviewData, error: reviewError } = await supabase
+          .from("seller_reviews")
+          .select("*")
+          .eq("seller_id", productData.seller_id)
+          .order("id", { ascending: false });
+
+        if (reviewError) {
+          console.error("Seller reviews load error:", reviewError.message);
+          setSellerReviews([]);
+        } else {
+          setSellerReviews(reviewData || []);
+        }
       }
 
       if (productData.category_id) {
@@ -305,6 +355,81 @@ export default function ProductDetailV5WishlistPage() {
     }
   }
 
+  async function handleMessageSeller() {
+    if (!product) return;
+
+    if (!product.seller_id) {
+      alert("Seller not found.");
+      return;
+    }
+
+    try {
+      setMessaging(true);
+
+      const { data: sessionData } = await supabase.auth.getSession();
+
+      if (!sessionData.session?.user) {
+        alert("Please login before sending messages.");
+        window.location.href = "/";
+        return;
+      }
+
+      const currentUser = sessionData.session.user;
+
+      if (currentUser.id === product.seller_id) {
+        alert("You cannot message yourself.");
+        setMessaging(false);
+        return;
+      }
+
+      const { data: existingRoom, error: existingRoomError } = await supabase
+        .from("chat_rooms")
+        .select("*")
+        .eq("buyer_id", currentUser.id)
+        .eq("seller_id", product.seller_id)
+        .eq("product_id", product.id)
+        .is("order_id", null)
+        .maybeSingle();
+
+      if (existingRoomError) {
+        alert(existingRoomError.message);
+        setMessaging(false);
+        return;
+      }
+
+      let roomId = existingRoom?.id;
+
+      if (!existingRoom) {
+        const { data: createdRoom, error: createRoomError } = await supabase
+          .from("chat_rooms")
+          .insert({
+            buyer_id: currentUser.id,
+            seller_id: product.seller_id,
+            product_id: product.id,
+            order_id: null,
+            last_message: `Started conversation about: ${product.title}`,
+            last_message_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (createRoomError) {
+          alert(createRoomError.message);
+          setMessaging(false);
+          return;
+        }
+
+        roomId = createdRoom.id;
+      }
+
+      window.location.href = `/messages?room=${roomId}`;
+    } catch (error) {
+      console.error("Message seller error:", error);
+      alert("Failed to open message room.");
+      setMessaging(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
@@ -358,6 +483,23 @@ export default function ProductDetailV5WishlistPage() {
               Listed by {sellerDisplayName} · Created{" "}
               {formatDate(product.created_at)}
             </p>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <span className="rounded-full border border-yellow-400/30 bg-yellow-400/10 px-4 py-2 text-sm font-black text-yellow-300">
+                {sellerReviews.length > 0
+                  ? `${averageRating.toFixed(1)} / 5`
+                  : "No rating yet"}
+              </span>
+
+              <span className="text-yellow-300">
+                {sellerReviews.length > 0 ? renderStars(averageRating) : "☆☆☆☆☆"}
+              </span>
+
+              <span className="text-sm text-gray-400">
+                {sellerReviews.length} seller review
+                {sellerReviews.length === 1 ? "" : "s"}
+              </span>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -443,6 +585,62 @@ export default function ProductDetailV5WishlistPage() {
                 </p>
               </div>
             </div>
+          </div>
+
+          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-7 shadow-2xl shadow-black/30">
+            <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+              <div>
+                <h2 className="text-3xl font-black text-yellow-300">
+                  Seller Reviews
+                </h2>
+                <p className="mt-2 text-sm text-gray-300">
+                  Latest buyer feedback for this seller.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-yellow-400/30 bg-black/30 px-5 py-3 text-right">
+                <p className="text-2xl font-black text-yellow-300">
+                  {sellerReviews.length > 0 ? averageRating.toFixed(1) : "0.0"}
+                </p>
+                <p className="text-xs text-gray-400">
+                  {sellerReviews.length} reviews
+                </p>
+              </div>
+            </div>
+
+            {latestReviews.length === 0 ? (
+              <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-6 text-center">
+                <p className="text-gray-400">No seller reviews yet.</p>
+              </div>
+            ) : (
+              <div className="mt-6 grid gap-4">
+                {latestReviews.map((review) => (
+                  <div
+                    key={review.id}
+                    className="rounded-2xl border border-white/10 bg-black/30 p-5"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-black text-yellow-300">
+                          {renderStars(review.rating)}
+                        </p>
+                        <p className="mt-1 text-sm text-gray-400">
+                          Rating {review.rating}/5 · {formatDate(review.created_at)}
+                        </p>
+                      </div>
+
+                      <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-black text-cyan-300">
+                        Order #{review.order_id}
+                      </span>
+                    </div>
+
+                    <p className="mt-4 whitespace-pre-line text-sm leading-6 text-gray-300">
+                      {review.review_text || "No written review."}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {relatedProducts.length > 0 && (
@@ -532,6 +730,14 @@ export default function ProductDetailV5WishlistPage() {
                 : "♡ Add to Wishlist"}
             </button>
 
+            <button
+              onClick={handleMessageSeller}
+              disabled={messaging || !product.seller_id}
+              className="mt-4 w-full rounded-2xl border border-yellow-400 py-4 text-lg font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {messaging ? "Opening Chat..." : "💬 Message Seller"}
+            </button>
+
             <p className="mt-4 text-center text-sm text-gray-400">
               Secure order flow by ComePlayers.
             </p>
@@ -561,6 +767,29 @@ export default function ProductDetailV5WishlistPage() {
                   {sellerProfile?.seller_status === "approved"
                     ? "Verified Seller"
                     : "Seller"}
+                </p>
+                <p className="mt-1 text-sm text-yellow-300">
+                  {sellerReviews.length > 0
+                    ? `${renderStars(averageRating)} ${averageRating.toFixed(
+                        1
+                      )}/5`
+                    : "☆☆☆☆☆ No reviews yet"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <p className="text-xs text-gray-500">Rating</p>
+                <p className="mt-1 font-black text-yellow-300">
+                  {sellerReviews.length > 0 ? averageRating.toFixed(1) : "0.0"}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <p className="text-xs text-gray-500">Reviews</p>
+                <p className="mt-1 font-black text-cyan-300">
+                  {sellerReviews.length}
                 </p>
               </div>
             </div>

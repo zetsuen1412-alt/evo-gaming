@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { PayPalButtons, PayPalScriptProvider } from "@paypal/react-paypal-js";
 import { supabase } from "@/lib/supabase";
 
 type Wallet = {
@@ -34,6 +35,15 @@ type WalletTopup = {
   created_at: string;
 };
 
+const PAYPAL_RATE = 15000;
+
+const PAYPAL_PRESETS = [
+  { usd: 5, label: "$5" },
+  { usd: 10, label: "$10" },
+  { usd: 25, label: "$25" },
+  { usd: 50, label: "$50" },
+];
+
 function formatPrice(value: string | number | null) {
   const price = Number(value || 0);
   if (!Number.isFinite(price)) return "Rp 0";
@@ -46,9 +56,12 @@ function formatDate(value: string | null | undefined) {
 }
 
 function getStatusClass(status: string) {
-  if (status === "approved") return "border-green-400/20 bg-green-400/10 text-green-300";
-  if (status === "pending") return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
-  if (status === "rejected" || status === "cancelled") return "border-red-400/20 bg-red-400/10 text-red-300";
+  if (status === "approved")
+    return "border-green-400/20 bg-green-400/10 text-green-300";
+  if (status === "pending")
+    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
+  if (status === "rejected" || status === "cancelled")
+    return "border-red-400/20 bg-red-400/10 text-red-300";
   return "border-white/10 bg-white/[0.04] text-gray-300";
 }
 
@@ -72,6 +85,9 @@ export default function WalletTopUpPageV1() {
   const [loading, setLoading] = useState(true);
   const [creatingWallet, setCreatingWallet] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [paypalLoading, setPaypalLoading] = useState(false);
+
+  const [selectedPaypalUsd, setSelectedPaypalUsd] = useState(5);
 
   const [amount, setAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("Bank Transfer");
@@ -81,6 +97,8 @@ export default function WalletTopUpPageV1() {
 
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreviewUrl, setProofPreviewUrl] = useState("");
+
+  const selectedPaypalIdr = selectedPaypalUsd * PAYPAL_RATE;
 
   const pendingTopups = useMemo(() => {
     return topups.filter((item) => item.status === "pending");
@@ -112,7 +130,7 @@ export default function WalletTopUpPageV1() {
     const { data: topupData, error: topupError } = await supabase
       .from("wallet_topups")
       .select("*")
-      .eq("wallet_id", walletData.id)
+      .eq("user_id", currentUser.id)
       .order("id", { ascending: false });
 
     if (topupError) {
@@ -373,13 +391,13 @@ export default function WalletTopUpPageV1() {
         <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-green-400/30 bg-green-400/10 px-4 py-2 text-sm font-black text-green-300">
-              Wallet Top Up V1
+              Wallet Top Up
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">Top Up Wallet</h1>
 
             <p className="mt-5 max-w-3xl text-gray-300">
-              Add balance to your ComePlayers wallet using manual payment proof.
+              Add balance using PayPal instant top up or manual payment proof.
             </p>
 
             <div className="mt-5 flex flex-wrap gap-3">
@@ -403,138 +421,277 @@ export default function WalletTopUpPageV1() {
       </section>
 
       <section className="mx-auto grid max-w-7xl gap-8 px-8 py-10 lg:grid-cols-[1fr_420px]">
-        <form
-          onSubmit={submitTopup}
-          className="rounded-3xl border border-green-400/20 bg-green-400/10 p-7 shadow-2xl shadow-black/30"
-        >
-          <h2 className="text-3xl font-black text-green-300">
-            Submit Top Up Request
-          </h2>
+        <div className="space-y-8">
+          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-7 shadow-2xl shadow-black/30">
+            <h2 className="text-3xl font-black text-yellow-300">
+              Instant PayPal Top Up
+            </h2>
 
-          <p className="mt-2 text-sm text-gray-300">
-            Transfer the amount first, then upload your payment proof.
-          </p>
-
-          <div className="mt-7 grid gap-5 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-bold text-gray-300">
-                Top Up Amount
-              </label>
-
-              <input
-                type="number"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-                placeholder="100000"
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-bold text-gray-300">
-                Payment Method
-              </label>
-
-              <select
-                value={paymentMethod}
-                onChange={(event) => setPaymentMethod(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-green-400"
-              >
-                <option value="Bank Transfer">Bank Transfer</option>
-                <option value="DANA">DANA</option>
-                <option value="OVO">OVO</option>
-                <option value="GoPay">GoPay</option>
-                <option value="ShopeePay">ShopeePay</option>
-                <option value="PayPal">PayPal</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-5 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-bold text-gray-300">
-                Sender Name
-              </label>
-
-              <input
-                value={senderName}
-                onChange={(event) => setSenderName(event.target.value)}
-                placeholder="Name on bank/e-wallet account"
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-bold text-gray-300">
-                Sender Account / Wallet ID
-              </label>
-
-              <input
-                value={senderAccount}
-                onChange={(event) => setSenderAccount(event.target.value)}
-                placeholder="Account number, phone, wallet ID"
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
-              />
-            </div>
-          </div>
-
-          <div className="mt-5">
-            <label className="mb-2 block text-sm font-bold text-gray-300">
-              Upload Payment Proof Image
-            </label>
-
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleProofFileChange}
-              className="block w-full cursor-pointer rounded-2xl border border-white/10 bg-black px-5 py-4 text-sm text-gray-300 outline-none file:mr-4 file:rounded-full file:border-0 file:bg-green-400 file:px-5 file:py-2 file:font-black file:text-black hover:file:bg-green-300"
-            />
-
-            <p className="mt-2 text-xs text-gray-500">
-              Supported: JPG, PNG, WEBP. Max 5MB.
+            <p className="mt-2 text-sm text-gray-300">
+              Pay with PayPal Sandbox. Your wallet balance will be added automatically after payment success.
             </p>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-4">
+              {PAYPAL_PRESETS.map((preset) => (
+                <button
+                  key={preset.usd}
+                  type="button"
+                  onClick={() => setSelectedPaypalUsd(preset.usd)}
+                  className={`rounded-2xl border px-4 py-4 font-black transition ${
+                    selectedPaypalUsd === preset.usd
+                      ? "border-yellow-300 bg-yellow-300 text-black"
+                      : "border-white/10 bg-black/30 text-white hover:border-yellow-300"
+                  }`}
+                >
+                  <p>{preset.label}</p>
+                  <p className="mt-1 text-xs opacity-80">
+                    {formatPrice(preset.usd * PAYPAL_RATE)}
+                  </p>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm text-gray-400">You Pay</p>
+                  <p className="text-2xl font-black text-yellow-300">
+                    ${selectedPaypalUsd.toFixed(2)}
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-sm text-gray-400">Wallet Credit</p>
+                  <p className="text-2xl font-black text-green-300">
+                    {formatPrice(selectedPaypalIdr)}
+                  </p>
+                </div>
+              </div>
+
+              <p className="mt-4 text-xs text-gray-500">
+                Sandbox rate: 1 USD = {formatPrice(PAYPAL_RATE)}.
+              </p>
+            </div>
+
+            <div className="mt-6">
+              <PayPalScriptProvider
+                options={{
+                  clientId: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || "",
+                  currency: "USD",
+                  intent: "capture",
+                  components: "buttons",
+                }}
+              >
+                <PayPalButtons
+                  style={{
+                    layout: "vertical",
+                    color: "gold",
+                    shape: "rect",
+                    label: "paypal",
+                  }}
+                  disabled={paypalLoading}
+                  createOrder={async () => {
+                    if (!user) {
+                      throw new Error("Please login first.");
+                    }
+
+                    setPaypalLoading(true);
+
+                    const response = await fetch("/api/paypal/create-order", {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        userId: user.id,
+                        amountUsd: selectedPaypalUsd,
+                        rate: PAYPAL_RATE,
+                      }),
+                    });
+
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                      setPaypalLoading(false);
+                      throw new Error(data.error || "Failed to create PayPal order.");
+                    }
+
+                    return data.id;
+                  }}
+                  onApprove={async (data) => {
+                    const response = await fetch("/api/paypal/capture-order", {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        orderId: data.orderID,
+                        userId: user.id,
+                      }),
+                    });
+
+                    const result = await response.json();
+
+                    setPaypalLoading(false);
+
+                    if (!response.ok) {
+                      alert(result.error || "Failed to capture PayPal payment.");
+                      return;
+                    }
+
+                    await loadWalletAndTopups(user);
+
+                    alert(
+                      `PayPal top up berhasil. Saldo bertambah ${formatPrice(
+                        result.amountIdr
+                      )}.`
+                    );
+                  }}
+                  onCancel={() => {
+                    setPaypalLoading(false);
+                  }}
+                  onError={(error) => {
+                    console.error("PayPal error:", error);
+                    setPaypalLoading(false);
+                    alert("PayPal error. Please check browser console.");
+                  }}
+                />
+              </PayPalScriptProvider>
+            </div>
           </div>
 
-          {proofPreviewUrl && (
-            <div className="mt-5 overflow-hidden rounded-2xl border border-green-400/20 bg-black/30">
-              <div className="flex max-h-[420px] items-center justify-center bg-black">
-                <img
-                  src={proofPreviewUrl}
-                  alt="Top up proof preview"
-                  className="max-h-[420px] w-full object-contain"
+          <form
+            onSubmit={submitTopup}
+            className="rounded-3xl border border-green-400/20 bg-green-400/10 p-7 shadow-2xl shadow-black/30"
+          >
+            <h2 className="text-3xl font-black text-green-300">
+              Manual Top Up Request
+            </h2>
+
+            <p className="mt-2 text-sm text-gray-300">
+              Transfer the amount first, then upload your payment proof.
+            </p>
+
+            <div className="mt-7 grid gap-5 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">
+                  Top Up Amount
+                </label>
+
+                <input
+                  type="number"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  placeholder="100000"
+                  className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
                 />
               </div>
 
-              <div className="p-4">
-                <p className="text-sm font-bold text-green-300">
-                  Payment proof preview
-                </p>
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">
+                  Payment Method
+                </label>
+
+                <select
+                  value={paymentMethod}
+                  onChange={(event) => setPaymentMethod(event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-green-400"
+                >
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="DANA">DANA</option>
+                  <option value="OVO">OVO</option>
+                  <option value="GoPay">GoPay</option>
+                  <option value="ShopeePay">ShopeePay</option>
+                </select>
               </div>
             </div>
-          )}
 
-          <div className="mt-5">
-            <label className="mb-2 block text-sm font-bold text-gray-300">
-              Payment Note
-            </label>
+            <div className="mt-5 grid gap-5 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">
+                  Sender Name
+                </label>
 
-            <textarea
-              value={paymentNote}
-              onChange={(event) => setPaymentNote(event.target.value)}
-              placeholder="Write transfer time, bank name, reference number, or additional notes."
-              rows={5}
-              className="w-full resize-none rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
-            />
-          </div>
+                <input
+                  value={senderName}
+                  onChange={(event) => setSenderName(event.target.value)}
+                  placeholder="Name on bank/e-wallet account"
+                  className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
+                />
+              </div>
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="mt-8 w-full rounded-2xl bg-green-400 py-4 text-lg font-black text-black transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting ? "Submitting Top Up..." : "Submit Top Up Request"}
-          </button>
-        </form>
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">
+                  Sender Account / Wallet ID
+                </label>
+
+                <input
+                  value={senderAccount}
+                  onChange={(event) => setSenderAccount(event.target.value)}
+                  placeholder="Account number, phone, wallet ID"
+                  className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
+                />
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <label className="mb-2 block text-sm font-bold text-gray-300">
+                Upload Payment Proof Image
+              </label>
+
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleProofFileChange}
+                className="block w-full cursor-pointer rounded-2xl border border-white/10 bg-black px-5 py-4 text-sm text-gray-300 outline-none file:mr-4 file:rounded-full file:border-0 file:bg-green-400 file:px-5 file:py-2 file:font-black file:text-black hover:file:bg-green-300"
+              />
+
+              <p className="mt-2 text-xs text-gray-500">
+                Supported: JPG, PNG, WEBP. Max 5MB.
+              </p>
+            </div>
+
+            {proofPreviewUrl && (
+              <div className="mt-5 overflow-hidden rounded-2xl border border-green-400/20 bg-black/30">
+                <div className="flex max-h-[420px] items-center justify-center bg-black">
+                  <img
+                    src={proofPreviewUrl}
+                    alt="Top up proof preview"
+                    className="max-h-[420px] w-full object-contain"
+                  />
+                </div>
+
+                <div className="p-4">
+                  <p className="text-sm font-bold text-green-300">
+                    Payment proof preview
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5">
+              <label className="mb-2 block text-sm font-bold text-gray-300">
+                Payment Note
+              </label>
+
+              <textarea
+                value={paymentNote}
+                onChange={(event) => setPaymentNote(event.target.value)}
+                placeholder="Write transfer time, bank name, reference number, or additional notes."
+                rows={5}
+                className="w-full resize-none rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="mt-8 w-full rounded-2xl bg-green-400 py-4 text-lg font-black text-black transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? "Submitting Top Up..." : "Submit Top Up Request"}
+            </button>
+          </form>
+        </div>
 
         <aside className="h-fit space-y-6">
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
@@ -562,34 +719,6 @@ export default function WalletTopUpPageV1() {
                 </p>
               </div>
             </div>
-          </div>
-
-          <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-7">
-            <h2 className="text-2xl font-black">Payment Destination</h2>
-
-            <div className="mt-5 space-y-4 rounded-2xl border border-white/10 bg-black/30 p-5">
-              <div>
-                <p className="text-sm text-gray-400">Bank</p>
-                <p className="mt-1 text-xl font-black">BCA</p>
-              </div>
-
-              <div>
-                <p className="text-sm text-gray-400">Account Number</p>
-                <p className="mt-1 text-xl font-black text-cyan-300">
-                  1234567890
-                </p>
-              </div>
-
-              <div>
-                <p className="text-sm text-gray-400">Account Name</p>
-                <p className="mt-1 font-black">ComePlayers Official</p>
-              </div>
-            </div>
-
-            <p className="mt-4 text-sm leading-6 text-gray-300">
-              Replace this destination later with your real payment account or
-              Midtrans integration.
-            </p>
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7">

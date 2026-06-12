@@ -20,6 +20,9 @@ type Order = {
   price: string | number | null;
   total_price: string | number | null;
   status: string | null;
+  escrow_status: string | null;
+  escrow_released_at: string | null;
+  completed_at: string | null;
   created_at: string;
 };
 
@@ -38,18 +41,66 @@ type Review = {
   created_at: string;
 };
 
+type Wallet = {
+  id: number;
+  user_id: string;
+  balance: string | number | null;
+  pending_balance: string | number | null;
+  total_earned: string | number | null;
+  total_spent: string | number | null;
+  total_withdrawn: string | number | null;
+  status: string | null;
+};
+
+type WalletTransaction = {
+  id: number;
+  wallet_id: number | null;
+  user_id: string | null;
+  type: string | null;
+  amount: string | number | null;
+  balance_before: string | number | null;
+  balance_after: string | number | null;
+  order_id: number | null;
+  description: string | null;
+  status: string | null;
+  created_at: string | null;
+};
+
+type WithdrawalRequest = {
+  id: number;
+  user_id: string;
+  wallet_id: number;
+  amount: string | number;
+  payout_method: string | null;
+  payout_account_name: string | null;
+  payout_account_number: string | null;
+  payout_note: string | null;
+  status: string | null;
+  admin_note: string | null;
+  processed_at: string | null;
+  created_at: string;
+};
+
 function normalizeStatus(status: string | null) {
   if (status === "Selesai") return "Completed";
+  if (status === "completed") return "Completed";
   if (status === "Diproses") return "Processing";
   if (status === "Menunggu Cek Pembayaran") return "Payment Verification";
   if (status === "Menunggu Pembayaran") return "Pending Payment";
+  if (status === "pending") return "Pending Payment";
+  if (status === "pending_payment") return "Pending Payment";
   return status || "Pending Payment";
 }
 
-function formatPrice(value: string | number | null) {
+function formatPrice(value: string | number | null | undefined) {
   const price = Number(value || 0);
   if (!Number.isFinite(price)) return "Rp 0";
   return `Rp ${price.toLocaleString("id-ID")}`;
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("id-ID");
 }
 
 function getDayKey(value: string) {
@@ -62,19 +113,39 @@ function getDaysAgo(days: number) {
   return date;
 }
 
-export default function SellerAnalyticsV1Page() {
+function isCompletedOrder(status: string | null) {
+  return normalizeStatus(status) === "Completed";
+}
+
+function renderStars(rating: number) {
+  const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
+  return "★★★★★"
+    .split("")
+    .map((_, index) => (index < safeRating ? "★" : "☆"))
+    .join("");
+}
+
+export default function SellerAnalyticsV2Page() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [wallet, setWallet] = useState<Wallet | null>(null);
+  const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   const sellerDisplayName =
     profile?.seller_name || profile?.username || user?.email || "Seller";
 
   const completedOrders = useMemo(
-    () => orders.filter((order) => normalizeStatus(order.status) === "Completed"),
+    () => orders.filter((order) => isCompletedOrder(order.status)),
+    [orders]
+  );
+
+  const processingOrders = useMemo(
+    () => orders.filter((order) => normalizeStatus(order.status) === "Processing"),
     [orders]
   );
 
@@ -87,27 +158,62 @@ export default function SellerAnalyticsV1Page() {
     [completedOrders]
   );
 
+  const escrowReleasedOrders = useMemo(
+    () =>
+      completedOrders.filter(
+        (order) => order.escrow_status === "released" || order.escrow_released_at
+      ),
+    [completedOrders]
+  );
+
+  const escrowReleasedAmount = useMemo(
+    () =>
+      escrowReleasedOrders.reduce(
+        (sum, order) => sum + Number(order.total_price || order.price || 0),
+        0
+      ),
+    [escrowReleasedOrders]
+  );
+
+  const pendingEscrowAmount = useMemo(
+    () =>
+      completedOrders
+        .filter(
+          (order) =>
+            order.escrow_status !== "released" && !order.escrow_released_at
+        )
+        .reduce(
+          (sum, order) => sum + Number(order.total_price || order.price || 0),
+          0
+        ),
+    [completedOrders]
+  );
+
   const revenue7Days = useMemo(() => {
     const since = getDaysAgo(7).getTime();
 
-    return completedOrders
-      .filter((order) => new Date(order.created_at).getTime() >= since)
-      .reduce(
-        (sum, order) => sum + Number(order.total_price || order.price || 0),
-        0
-      );
-  }, [completedOrders]);
+    return walletTransactions
+      .filter(
+        (tx) =>
+          tx.type === "sale_release" &&
+          tx.created_at &&
+          new Date(tx.created_at).getTime() >= since
+      )
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+  }, [walletTransactions]);
 
   const revenue30Days = useMemo(() => {
     const since = getDaysAgo(30).getTime();
 
-    return completedOrders
-      .filter((order) => new Date(order.created_at).getTime() >= since)
-      .reduce(
-        (sum, order) => sum + Number(order.total_price || order.price || 0),
-        0
-      );
-  }, [completedOrders]);
+    return walletTransactions
+      .filter(
+        (tx) =>
+          tx.type === "sale_release" &&
+          tx.created_at &&
+          new Date(tx.created_at).getTime() >= since
+      )
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+  }, [walletTransactions]);
 
   const conversionRate = useMemo(() => {
     if (orders.length === 0) return 0;
@@ -176,12 +282,14 @@ export default function SellerAnalyticsV1Page() {
       const date = getDaysAgo(index);
       const key = date.toISOString().slice(0, 10);
 
-      const revenue = completedOrders
-        .filter((order) => getDayKey(order.created_at) === key)
-        .reduce(
-          (sum, order) => sum + Number(order.total_price || order.price || 0),
-          0
-        );
+      const revenue = walletTransactions
+        .filter(
+          (tx) =>
+            tx.type === "sale_release" &&
+            tx.created_at &&
+            getDayKey(tx.created_at) === key
+        )
+        .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
 
       days.push({
         date: date.toLocaleDateString("id-ID", {
@@ -193,9 +301,27 @@ export default function SellerAnalyticsV1Page() {
     }
 
     return days;
-  }, [completedOrders]);
+  }, [walletTransactions]);
 
-  const maxDailyRevenue = Math.max(1, ...dailyRevenue7Days.map((day) => day.revenue));
+  const maxDailyRevenue = Math.max(
+    1,
+    ...dailyRevenue7Days.map((day) => day.revenue)
+  );
+
+  const pendingWithdrawals = useMemo(() => {
+    return withdrawals.filter((item) => item.status === "pending");
+  }, [withdrawals]);
+
+  const pendingWithdrawalAmount = useMemo(() => {
+    return pendingWithdrawals.reduce(
+      (sum, item) => sum + Number(item.amount || 0),
+      0
+    );
+  }, [pendingWithdrawals]);
+
+  const latestOrders = useMemo(() => {
+    return orders.slice(0, 6);
+  }, [orders]);
 
   async function loadSellerAnalytics(currentUser: User) {
     const { data: profileData, error: profileError } = await supabase
@@ -215,23 +341,31 @@ export default function SellerAnalyticsV1Page() {
       return;
     }
 
-    const [ordersResult, productsResult, reviewsResult] = await Promise.all([
-      supabase
-        .from("orders")
-        .select("id,product_id,product,price,total_price,status,created_at")
-        .eq("seller_id", currentUser.id)
-        .order("id", { ascending: false }),
-      supabase
-        .from("products")
-        .select("id,title,price,status,stock")
-        .eq("seller_id", currentUser.id)
-        .order("id", { ascending: false }),
-      supabase
-        .from("seller_reviews")
-        .select("id,rating,review_text,created_at")
-        .eq("seller_id", currentUser.id)
-        .order("id", { ascending: false }),
-    ]);
+    const [ordersResult, productsResult, reviewsResult, walletResult] =
+      await Promise.all([
+        supabase
+          .from("orders")
+          .select(
+            "id,product_id,product,price,total_price,status,escrow_status,escrow_released_at,completed_at,created_at"
+          )
+          .eq("seller_id", currentUser.id)
+          .order("id", { ascending: false }),
+        supabase
+          .from("products")
+          .select("id,title,price,status,stock")
+          .eq("seller_id", currentUser.id)
+          .order("id", { ascending: false }),
+        supabase
+          .from("seller_reviews")
+          .select("id,rating,review_text,created_at")
+          .eq("seller_id", currentUser.id)
+          .order("id", { ascending: false }),
+        supabase
+          .from("wallets")
+          .select("*")
+          .eq("user_id", currentUser.id)
+          .maybeSingle(),
+      ]);
 
     if (ordersResult.error) {
       alert(ordersResult.error.message);
@@ -248,9 +382,48 @@ export default function SellerAnalyticsV1Page() {
       return;
     }
 
+    if (walletResult.error) {
+      alert(walletResult.error.message);
+      return;
+    }
+
     setOrders(ordersResult.data || []);
     setProducts(productsResult.data || []);
     setReviews(reviewsResult.data || []);
+    setWallet(walletResult.data || null);
+
+    if (walletResult.data?.id) {
+      const [transactionsResult, withdrawalsResult] = await Promise.all([
+        supabase
+          .from("wallet_transactions")
+          .select("*")
+          .eq("wallet_id", walletResult.data.id)
+          .order("id", { ascending: false })
+          .limit(10),
+        supabase
+          .from("withdrawal_requests")
+          .select("*")
+          .eq("wallet_id", walletResult.data.id)
+          .order("id", { ascending: false })
+          .limit(10),
+      ]);
+
+      if (transactionsResult.error) {
+        alert(transactionsResult.error.message);
+        return;
+      }
+
+      if (withdrawalsResult.error) {
+        alert(withdrawalsResult.error.message);
+        return;
+      }
+
+      setWalletTransactions(transactionsResult.data || []);
+      setWithdrawals(withdrawalsResult.data || []);
+    } else {
+      setWalletTransactions([]);
+      setWithdrawals([]);
+    }
   }
 
   useEffect(() => {
@@ -320,18 +493,32 @@ export default function SellerAnalyticsV1Page() {
         <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Seller Analytics V1
+              Seller Analytics V2
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">Analytics</h1>
 
             <p className="mt-5 max-w-3xl text-gray-300">
-              Track revenue, completed orders, rating, top products, and sales
-              performance for {sellerDisplayName}.
+              Track revenue, escrow, wallet balance, withdrawal activity,
+              rating, top products, and sales performance for {sellerDisplayName}.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => user && loadSellerAnalytics(user)}
+              className="inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black transition hover:bg-cyan-300"
+            >
+              Refresh
+            </button>
+
+            <Link
+              href="/wallet"
+              className="inline-flex h-12 items-center justify-center rounded-full border border-green-400 px-6 font-bold text-green-300 transition hover:bg-green-400 hover:text-black"
+            >
+              Wallet
+            </Link>
+
             <Link
               href="/seller/orders"
               className="inline-flex h-12 items-center justify-center rounded-full border border-white/10 px-6 font-bold text-gray-300 transition hover:bg-white hover:text-black"
@@ -350,6 +537,48 @@ export default function SellerAnalyticsV1Page() {
       </section>
 
       <section className="mx-auto max-w-7xl px-8 py-10">
+        <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-3xl border border-green-400/20 bg-green-400/10 p-6">
+            <p className="text-sm text-gray-300">Wallet Balance</p>
+            <p className="mt-2 text-3xl font-black text-green-300">
+              {formatPrice(wallet?.balance)}
+            </p>
+            <p className="mt-2 text-xs text-gray-400">
+              Available to withdraw
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-6">
+            <p className="text-sm text-gray-300">Escrow Released</p>
+            <p className="mt-2 text-3xl font-black text-cyan-300">
+              {formatPrice(escrowReleasedAmount)}
+            </p>
+            <p className="mt-2 text-xs text-gray-400">
+              {escrowReleasedOrders.length} released orders
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-6">
+            <p className="text-sm text-gray-300">Pending Escrow</p>
+            <p className="mt-2 text-3xl font-black text-yellow-300">
+              {formatPrice(pendingEscrowAmount)}
+            </p>
+            <p className="mt-2 text-xs text-gray-400">
+              Completed but unreleased
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-purple-400/20 bg-purple-400/10 p-6">
+            <p className="text-sm text-gray-300">Pending Withdrawals</p>
+            <p className="mt-2 text-3xl font-black text-purple-300">
+              {formatPrice(pendingWithdrawalAmount)}
+            </p>
+            <p className="mt-2 text-xs text-gray-400">
+              {pendingWithdrawals.length} request(s)
+            </p>
+          </div>
+        </div>
+
         <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
             <p className="text-sm text-gray-400">Total Revenue</p>
@@ -396,16 +625,46 @@ export default function SellerAnalyticsV1Page() {
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
+            <p className="text-sm text-gray-400">Processing Orders</p>
+            <p className="mt-2 text-4xl font-black text-blue-300">
+              {processingOrders.length}
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
             <p className="text-sm text-gray-400">Conversion Rate</p>
             <p className="mt-2 text-4xl font-black text-purple-300">
               {conversionRate}%
             </p>
           </div>
+        </div>
 
+        <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
             <p className="text-sm text-gray-400">Active Products</p>
             <p className="mt-2 text-4xl font-black text-cyan-300">
               {products.filter((product) => product.status === "active").length}
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
+            <p className="text-sm text-gray-400">Total Reviews</p>
+            <p className="mt-2 text-4xl font-black text-yellow-300">
+              {reviews.length}
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
+            <p className="text-sm text-gray-400">Lifetime Earnings</p>
+            <p className="mt-2 text-3xl font-black text-green-300">
+              {formatPrice(wallet?.total_earned)}
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
+            <p className="text-sm text-gray-400">Total Withdrawn</p>
+            <p className="mt-2 text-3xl font-black text-red-300">
+              {formatPrice(wallet?.total_withdrawn)}
             </p>
           </div>
         </div>
@@ -454,8 +713,7 @@ export default function SellerAnalyticsV1Page() {
                     className="rounded-2xl border border-white/10 bg-black/30 p-5"
                   >
                     <p className="text-xl text-yellow-300">
-                      {"★★★★★".slice(0, review.rating)}
-                      {"☆☆☆☆☆".slice(0, 5 - review.rating)}
+                      {renderStars(review.rating)}
                     </p>
 
                     <p className="mt-3 text-sm leading-6 text-gray-300">
@@ -463,7 +721,7 @@ export default function SellerAnalyticsV1Page() {
                     </p>
 
                     <p className="mt-3 text-xs text-gray-500">
-                      {new Date(review.created_at).toLocaleString()}
+                      {formatDate(review.created_at)}
                     </p>
                   </div>
                 ))}
@@ -472,7 +730,7 @@ export default function SellerAnalyticsV1Page() {
           </aside>
         </div>
 
-        <div className="grid gap-8 lg:grid-cols-[1fr_420px]">
+        <div className="mb-8 grid gap-8 lg:grid-cols-[1fr_420px]">
           <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
             <h2 className="text-3xl font-black">Top Selling Products</h2>
 
@@ -543,6 +801,119 @@ export default function SellerAnalyticsV1Page() {
               </div>
             )}
           </aside>
+        </div>
+
+        <div className="grid gap-8 lg:grid-cols-[1fr_420px]">
+          <section className="rounded-3xl border border-green-400/20 bg-green-400/10 p-7 shadow-2xl shadow-black/30">
+            <h2 className="text-3xl font-black text-green-300">
+              Recent Wallet Transactions
+            </h2>
+
+            {walletTransactions.length === 0 ? (
+              <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-6 text-center text-gray-400">
+                No wallet transactions yet.
+              </div>
+            ) : (
+              <div className="mt-6 space-y-4">
+                {walletTransactions.map((transaction) => (
+                  <div
+                    key={transaction.id}
+                    className="rounded-2xl border border-white/10 bg-black/30 p-5"
+                  >
+                    <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+                      <div>
+                        <p className="font-black text-green-300">
+                          {transaction.type || "transaction"}
+                        </p>
+                        <p className="mt-1 text-sm text-gray-300">
+                          {transaction.description || "No description."}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {formatDate(transaction.created_at)}
+                        </p>
+                      </div>
+
+                      <div className="md:text-right">
+                        <p className="text-2xl font-black text-cyan-300">
+                          {formatPrice(transaction.amount)}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          Balance: {formatPrice(transaction.balance_after)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <aside className="rounded-3xl border border-purple-400/20 bg-purple-400/10 p-7 shadow-2xl shadow-black/30">
+            <h2 className="text-3xl font-black text-purple-300">
+              Withdrawal Requests
+            </h2>
+
+            {withdrawals.length === 0 ? (
+              <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-6 text-center text-gray-400">
+                No withdrawal requests yet.
+              </div>
+            ) : (
+              <div className="mt-6 space-y-4">
+                {withdrawals.map((withdrawal) => (
+                  <div
+                    key={withdrawal.id}
+                    className="rounded-2xl border border-white/10 bg-black/30 p-5"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xl font-black text-purple-300">
+                          {formatPrice(withdrawal.amount)}
+                        </p>
+                        <p className="mt-1 text-sm text-gray-300">
+                          {withdrawal.payout_method || "Payout"}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-500">
+                          {formatDate(withdrawal.created_at)}
+                        </p>
+                      </div>
+
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-black ${
+                          withdrawal.status === "approved"
+                            ? "border-green-400/20 bg-green-400/10 text-green-300"
+                            : withdrawal.status === "rejected"
+                            ? "border-red-400/20 bg-red-400/10 text-red-300"
+                            : "border-yellow-400/20 bg-yellow-400/10 text-yellow-300"
+                        }`}
+                      >
+                        {withdrawal.status || "pending"}
+                      </span>
+                    </div>
+
+                    {withdrawal.admin_note && (
+                      <p className="mt-3 text-sm text-gray-300">
+                        Admin Note: {withdrawal.admin_note}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </aside>
+        </div>
+
+        <div className="mt-8 rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-7">
+          <h2 className="text-2xl font-black text-cyan-300">
+            Seller Finance Summary
+          </h2>
+
+          <p className="mt-3 text-sm leading-7 text-gray-300">
+            Revenue is calculated from completed orders. Escrow released means
+            completed order funds have been moved into your wallet. Pending
+            escrow means completed order funds are waiting for auto-release or
+            dispute checks. Wallet balance is the amount currently available for
+            withdrawal.
+          </p>
         </div>
       </section>
     </main>

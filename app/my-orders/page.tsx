@@ -11,17 +11,14 @@ type Order = {
   buyer: string | null;
   seller_id: string | null;
   product_id: number | null;
-
   product: string | null;
   price: string | number | null;
   quantity: number | null;
   total_price: string | number | null;
-
   category_id: number | null;
   category_name: string | null;
   game_master_id: number | null;
   game_name: string | null;
-
   status: string | null;
   payment_proof: string | null;
   payment_image: string | null;
@@ -72,11 +69,7 @@ function getStatusClass(status: string | null) {
 
 function formatPrice(value: string | number | null) {
   const price = Number(value || 0);
-
-  if (!Number.isFinite(price)) {
-    return "Rp 0";
-  }
-
+  if (!Number.isFinite(price)) return "Rp 0";
   return `Rp ${price.toLocaleString("id-ID")}`;
 }
 
@@ -84,6 +77,7 @@ export default function MyOrdersV3Page() {
   const [user, setUser] = useState<User | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [messagingOrderId, setMessagingOrderId] = useState<number | null>(null);
 
   const [activeStatus, setActiveStatus] = useState("all");
   const [search, setSearch] = useState("");
@@ -93,7 +87,6 @@ export default function MyOrdersV3Page() {
 
     return orders.filter((order) => {
       const normalizedStatus = normalizeStatus(order.status);
-
       const matchesStatus =
         activeStatus === "all" || normalizedStatus === activeStatus;
 
@@ -126,7 +119,10 @@ export default function MyOrdersV3Page() {
 
   const totalSpent = orders
     .filter((order) => normalizeStatus(order.status) === "Completed")
-    .reduce((sum, order) => sum + Number(order.total_price || order.price || 0), 0);
+    .reduce(
+      (sum, order) => sum + Number(order.total_price || order.price || 0),
+      0
+    );
 
   useEffect(() => {
     async function loadOrders() {
@@ -165,6 +161,76 @@ export default function MyOrdersV3Page() {
     loadOrders();
   }, []);
 
+  async function handleMessageSeller(order: Order) {
+    if (!user) return;
+
+    if (!order.buyer_id || !order.seller_id) {
+      alert("Buyer or seller not found.");
+      return;
+    }
+
+    const isBuyer = order.buyer_id === user.id || order.buyer === user.email;
+
+    if (!isBuyer) {
+      alert("You are not allowed to message this seller.");
+      return;
+    }
+
+    if (order.seller_id === user.id) {
+      alert("You cannot message yourself.");
+      return;
+    }
+
+    try {
+      setMessagingOrderId(order.id);
+
+      const { data: existingRoom, error: existingRoomError } = await supabase
+        .from("chat_rooms")
+        .select("*")
+        .eq("buyer_id", order.buyer_id)
+        .eq("seller_id", order.seller_id)
+        .eq("order_id", order.id)
+        .maybeSingle();
+
+      if (existingRoomError) {
+        alert(existingRoomError.message);
+        setMessagingOrderId(null);
+        return;
+      }
+
+      let roomId = existingRoom?.id;
+
+      if (!existingRoom) {
+        const { data: createdRoom, error: createRoomError } = await supabase
+          .from("chat_rooms")
+          .insert({
+            buyer_id: order.buyer_id,
+            seller_id: order.seller_id,
+            product_id: order.product_id,
+            order_id: order.id,
+            last_message: `Started conversation about order #${order.id}`,
+            last_message_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (createRoomError) {
+          alert(createRoomError.message);
+          setMessagingOrderId(null);
+          return;
+        }
+
+        roomId = createdRoom.id;
+      }
+
+      window.location.href = `/messages?room=${roomId}`;
+    } catch (error) {
+      console.error("Message seller error:", error);
+      alert("Failed to open seller chat.");
+      setMessagingOrderId(null);
+    }
+  }
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
@@ -179,9 +245,7 @@ export default function MyOrdersV3Page() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
-          <h1 className="text-3xl font-black text-cyan-300">
-            Login Required
-          </h1>
+          <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
 
           <p className="mt-4 text-gray-400">
             Please login first to view your orders.
@@ -432,6 +496,16 @@ export default function MyOrdersV3Page() {
                           Continue Payment
                         </Link>
                       )}
+
+                      <button
+                        onClick={() => handleMessageSeller(order)}
+                        disabled={messagingOrderId === order.id || !order.seller_id}
+                        className="rounded-2xl border border-yellow-400 px-5 py-3 font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {messagingOrderId === order.id
+                          ? "Opening Chat..."
+                          : "💬 Message Seller"}
+                      </button>
 
                       {order.product_id && (
                         <Link

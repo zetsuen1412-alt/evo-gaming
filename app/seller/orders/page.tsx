@@ -12,17 +12,14 @@ type Order = {
   buyer: string | null;
   seller_id: string | null;
   product_id: number | null;
-
   product: string | null;
   price: string | number | null;
   quantity: number | null;
   total_price: string | number | null;
-
   category_id: number | null;
   category_name: string | null;
   game_master_id: number | null;
   game_name: string | null;
-
   status: string | null;
   payment_proof: string | null;
   payment_image: string | null;
@@ -128,6 +125,7 @@ export default function SellerOrdersV3WalletReleasePage() {
   const [activeStatus, setActiveStatus] = useState("all");
   const [search, setSearch] = useState("");
   const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
+  const [messagingOrderId, setMessagingOrderId] = useState<number | null>(null);
 
   const filteredOrders = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -169,10 +167,6 @@ export default function SellerOrdersV3WalletReleasePage() {
 
   const processingCount = orders.filter(
     (order) => normalizeStatus(order.status) === "Processing"
-  ).length;
-
-  const completedCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Completed"
   ).length;
 
   async function loadSellerOrders(userId: string) {
@@ -388,8 +382,107 @@ export default function SellerOrdersV3WalletReleasePage() {
           : `/order/${order.id}`,
     });
 
+    if (newStatus === "Processing") {
+      await createNotification({
+        userId: order.seller_id,
+        type: "seller",
+        title: "Order Processing Started",
+        message: `You started processing order #${order.id}.`,
+        linkUrl: "/seller/orders",
+      });
+    }
+
+    if (newStatus === "Completed") {
+      await createNotification({
+        userId: order.seller_id,
+        type: "seller",
+        title: "Order Completed",
+        message: `Order #${order.id} has been completed and the earning has been released to your wallet.`,
+        linkUrl: "/wallet",
+      });
+    }
+
+    if (newStatus === "Cancelled") {
+      await createNotification({
+        userId: order.seller_id,
+        type: "seller",
+        title: "Order Cancelled",
+        message: `You cancelled order #${order.id}.`,
+        linkUrl: "/seller/orders",
+      });
+    }
+
     await loadSellerOrders(user.id);
     setUpdatingOrderId(null);
+  }
+
+
+  async function handleMessageBuyer(order: Order) {
+    if (!user) return;
+
+    if (!order.buyer_id || !order.seller_id) {
+      alert("Buyer or seller not found.");
+      return;
+    }
+
+    if (order.seller_id !== user.id) {
+      alert("You are not allowed to message this buyer.");
+      return;
+    }
+
+    if (order.buyer_id === user.id) {
+      alert("You cannot message yourself.");
+      return;
+    }
+
+    try {
+      setMessagingOrderId(order.id);
+
+      const { data: existingRoom, error: existingRoomError } = await supabase
+        .from("chat_rooms")
+        .select("*")
+        .eq("buyer_id", order.buyer_id)
+        .eq("seller_id", order.seller_id)
+        .eq("order_id", order.id)
+        .maybeSingle();
+
+      if (existingRoomError) {
+        alert(existingRoomError.message);
+        setMessagingOrderId(null);
+        return;
+      }
+
+      let roomId = existingRoom?.id;
+
+      if (!existingRoom) {
+        const { data: createdRoom, error: createRoomError } = await supabase
+          .from("chat_rooms")
+          .insert({
+            buyer_id: order.buyer_id,
+            seller_id: order.seller_id,
+            product_id: order.product_id,
+            order_id: order.id,
+            last_message: `Started conversation about order #${order.id}`,
+            last_message_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (createRoomError) {
+          alert(createRoomError.message);
+          setMessagingOrderId(null);
+          return;
+        }
+
+        roomId = createdRoom.id;
+      }
+
+      window.location.href = `/messages?room=${roomId}`;
+    } catch (error) {
+      console.error("Message buyer error:", error);
+      alert("Failed to open buyer chat.");
+      setMessagingOrderId(null);
+    }
   }
 
   if (loading) {
@@ -434,9 +527,7 @@ export default function SellerOrdersV3WalletReleasePage() {
               Seller Dashboard
             </p>
 
-            <h1 className="text-5xl font-black md:text-7xl">
-              Seller Orders
-            </h1>
+            <h1 className="text-5xl font-black md:text-7xl">Seller Orders</h1>
 
             <p className="mt-5 max-w-2xl text-gray-300">
               Manage buyer orders, verify payments, update delivery status, and
@@ -713,6 +804,16 @@ export default function SellerOrdersV3WalletReleasePage() {
                         className="rounded-2xl bg-red-500 px-5 py-3 font-black text-white hover:bg-red-400 disabled:opacity-60"
                       >
                         Cancel Order
+                      </button>
+
+                      <button
+                        onClick={() => handleMessageBuyer(order)}
+                        disabled={messagingOrderId === order.id || !order.buyer_id}
+                        className="rounded-2xl border border-yellow-400 px-5 py-3 font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {messagingOrderId === order.id
+                          ? "Opening Chat..."
+                          : "💬 Message Buyer"}
                       </button>
 
                       {order.product_id && (

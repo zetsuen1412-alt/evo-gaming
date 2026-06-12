@@ -59,7 +59,7 @@ function formatPrice(value: string | number | null) {
   return `Rp ${price.toLocaleString("id-ID")}`;
 }
 
-export default function AdminDashboardV3Page() {
+export default function AdminDashboardV4Page() {
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
 
@@ -156,6 +156,46 @@ export default function AdminDashboardV3Page() {
         bg: "bg-pink-400/10",
       },
       {
+        title: "Support Tickets",
+        description: "Manage user support requests and disputes.",
+        href: "/admin/support",
+        value: "Open",
+        label: "support",
+        accent: "text-cyan-300",
+        border: "border-cyan-400/20",
+        bg: "bg-cyan-400/10",
+      },
+      {
+        title: "Announcement Manager",
+        description: "Create maintenance, promo, and security announcements.",
+        href: "/admin/announcements",
+        value: "Open",
+        label: "announcements",
+        accent: "text-yellow-300",
+        border: "border-yellow-400/20",
+        bg: "bg-yellow-400/10",
+      },
+      {
+        title: "Public Announcements",
+        description: "Preview announcements shown to marketplace users.",
+        href: "/announcements",
+        value: "View",
+        label: "public",
+        accent: "text-purple-300",
+        border: "border-purple-400/20",
+        bg: "bg-purple-400/10",
+      },
+      {
+        title: "Support Center",
+        description: "Open the public support ticket center.",
+        href: "/support",
+        value: "View",
+        label: "support",
+        accent: "text-green-300",
+        border: "border-green-400/20",
+        bg: "bg-green-400/10",
+      },
+      {
         title: "Browse Site",
         description: "Return to marketplace homepage.",
         href: "/",
@@ -177,6 +217,7 @@ export default function AdminDashboardV3Page() {
       applicationsResult,
       gamesResult,
       mappingsResult,
+      disputesResult,
     ] = await Promise.all([
       supabase.from("profiles").select("*"),
       supabase.from("products").select("*"),
@@ -187,6 +228,10 @@ export default function AdminDashboardV3Page() {
         .order("id", { ascending: false }),
       supabase.from("game_master").select("*"),
       supabase.from("category_game_master").select("*"),
+      supabase
+        .from("disputes")
+        .select("*")
+        .in("status", ["open", "investigating"]),
     ]);
 
     if (profilesResult.error) alert(profilesResult.error.message);
@@ -195,6 +240,7 @@ export default function AdminDashboardV3Page() {
     if (applicationsResult.error) alert(applicationsResult.error.message);
     if (gamesResult.error) alert(gamesResult.error.message);
     if (mappingsResult.error) alert(mappingsResult.error.message);
+    if (disputesResult.error) alert(disputesResult.error.message);
 
     const profiles = profilesResult.data || [];
     const products = productsResult.data || [];
@@ -202,6 +248,7 @@ export default function AdminDashboardV3Page() {
     const applications = applicationsResult.data || [];
     const games = gamesResult.data || [];
     const mappings = mappingsResult.data || [];
+    const disputes = disputesResult.data || [];
 
     const sellers = profiles.filter(
       (profile: any) =>
@@ -210,10 +257,6 @@ export default function AdminDashboardV3Page() {
 
     const pendingSellers = applications.filter(
       (application: any) => application.status === "pending"
-    );
-
-    const disputes = orders.filter(
-      (order: any) => normalizeStatus(order.status) === "Disputed"
     );
 
     const completedOrders = orders.filter(
@@ -325,7 +368,7 @@ export default function AdminDashboardV3Page() {
         <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Admin Dashboard V3
+              Admin Dashboard V4
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">
@@ -333,8 +376,8 @@ export default function AdminDashboardV3Page() {
             </h1>
 
             <p className="mt-5 max-w-3xl text-gray-300">
-              Manage sellers, orders, products, users, disputes, game master,
-              and category mapping from one dashboard.
+              Manage sellers, orders, products, users, disputes, support,
+              announcements, game master, and category mapping from one dashboard.
             </p>
 
             <p className="mt-3 text-sm text-gray-500">

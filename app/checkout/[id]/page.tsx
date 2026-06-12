@@ -329,6 +329,18 @@ export default function CheckoutV3WalletPaymentPage() {
     }
   }
 
+  async function notifyCouponApplied(orderId: number, buyerId: string) {
+    if (!appliedCoupon || discountAmount <= 0) return;
+
+    await createNotification({
+      userId: buyerId,
+      type: "coupon",
+      title: "Coupon Applied",
+      message: `${appliedCoupon.code} saved you ${formatPrice(discountAmount)}.`,
+      linkUrl: `/order/${orderId}`,
+    });
+  }
+
   async function payWithWallet(orderId: number, buyerId: string) {
     const wallet = await createBuyerWalletIfMissing(buyerId);
 
@@ -464,6 +476,8 @@ export default function CheckoutV3WalletPaymentPage() {
           linkUrl: `/order/${orderData.id}`,
         });
 
+        await notifyCouponApplied(orderData.id, buyer.id);
+
         await createNotification({
           userId: product.seller_id,
           type: "order",
@@ -471,7 +485,7 @@ export default function CheckoutV3WalletPaymentPage() {
           message: `${buyer.email || "A buyer"} paid with wallet for ${
             product.title
           }. You can process the order now.`,
-          linkUrl: `/order/${orderData.id}`,
+          linkUrl: "/seller/orders",
         });
 
         alert("Wallet payment successful. Order is now processing.");
@@ -480,13 +494,23 @@ export default function CheckoutV3WalletPaymentPage() {
       }
 
       await createNotification({
+        userId: buyer.id,
+        type: "order",
+        title: "Order Created",
+        message: `Your order #${orderData.id} has been created successfully. Please complete your payment.`,
+        linkUrl: `/payment?order=${orderData.id}`,
+      });
+
+      await notifyCouponApplied(orderData.id, buyer.id);
+
+      await createNotification({
         userId: product.seller_id,
         type: "order",
         title: "New Order Received",
         message: `${buyer.email || "A buyer"} created a new order for ${
           product.title
         }. Waiting for payment.`,
-        linkUrl: `/order/${orderData.id}`,
+        linkUrl: "/seller/orders",
       });
 
       alert("Order created successfully.");

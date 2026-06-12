@@ -43,7 +43,14 @@ type ExistingReview = {
 
 function normalizeStatus(status: string | null) {
   if (status === "Selesai") return "Completed";
+  if (status === "completed") return "Completed";
   return status || "Pending Payment";
+}
+
+function formatPrice(value: string | number | null) {
+  const price = Number(value || 0);
+  if (!Number.isFinite(price)) return "Rp 0";
+  return `Rp ${price.toLocaleString("id-ID")}`;
 }
 
 export default function ReviewPageV1NotificationSeller() {
@@ -66,6 +73,8 @@ export default function ReviewPageV1NotificationSeller() {
   const normalizedStatus = useMemo(() => {
     return normalizeStatus(order?.status || null);
   }, [order]);
+
+  const canReview = normalizedStatus === "Completed";
 
   useEffect(() => {
     if (orderId) {
@@ -172,13 +181,18 @@ export default function ReviewPageV1NotificationSeller() {
       return;
     }
 
-    if (normalizedStatus !== "Completed") {
+    if (!canReview) {
       alert("You can only review completed orders.");
       return;
     }
 
     if (rating < 1 || rating > 5) {
       alert("Rating must be between 1 and 5.");
+      return;
+    }
+
+    if (reviewText.trim().length < 10) {
+      alert("Review must contain at least 10 characters.");
       return;
     }
 
@@ -201,6 +215,58 @@ export default function ReviewPageV1NotificationSeller() {
       alert(error.message);
       setSubmitting(false);
       return;
+    }
+
+    if (order.product_id) {
+      const { error: productReviewError } = await supabase
+        .from("product_reviews")
+        .upsert(
+          {
+            order_id: order.id,
+            product_id: order.product_id,
+            seller_id: order.seller_id,
+            buyer_id: user.id,
+            rating,
+            review_text: reviewText.trim() || null,
+          },
+          {
+            onConflict: "order_id,buyer_id",
+          }
+        );
+
+      if (productReviewError) {
+        console.error("Product review sync error:", productReviewError.message);
+      }
+    }
+
+    const { data: sellerReviewData, error: sellerSummaryError } = await supabase
+      .from("seller_reviews")
+      .select("rating")
+      .eq("seller_id", order.seller_id);
+
+    if (sellerSummaryError) {
+      console.error("Seller rating summary load error:", sellerSummaryError.message);
+    } else {
+      const totalReviews = sellerReviewData?.length || 0;
+      const averageRating =
+        totalReviews === 0
+          ? 0
+          : sellerReviewData.reduce(
+              (sum, item) => sum + Number(item.rating || 0),
+              0
+            ) / totalReviews;
+
+      const { error: profileRatingError } = await supabase
+        .from("profiles")
+        .update({
+          seller_rating: averageRating,
+          seller_review_count: totalReviews,
+        })
+        .eq("id", order.seller_id);
+
+      if (profileRatingError) {
+        console.error("Seller rating summary update error:", profileRatingError.message);
+      }
     }
 
     await createNotification({
@@ -262,8 +328,6 @@ export default function ReviewPageV1NotificationSeller() {
       </main>
     );
   }
-
-  const canReview = normalizedStatus === "Completed";
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
@@ -399,10 +463,7 @@ export default function ReviewPageV1NotificationSeller() {
               </p>
 
               <p className="mt-5 text-3xl font-black text-cyan-300">
-                Rp{" "}
-                {Number(order.total_price || order.price || 0).toLocaleString(
-                  "id-ID"
-                )}
+                {formatPrice(order.total_price || order.price)}
               </p>
 
               <p className="mt-3 text-sm text-gray-400">

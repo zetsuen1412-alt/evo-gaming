@@ -52,6 +52,22 @@ type GameMaster = {
   image_url: string | null;
 };
 
+
+type Dispute = {
+  id: number;
+  order_id: number;
+  buyer_id: string;
+  seller_id: string;
+  opened_by: string | null;
+  reason: string;
+  description: string | null;
+  status: string;
+  admin_note: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  created_at: string;
+};
+
 function normalizeStatus(status: string | null) {
   if (status === "pending") return "Pending Payment";
   if (status === "pending_payment") return "Pending Payment";
@@ -101,6 +117,12 @@ export default function OrderDetailV2Page() {
 
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [messaging, setMessaging] = useState(false);
+  const [submittingDispute, setSubmittingDispute] = useState(false);
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+
+  const [disputeReason, setDisputeReason] = useState("Delivery Issue");
+  const [disputeDescription, setDisputeDescription] = useState("");
 
   const [order, setOrder] = useState<Order | null>(null);
   const [product, setProduct] = useState<Product | null>(null);
@@ -108,6 +130,7 @@ export default function OrderDetailV2Page() {
     null
   );
   const [gameMaster, setGameMaster] = useState<GameMaster | null>(null);
+  const [existingDispute, setExistingDispute] = useState<Dispute | null>(null);
 
   const normalizedStatus = useMemo(() => {
     return normalizeStatus(order?.status || null);
@@ -229,7 +252,212 @@ export default function OrderDetailV2Page() {
       setGameMaster(gameData || null);
     }
 
+    const { data: disputeData, error: disputeError } = await supabase
+      .from("disputes")
+      .select("*")
+      .eq("order_id", orderData.id)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (disputeError) {
+      console.error("Load dispute error:", disputeError.message);
+      setExistingDispute(null);
+    } else {
+      setExistingDispute(disputeData || null);
+    }
+
     setLoading(false);
+  }
+
+  async function handleMessageOrder() {
+    if (!user || !order) return;
+
+    if (!order.buyer_id || !order.seller_id) {
+      alert("Buyer or seller not found.");
+      return;
+    }
+
+    const isSeller = order.seller_id === user.id;
+    const isBuyer = order.buyer_id === user.id || order.buyer === user.email;
+
+    if (!isBuyer && !isSeller) {
+      alert("You are not allowed to message this order.");
+      return;
+    }
+
+    const buyerId = order.buyer_id;
+    const sellerId = order.seller_id;
+    const receiverId = isSeller ? buyerId : sellerId;
+
+    if (receiverId === user.id) {
+      alert("You cannot message yourself.");
+      return;
+    }
+
+    try {
+      setMessaging(true);
+
+      const { data: existingRoom, error: existingRoomError } = await supabase
+        .from("chat_rooms")
+        .select("*")
+        .eq("buyer_id", buyerId)
+        .eq("seller_id", sellerId)
+        .eq("order_id", order.id)
+        .maybeSingle();
+
+      if (existingRoomError) {
+        alert(existingRoomError.message);
+        setMessaging(false);
+        return;
+      }
+
+      let roomId = existingRoom?.id;
+
+      if (!existingRoom) {
+        const { data: createdRoom, error: createRoomError } = await supabase
+          .from("chat_rooms")
+          .insert({
+            buyer_id: buyerId,
+            seller_id: sellerId,
+            product_id: order.product_id,
+            order_id: order.id,
+            last_message: `Started conversation about order #${order.id}`,
+            last_message_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (createRoomError) {
+          alert(createRoomError.message);
+          setMessaging(false);
+          return;
+        }
+
+        roomId = createdRoom.id;
+      }
+
+      window.location.href = `/messages?room=${roomId}`;
+    } catch (error) {
+      console.error("Message order error:", error);
+      alert("Failed to open order chat.");
+    } finally {
+      setMessaging(false);
+    }
+  }
+
+  async function submitDispute(event: React.FormEvent) {
+    event.preventDefault();
+
+    if (!user || !order) return;
+
+    if (!order.buyer_id || !order.seller_id) {
+      alert("Buyer or seller not found.");
+      return;
+    }
+
+    const isBuyer = order.buyer_id === user.id || order.buyer === user.email;
+    const isSeller = order.seller_id === user.id;
+
+    if (!isBuyer && !isSeller) {
+      alert("You are not allowed to open dispute for this order.");
+      return;
+    }
+
+    if (existingDispute) {
+      alert("A dispute already exists for this order.");
+      setShowDisputeModal(false);
+      return;
+    }
+
+    if (!disputeReason.trim()) {
+      alert("Please select dispute reason.");
+      return;
+    }
+
+    if (!disputeDescription.trim()) {
+      alert("Please describe the problem.");
+      return;
+    }
+
+    try {
+      setSubmittingDispute(true);
+
+      const { data: duplicateDispute } = await supabase
+        .from("disputes")
+        .select("*")
+        .eq("order_id", order.id)
+        .maybeSingle();
+
+      if (duplicateDispute) {
+        setExistingDispute(duplicateDispute);
+        alert("A dispute already exists for this order.");
+        setShowDisputeModal(false);
+        setSubmittingDispute(false);
+        return;
+      }
+
+      const { data: createdDispute, error: disputeError } = await supabase
+        .from("disputes")
+        .insert({
+          order_id: order.id,
+          buyer_id: order.buyer_id,
+          seller_id: order.seller_id,
+          opened_by: user.id,
+          reason: disputeReason.trim(),
+          description: disputeDescription.trim(),
+          status: "open",
+        })
+        .select("*")
+        .single();
+
+      if (disputeError) {
+        alert(disputeError.message);
+        setSubmittingDispute(false);
+        return;
+      }
+
+      setExistingDispute(createdDispute);
+
+      const counterpartUserId = isBuyer ? order.seller_id : order.buyer_id;
+      const notificationRows = [
+        {
+          user_id: counterpartUserId,
+          type: "dispute",
+          title: `Dispute Opened for Order #${order.id}`,
+          message: `${user.email || "A user"} opened a dispute: ${disputeReason.trim()}`,
+          link_url: `/order/${order.id}`,
+          is_read: false,
+        },
+      ];
+
+      const { data: adminProfiles } = await supabase
+        .from("profiles")
+        .select("id")
+        .ilike("role", "admin");
+
+      (adminProfiles || []).forEach((admin) => {
+        notificationRows.push({
+          user_id: admin.id,
+          type: "dispute",
+          title: `New Dispute #${createdDispute.id}`,
+          message: `Order #${order.id} needs admin review: ${disputeReason.trim()}`,
+          link_url: "/admin/disputes",
+          is_read: false,
+        });
+      });
+
+      await supabase.from("notifications").insert(notificationRows);
+
+      setShowDisputeModal(false);
+      setDisputeDescription("");
+      alert("Dispute opened successfully.");
+    } catch (error) {
+      console.error("Open dispute error:", error);
+      alert("Failed to open dispute.");
+    } finally {
+      setSubmittingDispute(false);
+    }
   }
 
   if (loading) {
@@ -535,6 +763,36 @@ export default function OrderDetailV2Page() {
                 </Link>
               )}
 
+              <button
+                onClick={handleMessageOrder}
+                disabled={messaging}
+                className="rounded-2xl border border-yellow-400 px-5 py-3 font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {messaging
+                  ? "Opening Chat..."
+                  : isSeller
+                  ? "💬 Message Buyer"
+                  : "💬 Message Seller"}
+              </button>
+
+              {existingDispute ? (
+                <div className="rounded-2xl border border-red-400/20 bg-red-400/10 px-5 py-4">
+                  <p className="font-black text-red-300">
+                    ⚠ Dispute #{existingDispute.id} Opened
+                  </p>
+                  <p className="mt-1 text-sm text-gray-300">
+                    Status: {existingDispute.status}
+                  </p>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowDisputeModal(true)}
+                  className="rounded-2xl border border-red-400 px-5 py-3 font-black text-red-300 transition hover:bg-red-400 hover:text-black"
+                >
+                  ⚠ Open Dispute
+                </button>
+              )}
+
               {order.seller_id && (
                 <Link
                   href={`/seller-profile/${order.seller_id}`}
@@ -565,6 +823,92 @@ export default function OrderDetailV2Page() {
           </div>
         </aside>
       </section>
+      {showDisputeModal && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 px-6 backdrop-blur-md">
+          <form
+            onSubmit={submitDispute}
+            className="w-full max-w-xl rounded-3xl border border-red-400/20 bg-[#111827] p-7 shadow-2xl shadow-black/80"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="mb-3 inline-flex rounded-full border border-red-400/30 bg-red-400/10 px-4 py-2 text-sm font-black text-red-300">
+                  Dispute Center
+                </p>
+
+                <h2 className="text-3xl font-black text-white">
+                  Open Dispute
+                </h2>
+
+                <p className="mt-3 text-sm leading-6 text-gray-400">
+                  Use this only if there is a real problem with order #{order.id}.
+                  Admin will review the case.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowDisputeModal(false)}
+                className="text-2xl font-black text-gray-400 hover:text-white"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">
+                  Reason
+                </label>
+                <select
+                  value={disputeReason}
+                  onChange={(event) => setDisputeReason(event.target.value)}
+                  className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-red-400"
+                >
+                  <option value="Delivery Issue">Delivery Issue</option>
+                  <option value="Wrong Product">Wrong Product</option>
+                  <option value="Product Not Received">Product Not Received</option>
+                  <option value="Payment Issue">Payment Issue</option>
+                  <option value="Seller Not Responding">Seller Not Responding</option>
+                  <option value="Buyer Issue">Buyer Issue</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">
+                  Description
+                </label>
+                <textarea
+                  value={disputeDescription}
+                  onChange={(event) => setDisputeDescription(event.target.value)}
+                  placeholder="Explain the problem clearly. Include timeline, proof, or what resolution you expect."
+                  rows={7}
+                  className="w-full resize-none rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-red-400"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setShowDisputeModal(false)}
+                className="rounded-2xl border border-white/10 px-5 py-4 font-black text-gray-300 transition hover:bg-white hover:text-black"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={submittingDispute}
+                className="rounded-2xl bg-red-400 px-5 py-4 font-black text-black transition hover:bg-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {submittingDispute ? "Submitting..." : "Submit Dispute"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
     </main>
   );
 }

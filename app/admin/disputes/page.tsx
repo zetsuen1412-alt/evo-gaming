@@ -10,6 +10,7 @@ type Profile = {
   email: string | null;
   username: string | null;
   role: string | null;
+  seller_name?: string | null;
 };
 
 type Order = {
@@ -18,33 +19,46 @@ type Order = {
   buyer: string | null;
   seller_id: string | null;
   product_id: number | null;
-
   product: string | null;
   price: string | number | null;
   quantity: number | null;
   total_price: string | number | null;
-
   category_id: number | null;
   category_name: string | null;
   game_master_id: number | null;
   game_name: string | null;
-
   status: string | null;
   payment_proof: string | null;
   payment_image: string | null;
   created_at: string;
 };
 
-const statusOptions = [
-  "Disputed",
-  "Payment Verification",
-  "Processing",
-  "Completed",
-  "Refunded",
-  "Cancelled",
+type Dispute = {
+  id: number;
+  order_id: number;
+  buyer_id: string | null;
+  seller_id: string | null;
+  opened_by: string | null;
+  reason: string;
+  description: string | null;
+  status: string;
+  admin_note: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  orders: Order | null;
+};
+
+const disputeStatusFilters = [
+  "all",
+  "open",
+  "investigating",
+  "buyer_win",
+  "seller_win",
+  "closed",
 ];
 
-function normalizeStatus(status: string | null) {
+function normalizeOrderStatus(status: string | null) {
   if (status === "pending") return "Pending Payment";
   if (status === "pending_payment") return "Pending Payment";
   if (status === "Menunggu Pembayaran") return "Pending Payment";
@@ -55,8 +69,39 @@ function normalizeStatus(status: string | null) {
   return status || "Pending Payment";
 }
 
-function getStatusClass(status: string | null) {
-  const normalizedStatus = normalizeStatus(status);
+function formatPrice(value: string | number | null) {
+  const price = Number(value || 0);
+  if (!Number.isFinite(price)) return "Rp 0";
+  return `Rp ${price.toLocaleString("id-ID")}`;
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("id-ID");
+}
+
+function getDisputeStatusClass(status: string) {
+  if (status === "buyer_win") {
+    return "border-green-400/20 bg-green-400/10 text-green-300";
+  }
+
+  if (status === "seller_win") {
+    return "border-blue-400/20 bg-blue-400/10 text-blue-300";
+  }
+
+  if (status === "investigating") {
+    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
+  }
+
+  if (status === "closed") {
+    return "border-gray-400/20 bg-gray-400/10 text-gray-300";
+  }
+
+  return "border-orange-400/20 bg-orange-400/10 text-orange-300";
+}
+
+function getOrderStatusClass(status: string | null) {
+  const normalizedStatus = normalizeOrderStatus(status);
 
   if (normalizedStatus === "Completed") {
     return "border-green-400/20 bg-green-400/10 text-green-300";
@@ -81,53 +126,70 @@ function getStatusClass(status: string | null) {
   return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
 }
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
+function readableDisputeStatus(status: string) {
+  if (status === "buyer_win") return "Buyer Wins";
+  if (status === "seller_win") return "Seller Wins";
+  return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-export default function DisputeCenterV1Page() {
+export default function AdminDisputesV2Page() {
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [disputes, setDisputes] = useState<Dispute[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
+  const [activeStatus, setActiveStatus] = useState("all");
+  const [updatingDisputeId, setUpdatingDisputeId] = useState<number | null>(null);
+  const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
 
   const isAdmin = adminProfile?.role?.trim().toLowerCase() === "admin";
 
-  const filteredOrders = useMemo(() => {
+  const filteredDisputes = useMemo(() => {
     const query = search.trim().toLowerCase();
 
-    return orders.filter((order) => {
+    return disputes.filter((dispute) => {
+      const order = dispute.orders;
+      const matchesStatus = activeStatus === "all" || dispute.status === activeStatus;
+
       const matchesSearch =
         !query ||
-        String(order.id).includes(query) ||
-        (order.product || "").toLowerCase().includes(query) ||
-        (order.buyer || "").toLowerCase().includes(query) ||
-        (order.buyer_id || "").toLowerCase().includes(query) ||
-        (order.seller_id || "").toLowerCase().includes(query) ||
-        (order.category_name || "").toLowerCase().includes(query) ||
-        (order.game_name || "").toLowerCase().includes(query);
+        String(dispute.id).includes(query) ||
+        String(dispute.order_id).includes(query) ||
+        dispute.reason.toLowerCase().includes(query) ||
+        (dispute.description || "").toLowerCase().includes(query) ||
+        (dispute.buyer_id || "").toLowerCase().includes(query) ||
+        (dispute.seller_id || "").toLowerCase().includes(query) ||
+        (order?.product || "").toLowerCase().includes(query) ||
+        (order?.buyer || "").toLowerCase().includes(query) ||
+        (order?.category_name || "").toLowerCase().includes(query) ||
+        (order?.game_name || "").toLowerCase().includes(query);
 
-      return matchesSearch;
+      return matchesStatus && matchesSearch;
     });
-  }, [orders, search]);
+  }, [disputes, activeStatus, search]);
 
-  const totalDisputes = orders.length;
+  const openCount = disputes.filter((item) => item.status === "open").length;
+  const investigatingCount = disputes.filter(
+    (item) => item.status === "investigating"
+  ).length;
+  const buyerWinCount = disputes.filter((item) => item.status === "buyer_win").length;
+  const sellerWinCount = disputes.filter((item) => item.status === "seller_win").length;
 
-  const disputedValue = orders.reduce(
-    (sum, order) => sum + Number(order.total_price || order.price || 0),
-    0
-  );
+  const disputedValue = disputes.reduce((sum, dispute) => {
+    const order = dispute.orders;
+    return sum + Number(order?.total_price || order?.price || 0);
+  }, 0);
 
   async function loadDisputes() {
     const { data, error } = await supabase
-      .from("orders")
-      .select("*")
-      .eq("status", "Disputed")
+      .from("disputes")
+      .select(
+        `
+        *,
+        orders:order_id (*)
+      `
+      )
       .order("id", { ascending: false });
 
     if (error) {
@@ -135,7 +197,7 @@ export default function DisputeCenterV1Page() {
       return;
     }
 
-    setOrders(data || []);
+    setDisputes((data || []) as unknown as Dispute[]);
   }
 
   useEffect(() => {
@@ -182,44 +244,158 @@ export default function DisputeCenterV1Page() {
     initializePage();
   }, []);
 
-  async function updateOrderStatus(orderId: number, newStatus: string) {
-    if (!isAdmin) return;
+  async function notifyUser(userId: string | null, title: string, message: string, linkUrl: string) {
+    if (!userId) return;
 
-    setUpdatingOrderId(orderId);
-
-    const { error } = await supabase
-      .from("orders")
-      .update({ status: newStatus })
-      .eq("id", orderId);
+    const { error } = await supabase.from("notifications").insert({
+      user_id: userId,
+      type: "dispute",
+      title,
+      message,
+      link_url: linkUrl,
+      is_read: false,
+    });
 
     if (error) {
-      alert(error.message);
-      setUpdatingOrderId(null);
-      return;
+      console.error("Dispute notification error:", error.message);
+    }
+  }
+
+  async function updateDisputeStatus(
+    dispute: Dispute,
+    newStatus: "investigating" | "buyer_win" | "seller_win" | "closed"
+  ) {
+    if (!user || !isAdmin) return;
+
+    const order = dispute.orders;
+    const note =
+      adminNotes[dispute.id]?.trim() ||
+      (newStatus === "investigating"
+        ? "Admin is investigating this dispute."
+        : `Dispute resolved as ${readableDisputeStatus(newStatus)}.`);
+
+    if (newStatus === "buyer_win") {
+      if (!confirm("Resolve this dispute as BUYER WINS? Order will be marked Refunded.")) return;
+    } else if (newStatus === "seller_win") {
+      if (!confirm("Resolve this dispute as SELLER WINS? Order will be marked Completed.")) return;
+    } else if (newStatus === "closed") {
+      if (!confirm("Close this dispute without changing order status?")) return;
+    } else if (newStatus === "investigating") {
+      if (!confirm("Mark this dispute as Investigating?")) return;
     }
 
-    await loadDisputes();
-    setUpdatingOrderId(null);
-  }
+    try {
+      setUpdatingDisputeId(dispute.id);
 
-  async function resolveToProcessing(orderId: number) {
-    if (!confirm("Move this dispute back to Processing?")) return;
-    await updateOrderStatus(orderId, "Processing");
-  }
+      const disputeUpdate: Record<string, string | null> = {
+        status: newStatus,
+        admin_note: note,
+      };
 
-  async function resolveToCompleted(orderId: number) {
-    if (!confirm("Resolve this dispute as Completed?")) return;
-    await updateOrderStatus(orderId, "Completed");
-  }
+      if (["buyer_win", "seller_win", "closed"].includes(newStatus)) {
+        disputeUpdate.resolved_by = user.id;
+        disputeUpdate.resolved_at = new Date().toISOString();
+      }
 
-  async function resolveToRefunded(orderId: number) {
-    if (!confirm("Resolve this dispute as Refunded?")) return;
-    await updateOrderStatus(orderId, "Refunded");
-  }
+      const { error: disputeError } = await supabase
+        .from("disputes")
+        .update(disputeUpdate)
+        .eq("id", dispute.id);
 
-  async function resolveToCancelled(orderId: number) {
-    if (!confirm("Resolve this dispute as Cancelled?")) return;
-    await updateOrderStatus(orderId, "Cancelled");
+      if (disputeError) {
+        alert(disputeError.message);
+        setUpdatingDisputeId(null);
+        return;
+      }
+
+      if (order) {
+        let orderStatus: string | null = null;
+
+        if (newStatus === "investigating") orderStatus = "Disputed";
+        if (newStatus === "buyer_win") orderStatus = "Refunded";
+        if (newStatus === "seller_win") orderStatus = "Completed";
+
+        if (orderStatus) {
+          const { error: orderError } = await supabase
+            .from("orders")
+            .update({ status: orderStatus })
+            .eq("id", order.id);
+
+          if (orderError) {
+            alert(orderError.message);
+            setUpdatingDisputeId(null);
+            return;
+          }
+        }
+      }
+
+      if (newStatus === "investigating") {
+        await notifyUser(
+          dispute.buyer_id,
+          "Dispute Under Investigation",
+          `Your dispute for order #${dispute.order_id} is now under admin investigation.`,
+          `/order/${dispute.order_id}`
+        );
+        await notifyUser(
+          dispute.seller_id,
+          "Dispute Under Investigation",
+          `Dispute for order #${dispute.order_id} is now under admin investigation.`,
+          `/order/${dispute.order_id}`
+        );
+      }
+
+      if (newStatus === "buyer_win") {
+        await notifyUser(
+          dispute.buyer_id,
+          "Dispute Resolved: Buyer Wins",
+          `Your dispute for order #${dispute.order_id} has been approved by admin.`,
+          `/order/${dispute.order_id}`
+        );
+        await notifyUser(
+          dispute.seller_id,
+          "Dispute Resolved: Buyer Wins",
+          `Dispute for order #${dispute.order_id} was resolved in buyer's favor.`,
+          `/order/${dispute.order_id}`
+        );
+      }
+
+      if (newStatus === "seller_win") {
+        await notifyUser(
+          dispute.buyer_id,
+          "Dispute Resolved: Seller Wins",
+          `Dispute for order #${dispute.order_id} was resolved in seller's favor.`,
+          `/order/${dispute.order_id}`
+        );
+        await notifyUser(
+          dispute.seller_id,
+          "Dispute Resolved: Seller Wins",
+          `Dispute for order #${dispute.order_id} was resolved in your favor.`,
+          `/order/${dispute.order_id}`
+        );
+      }
+
+      if (newStatus === "closed") {
+        await notifyUser(
+          dispute.buyer_id,
+          "Dispute Closed",
+          `Your dispute for order #${dispute.order_id} has been closed by admin.`,
+          `/order/${dispute.order_id}`
+        );
+        await notifyUser(
+          dispute.seller_id,
+          "Dispute Closed",
+          `Dispute for order #${dispute.order_id} has been closed by admin.`,
+          `/order/${dispute.order_id}`
+        );
+      }
+
+      await loadDisputes();
+      setUpdatingDisputeId(null);
+    } catch (error) {
+      console.error("Update dispute error:", error);
+      alert("Failed to update dispute.");
+      setUpdatingDisputeId(null);
+    }
   }
 
   if (loading) {
@@ -261,14 +437,13 @@ export default function DisputeCenterV1Page() {
         <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-orange-400/30 bg-orange-400/10 px-4 py-2 text-sm font-black text-orange-300">
-              Admin Dispute Center
+              Admin Dispute Center V2
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">Disputes</h1>
 
             <p className="mt-5 max-w-2xl text-gray-300">
-              Review disputed transactions, check payment evidence, and resolve
-              marketplace cases.
+              Review dispute reports, investigate buyer and seller claims, and resolve marketplace cases from the dedicated disputes table.
             </p>
 
             <p className="mt-3 text-sm text-gray-500">
@@ -295,144 +470,171 @@ export default function DisputeCenterV1Page() {
       </section>
 
       <section className="px-8 py-10">
-        <div className="mb-8 grid gap-5 md:grid-cols-3">
+        <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-3xl border border-orange-400/20 bg-orange-400/10 p-5">
-            <p className="text-sm text-orange-200">Open Disputes</p>
-            <p className="mt-2 text-4xl font-black text-orange-300">
-              {totalDisputes}
-            </p>
+            <p className="text-sm text-orange-200">Open</p>
+            <p className="mt-2 text-4xl font-black text-orange-300">{openCount}</p>
+          </div>
+
+          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-5">
+            <p className="text-sm text-yellow-200">Investigating</p>
+            <p className="mt-2 text-4xl font-black text-yellow-300">{investigatingCount}</p>
+          </div>
+
+          <div className="rounded-3xl border border-green-400/20 bg-green-400/10 p-5">
+            <p className="text-sm text-green-200">Buyer Wins</p>
+            <p className="mt-2 text-4xl font-black text-green-300">{buyerWinCount}</p>
+          </div>
+
+          <div className="rounded-3xl border border-blue-400/20 bg-blue-400/10 p-5">
+            <p className="text-sm text-blue-200">Seller Wins</p>
+            <p className="mt-2 text-4xl font-black text-blue-300">{sellerWinCount}</p>
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
             <p className="text-sm text-gray-400">Disputed Value</p>
-            <p className="mt-2 text-3xl font-black text-yellow-300">
+            <p className="mt-2 text-2xl font-black text-purple-300">
               {formatPrice(disputedValue)}
             </p>
           </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Status Filter</p>
-            <p className="mt-2 text-3xl font-black text-cyan-300">
-              Disputed
-            </p>
-          </div>
         </div>
 
-        <div className="mb-8">
+        <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search by order ID, buyer, seller, product, category, or game..."
+            placeholder="Search by dispute ID, order ID, buyer, seller, product, reason, category, or game..."
             className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-orange-400"
           />
+
+          <div className="flex flex-wrap gap-3">
+            {disputeStatusFilters.map((status) => (
+              <button
+                key={status}
+                onClick={() => setActiveStatus(status)}
+                className={`rounded-full px-5 py-3 text-sm font-bold transition ${
+                  activeStatus === status
+                    ? "bg-orange-400 text-black"
+                    : "border border-white/10 bg-white/[0.04] text-gray-300 hover:border-orange-400 hover:text-white"
+                }`}
+              >
+                {status === "all" ? "All" : readableDisputeStatus(status)}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {filteredOrders.length === 0 ? (
+        {filteredDisputes.length === 0 ? (
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-10 text-center">
-            <h2 className="text-3xl font-black">No disputed orders found.</h2>
+            <h2 className="text-3xl font-black">No disputes found.</h2>
 
             <p className="mt-3 text-gray-400">
-              Disputed orders will appear here after admin or seller marks an
-              order as Disputed.
+              Dispute reports will appear here when buyer or seller opens a dispute.
             </p>
-
-            <Link
-              href="/admin/orders"
-              className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
-            >
-              Open All Orders
-            </Link>
           </div>
         ) : (
           <div className="grid gap-6">
-            {filteredOrders.map((order) => {
-              const totalPrice = Number(order.total_price || order.price || 0);
-              const normalizedStatus = normalizeStatus(order.status);
+            {filteredDisputes.map((dispute) => {
+              const order = dispute.orders;
+              const totalPrice = Number(order?.total_price || order?.price || 0);
+              const orderStatus = normalizeOrderStatus(order?.status || null);
+              const currentNote = adminNotes[dispute.id] ?? dispute.admin_note ?? "";
+              const isFinal = ["buyer_win", "seller_win", "closed"].includes(dispute.status);
 
               return (
                 <div
-                  key={order.id}
+                  key={dispute.id}
                   className="rounded-3xl border border-orange-400/20 bg-white/[0.035] p-6 shadow-2xl shadow-black/30"
                 >
-                  <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
+                  <div className="grid gap-6 xl:grid-cols-[1fr_330px]">
                     <div>
                       <div className="flex flex-wrap items-center gap-3">
                         <h2 className="text-2xl font-black">
-                          {order.product || "Unknown Product"}
+                          Dispute #{dispute.id}
                         </h2>
 
                         <span
-                          className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClass(
-                            order.status
+                          className={`rounded-full border px-3 py-1 text-xs font-black ${getDisputeStatusClass(
+                            dispute.status
                           )}`}
                         >
-                          {normalizedStatus}
+                          {readableDisputeStatus(dispute.status)}
                         </span>
+
+                        {order && (
+                          <span
+                            className={`rounded-full border px-3 py-1 text-xs font-black ${getOrderStatusClass(
+                              order.status
+                            )}`}
+                          >
+                            Order: {orderStatus}
+                          </span>
+                        )}
                       </div>
 
                       <p className="mt-3 text-3xl font-black text-yellow-300">
                         {formatPrice(totalPrice)}
                       </p>
 
+                      <div className="mt-5 rounded-2xl border border-orange-400/20 bg-orange-400/10 p-5">
+                        <p className="text-sm font-black text-orange-300">Reason</p>
+                        <h3 className="mt-2 text-xl font-black text-white">
+                          {dispute.reason}
+                        </h3>
+                        <p className="mt-3 whitespace-pre-line text-sm leading-6 text-gray-300">
+                          {dispute.description || "No description provided."}
+                        </p>
+                      </div>
+
                       <div className="mt-5 grid gap-4 md:grid-cols-2">
                         <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
                           <p className="text-xs text-gray-500">Order ID</p>
-                          <p className="mt-1 font-bold">#{order.id}</p>
+                          <p className="mt-1 font-bold">#{dispute.order_id}</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Product</p>
+                          <p className="mt-1 font-bold">
+                            {order?.product || "Unknown Product"}
+                          </p>
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
                           <p className="text-xs text-gray-500">Buyer</p>
                           <p className="mt-1 break-words font-bold">
-                            {order.buyer || order.buyer_id || "-"}
+                            {order?.buyer || dispute.buyer_id || "-"}
                           </p>
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
                           <p className="text-xs text-gray-500">Seller ID</p>
                           <p className="mt-1 break-words font-bold">
-                            {order.seller_id || "-"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Product ID</p>
-                          <p className="mt-1 font-bold">
-                            {order.product_id || "-"}
+                            {dispute.seller_id || order?.seller_id || "-"}
                           </p>
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
                           <p className="text-xs text-gray-500">Category</p>
-                          <p className="mt-1 font-bold">
-                            {order.category_name || "-"}
-                          </p>
+                          <p className="mt-1 font-bold">{order?.category_name || "-"}</p>
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
                           <p className="text-xs text-gray-500">Game</p>
-                          <p className="mt-1 font-bold">
-                            {order.game_name || "-"}
-                          </p>
+                          <p className="mt-1 font-bold">{order?.game_name || "-"}</p>
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Quantity</p>
-                          <p className="mt-1 font-bold">
-                            {order.quantity || 1}
-                          </p>
+                          <p className="text-xs text-gray-500">Opened At</p>
+                          <p className="mt-1 font-bold">{formatDate(dispute.created_at)}</p>
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Created</p>
-                          <p className="mt-1 font-bold">
-                            {order.created_at
-                              ? new Date(order.created_at).toLocaleString()
-                              : "-"}
-                          </p>
+                          <p className="text-xs text-gray-500">Resolved At</p>
+                          <p className="mt-1 font-bold">{formatDate(dispute.resolved_at)}</p>
                         </div>
                       </div>
 
-                      {order.payment_proof && (
+                      {order?.payment_proof && (
                         <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
                           <p className="text-sm font-black text-cyan-300">
                             Payment Details
@@ -444,7 +646,7 @@ export default function DisputeCenterV1Page() {
                         </div>
                       )}
 
-                      {order.payment_image && (
+                      {order?.payment_image && (
                         <div className="mt-5">
                           <p className="mb-3 font-bold text-orange-300">
                             Payment Proof Image
@@ -468,64 +670,63 @@ export default function DisputeCenterV1Page() {
 
                     <div className="flex flex-col gap-3">
                       <label className="text-sm font-bold text-gray-400">
-                        Resolve Status
+                        Admin Note
                       </label>
 
-                      <select
-                        value={normalizedStatus}
+                      <textarea
+                        value={currentNote}
                         onChange={(event) =>
-                          updateOrderStatus(order.id, event.target.value)
+                          setAdminNotes((current) => ({
+                            ...current,
+                            [dispute.id]: event.target.value,
+                          }))
                         }
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl border border-white/10 bg-black px-4 py-3 font-bold text-white outline-none focus:border-orange-400 disabled:opacity-60"
-                      >
-                        {statusOptions.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
+                        placeholder="Write admin decision note..."
+                        rows={6}
+                        disabled={updatingDisputeId === dispute.id || isFinal}
+                        className="w-full resize-none rounded-2xl border border-white/10 bg-black px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-orange-400 disabled:opacity-60"
+                      />
 
                       <button
-                        onClick={() => resolveToProcessing(order.id)}
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-blue-500 px-5 py-3 font-black text-white hover:bg-blue-400 disabled:opacity-60"
+                        onClick={() => updateDisputeStatus(dispute, "investigating")}
+                        disabled={updatingDisputeId === dispute.id || isFinal}
+                        className="rounded-2xl bg-yellow-400 px-5 py-3 font-black text-black hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Resolve to Processing
+                        Mark Investigating
                       </button>
 
                       <button
-                        onClick={() => resolveToCompleted(order.id)}
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-green-500 px-5 py-3 font-black text-white hover:bg-green-400 disabled:opacity-60"
+                        onClick={() => updateDisputeStatus(dispute, "buyer_win")}
+                        disabled={updatingDisputeId === dispute.id || isFinal}
+                        className="rounded-2xl bg-green-500 px-5 py-3 font-black text-white hover:bg-green-400 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Resolve Completed
+                        Buyer Wins / Refund
                       </button>
 
                       <button
-                        onClick={() => resolveToRefunded(order.id)}
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-purple-500 px-5 py-3 font-black text-white hover:bg-purple-400 disabled:opacity-60"
+                        onClick={() => updateDisputeStatus(dispute, "seller_win")}
+                        disabled={updatingDisputeId === dispute.id || isFinal}
+                        className="rounded-2xl bg-blue-500 px-5 py-3 font-black text-white hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Resolve Refunded
+                        Seller Wins / Complete
                       </button>
 
                       <button
-                        onClick={() => resolveToCancelled(order.id)}
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-red-500 px-5 py-3 font-black text-white hover:bg-red-400 disabled:opacity-60"
+                        onClick={() => updateDisputeStatus(dispute, "closed")}
+                        disabled={updatingDisputeId === dispute.id || isFinal}
+                        className="rounded-2xl bg-gray-500 px-5 py-3 font-black text-white hover:bg-gray-400 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Resolve Cancelled
+                        Close Only
                       </button>
 
                       <Link
-                        href={`/order/${order.id}`}
+                        href={`/order/${dispute.order_id}`}
                         className="rounded-2xl border border-orange-400/40 px-5 py-3 text-center font-black text-orange-300 transition hover:bg-orange-400 hover:text-black"
                       >
                         View Order Detail
                       </Link>
 
-                      {order.product_id && (
+                      {order?.product_id && (
                         <Link
                           href={`/product/${order.product_id}`}
                           className="rounded-2xl border border-cyan-400/40 px-5 py-3 text-center font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
@@ -534,16 +735,16 @@ export default function DisputeCenterV1Page() {
                         </Link>
                       )}
 
-                      {order.seller_id && (
+                      {dispute.seller_id && (
                         <Link
-                          href={`/seller-profile/${order.seller_id}`}
+                          href={`/seller-profile/${dispute.seller_id}`}
                           className="rounded-2xl border border-white/10 px-5 py-3 text-center font-black text-gray-300 transition hover:bg-white hover:text-black"
                         >
                           View Seller
                         </Link>
                       )}
 
-                      {updatingOrderId === order.id && (
+                      {updatingDisputeId === dispute.id && (
                         <p className="text-center text-sm text-gray-400">
                           Updating dispute...
                         </p>
