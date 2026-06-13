@@ -18,6 +18,26 @@ import {
 import { FcGoogle } from "react-icons/fc";
 import { supabase } from "@/lib/supabase";
 
+
+function getUsernameFromEmail(email?: string | null) {
+  const localPart = (email || "").split("@")[0]?.trim();
+  if (!localPart) return "player";
+  return localPart
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "player";
+}
+
+function getSafeDisplayName(profileUsername?: string | null, email?: string | null) {
+  const username = profileUsername?.trim();
+  if (username && username.toLowerCase() !== "unknown user") {
+    return username;
+  }
+
+  return getUsernameFromEmail(email);
+}
+
 type Category = {
   id: number;
   name: string;
@@ -202,14 +222,13 @@ export default function MainHeader() {
       console.error("OAuth profile lookup error:", profileError.message);
     }
 
-    // Profile creation should be handled by the Supabase auth trigger.
-    // The header only ensures the initial wallet exists.
-    if (existingProfile) {
-      await createInitialWallet(currentUser.id);
-      return;
-    }
-
+    // Profile is created automatically by Supabase trigger.
+    // Never insert/upsert profile from client header.
     await createInitialWallet(currentUser.id);
+
+    if (!existingProfile) {
+      console.warn("Profile row is not ready yet. Fallback username will use auth email.");
+    }
   }
 
   async function loadUserProfile(userId: string) {

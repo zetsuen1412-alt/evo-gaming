@@ -49,9 +49,30 @@ const emptyBilling: BillingProfile = {
   tax_identification_number: "",
 };
 
+function getUsernameFromEmail(email?: string | null) {
+  const localPart = (email || "").split("@")[0]?.trim();
+  if (!localPart) return "player";
+  return localPart
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "") || "player";
+}
+
+function sanitizeUsername(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
 export default function AccountPageClient() {
   const router = useRouter();
   const [userId, setUserId] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [account, setAccount] = useState<AccountSettings>(emptyAccount);
   const [billing, setBilling] = useState<BillingProfile>(emptyBilling);
   const [loading, setLoading] = useState(true);
@@ -67,12 +88,18 @@ export default function AccountPageClient() {
       }
 
       const currentUserId = authData.user.id;
-      setUserId(currentUserId);
+      const currentEmail = authData.user.email || "";
 
-      const [{ data: accountData }, { data: billingData }] = await Promise.all([
+      setUserId(currentUserId);
+      setAuthEmail(currentEmail);
+
+      const [{ data: profileData }, { data: accountData }, { data: billingData }] = await Promise.all([
+        supabase.from("profiles").select("username").eq("id", currentUserId).maybeSingle(),
         supabase.from("user_account_settings").select("*").eq("user_id", currentUserId).maybeSingle(),
         supabase.from("user_billing_profiles").select("*").eq("user_id", currentUserId).maybeSingle(),
       ]);
+
+      setUsername(profileData?.username || getUsernameFromEmail(currentEmail));
 
       if (accountData) {
         setAccount({
@@ -119,7 +146,34 @@ export default function AccountPageClient() {
 
     if (!userId) return;
 
+    const cleanUsername = sanitizeUsername(username);
+
+    if (cleanUsername.length < 3) {
+      alert("Username minimal 3 karakter.");
+      return;
+    }
+
     setSaving(true);
+
+    const { data: existingUsername } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("username", cleanUsername)
+      .neq("id", userId)
+      .maybeSingle();
+
+    if (existingUsername) {
+      setSaving(false);
+      alert("Username sudah dipakai user lain.");
+      return;
+    }
+
+    const profileResult = await supabase
+      .from("profiles")
+      .update({
+        username: cleanUsername,
+      })
+      .eq("id", userId);
 
     const accountPayload = {
       user_id: userId,
@@ -142,11 +196,17 @@ export default function AccountPageClient() {
 
     setSaving(false);
 
-    if (accountResult.error || billingResult.error) {
-      alert(accountResult.error?.message || billingResult.error?.message || "Failed to save account.");
+    if (profileResult.error || accountResult.error || billingResult.error) {
+      alert(
+        profileResult.error?.message ||
+          accountResult.error?.message ||
+          billingResult.error?.message ||
+          "Failed to save account."
+      );
       return;
     }
 
+    setUsername(cleanUsername);
     alert("Account saved successfully.");
   };
 
@@ -163,7 +223,15 @@ export default function AccountPageClient() {
       <form onSubmit={handleSave}>
         <section className="border-b border-white/10 p-6 md:p-8">
           <h1 className="text-2xl font-black">Personal</h1>
+
           <div className="mt-6 grid gap-4 md:grid-cols-2">
+            <Field
+              label="Username"
+              value={username}
+              onChange={(value) => setUsername(sanitizeUsername(value))}
+              helper={`Default dari email: ${getUsernameFromEmail(authEmail)}`}
+            />
+            <Field label="Email" value={authEmail} onChange={() => undefined} disabled />
             <Field label="First Name" value={account.first_name} onChange={(value) => updateAccount("first_name", value)} />
             <Field label="Last Name" value={account.last_name} onChange={(value) => updateAccount("last_name", value)} />
             <Field
@@ -272,11 +340,15 @@ function Field({
   value,
   onChange,
   type = "text",
+  disabled = false,
+  helper,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  disabled?: boolean;
+  helper?: string;
 }) {
   return (
     <label className="block">
@@ -284,9 +356,11 @@ function Field({
       <input
         type={type}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-cyan-400"
+        className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 outline-none focus:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
       />
+      {helper ? <span className="mt-1 block text-xs text-slate-500">{helper}</span> : null}
     </label>
   );
 }
