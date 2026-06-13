@@ -6,9 +6,9 @@ import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import {
   FaBell,
-  FaCog,
   FaBullhorn,
   FaCommentDots,
+  FaCog,
   FaDiscord,
   FaShoppingBag,
   FaSignOutAlt,
@@ -192,51 +192,20 @@ export default function MainHeader() {
   }
 
   async function ensureOAuthProfile(currentUser: User) {
-    const { data: existingProfile, error: profileCheckError } = await supabase
+    const { data: existingProfile, error: profileError } = await supabase
       .from("profiles")
       .select("id")
       .eq("id", currentUser.id)
       .maybeSingle();
 
-    if (profileCheckError) {
-      console.error("OAuth profile check error:", profileCheckError.message);
-      return;
+    if (profileError) {
+      console.error("OAuth profile lookup error:", profileError.message);
     }
 
+    // Profile creation should be handled by the Supabase auth trigger.
+    // The header only ensures the initial wallet exists.
     if (existingProfile) {
       await createInitialWallet(currentUser.id);
-      return;
-    }
-
-    const baseUsername = getOAuthUsername(currentUser) || "player";
-    let finalUsername = baseUsername;
-
-    const { data: usernameData } = await supabase
-      .from("profiles")
-      .select("id")
-      .ilike("username", finalUsername)
-      .maybeSingle();
-
-    if (usernameData) {
-      finalUsername = `${baseUsername}_${currentUser.id.slice(0, 6)}`;
-    }
-
-    const { error: insertError } = await supabase.from("profiles").insert({
-      id: currentUser.id,
-      email: currentUser.email || "",
-      username: finalUsername,
-      role: "user",
-      seller_status: "not_applied",
-      avatar_url:
-        currentUser.user_metadata?.avatar_url ||
-        currentUser.user_metadata?.picture ||
-        null,
-      bio: "ComePlayers user.",
-      discord: null,
-    });
-
-    if (insertError) {
-      console.error("OAuth profile insert error:", insertError.message);
       return;
     }
 
@@ -807,8 +776,6 @@ export default function MainHeader() {
     setLatestNotifications([]);
     setShowProfileDropdown(false);
     setShowNotificationDropdown(false);
-    setShowProfileSellingMenu(false);
-    setShowProfileSettingsMenu(false);
   }
 
   return (
@@ -1091,164 +1058,149 @@ export default function MainHeader() {
           </div>
 
           <div className="grid gap-1 bg-[#111827] p-3">
-            <Link
-              href="/wallet"
-              onClick={() => setShowProfileDropdown(false)}
-              className="flex items-center gap-3 rounded-xl px-4 py-3 font-bold text-gray-300 transition hover:bg-[#202b42] hover:text-white"
-            >
-              <FaWallet />
-              Wallet
-            </Link>
+            
+                    <Link
+                      href="/wallet"
+                      onClick={() => setShowProfileDropdown(false)}
+                      className="flex items-center gap-3 rounded-xl px-4 py-3 font-bold text-gray-200 transition hover:bg-white/10 hover:text-white"
+                    >
+                      <FaWallet className="text-gray-300" />
+                      Wallet
+                    </Link>
 
-            <Link
-              href="/my-orders"
-              onClick={() => setShowProfileDropdown(false)}
-              className="flex items-center gap-3 rounded-xl px-4 py-3 font-bold text-gray-300 transition hover:bg-[#202b42] hover:text-white"
-            >
-              <FaShoppingBag />
-              My Orders
-            </Link>
+                    <Link
+                      href="/my-orders"
+                      onClick={() => setShowProfileDropdown(false)}
+                      className="flex items-center gap-3 rounded-xl px-4 py-3 font-bold text-gray-200 transition hover:bg-white/10 hover:text-white"
+                    >
+                      <FaShoppingBag className="text-gray-300" />
+                      My Orders
+                    </Link>
 
-            <button
-              type="button"
-              onClick={() => {
-                setShowProfileSellingMenu((value) => !value);
-                setShowProfileSettingsMenu(false);
-              }}
-              className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition ${
-                showProfileSellingMenu
-                  ? "bg-[#202b42] text-white"
-                  : "text-gray-300 hover:bg-[#202b42] hover:text-white"
-              }`}
-            >
-              <span className="flex items-center gap-3 font-bold">
-                <FaStore />
-                Selling
-              </span>
-              <span className={`text-xs transition ${showProfileSellingMenu ? "rotate-180" : ""}`}>
-                ▾
-              </span>
-            </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowProfileSellingMenu((value) => !value)}
+                      className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition ${
+                        showProfileSellingMenu
+                          ? "bg-white/10 text-white"
+                          : "text-gray-200 hover:bg-white/10 hover:text-white"
+                      }`}
+                    >
+                      <span className="flex items-center gap-3 font-bold">
+                        <FaStore className="text-gray-300" />
+                        Selling
+                      </span>
+                      <span className={`text-xs transition ${showProfileSellingMenu ? "rotate-180" : ""}`}>
+                        ▾
+                      </span>
+                    </button>
 
-            {showProfileSellingMenu && (
-              <div className="ml-8 space-y-1 border-l border-slate-700 pl-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowProfileDropdown(false);
-                    handleSellWithUs();
-                  }}
-                  className="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Become a Seller
-                </button>
+                    {showProfileSellingMenu && (
+                      <div className="ml-8 mt-1 space-y-1 border-l border-slate-700 pl-3">
+                        <Link
+                          href="/seller/apply"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Become a Seller
+                        </Link>
+                        <Link
+                          href="/seller"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Seller Dashboard
+                        </Link>
+                        <Link
+                          href="/seller/products"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Manage Products
+                        </Link>
+                        <Link
+                          href="/seller/products/new"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Create Product
+                        </Link>
+                        <Link
+                          href="/seller/orders"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Manage Orders
+                        </Link>
+                        <Link
+                          href="/wallet"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Payment
+                        </Link>
+                      </div>
+                    )}
 
-                <Link
-                  href="/seller"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Seller Dashboard
-                </Link>
+                    <button
+                      type="button"
+                      onClick={() => setShowProfileSettingsMenu((value) => !value)}
+                      className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition ${
+                        showProfileSettingsMenu
+                          ? "bg-white/10 text-white"
+                          : "text-gray-200 hover:bg-white/10 hover:text-white"
+                      }`}
+                    >
+                      <span className="flex items-center gap-3 font-bold">
+                        <FaCog className="text-gray-300" />
+                        Settings
+                      </span>
+                      <span className={`text-xs transition ${showProfileSettingsMenu ? "rotate-180" : ""}`}>
+                        ▾
+                      </span>
+                    </button>
 
-                <Link
-                  href="/seller/products"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Manage Products
-                </Link>
+                    {showProfileSettingsMenu && (
+                      <div className="ml-8 mt-1 space-y-1 border-l border-slate-700 pl-3">
+                        <Link
+                          href="/account"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Account
+                        </Link>
+                        <Link
+                          href="/account/connects"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Social Connect
+                        </Link>
+                        <Link
+                          href="/account/security"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Privacy & Security
+                        </Link>
+                        <Link
+                          href="/account/verification"
+                          onClick={() => setShowProfileDropdown(false)}
+                          className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-white/10 hover:text-cyan-300"
+                        >
+                          Verification
+                        </Link>
+                      </div>
+                    )}
 
-                <Link
-                  href="/seller/products/new"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Create Product
-                </Link>
+                    <button
+                      onClick={handleLogout}
+                      className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left font-black text-red-300 transition hover:bg-red-500/10"
+                    >
+                      <FaSignOutAlt />
+                      Log Out
+                    </button>
 
-                <Link
-                  href="/seller/orders"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Manage Orders
-                </Link>
-
-                <Link
-                  href="/wallet"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Payment
-                </Link>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                setShowProfileSettingsMenu((value) => !value);
-                setShowProfileSellingMenu(false);
-              }}
-              className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition ${
-                showProfileSettingsMenu
-                  ? "bg-[#202b42] text-white"
-                  : "text-gray-300 hover:bg-[#202b42] hover:text-white"
-              }`}
-            >
-              <span className="flex items-center gap-3 font-bold">
-                <FaCog />
-                Settings
-              </span>
-              <span className={`text-xs transition ${showProfileSettingsMenu ? "rotate-180" : ""}`}>
-                ▾
-              </span>
-            </button>
-
-            {showProfileSettingsMenu && (
-              <div className="ml-8 space-y-1 border-l border-slate-700 pl-3">
-                <Link
-                  href="/account"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Account
-                </Link>
-
-                <Link
-                  href="/account/connects"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Social Connect
-                </Link>
-
-                <Link
-                  href="/account/security"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Privacy & Security
-                </Link>
-
-                <Link
-                  href="/account/verification"
-                  onClick={() => setShowProfileDropdown(false)}
-                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
-                >
-                  Verification
-                </Link>
-              </div>
-            )}
-
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-left font-bold text-red-300 transition hover:bg-[#3a1d24] hover:text-red-200"
-            >
-              <FaSignOutAlt />
-              Log Out
-            </button>
           </div>
         </div>
       )}
