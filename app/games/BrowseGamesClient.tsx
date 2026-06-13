@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import GameCard from "@/components/games/GameCard";
-import GameSearchAutocomplete from "@/components/games/GameSearchAutocomplete";
+import MarketplaceSearch from "@/components/marketplace/MarketplaceSearch";
 
 type Game = {
   id: number;
@@ -205,7 +205,12 @@ export default function BrowseGamesClient() {
           </p>
 
           <div className="mt-8 max-w-2xl">
-            <GameSearchAutocomplete />
+            <MarketplaceSearch
+              categories={categories}
+              initialQuery={query}
+              initialCategory={category}
+              placeholder="Search games, products, categories..."
+            />
           </div>
         </div>
       </section>

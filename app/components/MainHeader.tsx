@@ -17,6 +17,7 @@ import {
 } from "react-icons/fa";
 import { FcGoogle } from "react-icons/fc";
 import { supabase } from "@/lib/supabase";
+import MarketplaceSearch from "@/components/marketplace/MarketplaceSearch";
 
 
 function getUsernameFromEmail(email?: string | null) {
@@ -151,9 +152,6 @@ export default function MainHeader() {
   const [walletBalance, setWalletBalance] = useState(0);
 
   const [categories, setCategories] = useState<Category[]>([]);
-  const [search, setSearch] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("");
-
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [chatToast, setChatToast] = useState<ChatToast | null>(null);
@@ -589,17 +587,6 @@ export default function MainHeader() {
     setConfirmPassword("");
   }
 
-  function handleSearch() {
-    const query = search.trim();
-
-    const params = new URLSearchParams();
-
-    if (query) params.set("q", query);
-    if (selectedCategory) params.set("category", selectedCategory);
-
-    router.push(params.toString() ? `/games?${params.toString()}` : "/games");
-  }
-
   async function handleEmailAuth(event: React.FormEvent) {
     event.preventDefault();
 
@@ -815,38 +802,12 @@ export default function MainHeader() {
           </div>
         </div>
 
-        <div className="flex min-w-[320px] flex-1 items-center rounded-full border border-slate-700 bg-[#111827] shadow-xl shadow-black/20 focus-within:border-cyan-400">
-          <select
-            value={selectedCategory}
-            onChange={(event) => setSelectedCategory(event.target.value)}
-            className="w-44 rounded-l-full border-r border-slate-700 bg-[#020617] px-4 py-3 text-sm font-bold text-white outline-none"
-          >
-            <option value="">All Categories</option>
-
-            {categories.map((category) => (
-              <option key={category.id} value={category.slug}>
-                {category.name}
-              </option>
-            ))}
-          </select>
-
-          <input
-            type="text"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") handleSearch();
-            }}
-            placeholder="Search products..."
-            className="w-full bg-transparent px-4 py-3 text-sm text-white outline-none placeholder:text-gray-400"
+        <div className="flex min-w-[320px] flex-1">
+          <MarketplaceSearch
+            categories={categories}
+            placeholder="Search games, products..."
+            compact
           />
-
-          <button
-            onClick={handleSearch}
-            className="mr-2 shrink-0 rounded-full bg-cyan-400 px-5 py-2 font-black text-black transition hover:bg-cyan-300"
-          >
-            Search
-          </button>
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
