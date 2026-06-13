@@ -8,6 +8,49 @@ const PAYPAL_API =
 
 const TOPUP_RATE = 15000;
 
+type PayPalOrderResponse = {
+  id?: string;
+  status?: string;
+  payer?: {
+    email_address?: string;
+    name?: {
+      given_name?: string;
+      surname?: string;
+    };
+  };
+  purchase_units?: Array<{
+    custom_id?: string;
+    amount?: {
+      currency_code?: string;
+      value?: string;
+    };
+    payments?: {
+      captures?: Array<{
+        amount?: {
+          currency_code?: string;
+          value?: string;
+        };
+      }>;
+    };
+  }>;
+};
+
+function getSupabaseAuthClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !anonKey) {
+    throw new Error("Missing Supabase auth env.");
+  }
+
+  return createClient(supabaseUrl, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
 function getSupabaseAdmin() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -16,7 +59,39 @@ function getSupabaseAdmin() {
     throw new Error("Missing Supabase server env.");
   }
 
-  return createClient(supabaseUrl, serviceKey);
+  return createClient(supabaseUrl, serviceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+function getBearerToken(request: Request) {
+  const authorization = request.headers.get("authorization") || "";
+
+  if (!authorization.toLowerCase().startsWith("bearer ")) {
+    return "";
+  }
+
+  return authorization.slice(7).trim();
+}
+
+async function getAuthenticatedUserId(request: Request) {
+  const token = getBearerToken(request);
+
+  if (!token) {
+    throw new Error("Authentication required.");
+  }
+
+  const supabase = getSupabaseAuthClient();
+  const { data, error } = await supabase.auth.getUser(token);
+
+  if (error || !data.user) {
+    throw new Error("Invalid authentication token.");
+  }
+
+  return data.user.id;
 }
 
 async function getPayPalAccessToken() {
@@ -43,51 +118,69 @@ async function getPayPalAccessToken() {
     throw new Error("Failed to get PayPal access token.");
   }
 
-  const data = await response.json();
-  return data.access_token as string;
+  const data = (await response.json()) as { access_token?: string };
+
+  if (!data.access_token) {
+    throw new Error("PayPal access token is missing.");
+  }
+
+  return data.access_token;
 }
 
-async function ensureWallet(supabaseAdmin: any, userId: string) {
-  const { data: existingWallet, error: walletSelectError } = await supabaseAdmin
-    .from("wallets")
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
+async function getPayPalOrder(orderId: string, accessToken: string) {
+  const response = await fetch(`${PAYPAL_API}/v2/checkout/orders/${orderId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
 
-  if (walletSelectError) {
-    throw new Error(walletSelectError.message);
+  const data = (await response.json()) as PayPalOrderResponse;
+
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      data,
+    };
   }
 
-  if (existingWallet) return existingWallet;
+  return {
+    ok: true,
+    status: response.status,
+    data,
+  };
+}
 
-  const { data: newWallet, error: walletInsertError } = await supabaseAdmin
-    .from("wallets")
-    .insert({
-      user_id: userId,
-      balance: 0,
-      pending_balance: 0,
-      total_earned: 0,
-      total_spent: 0,
-      total_withdrawn: 0,
-      status: "active",
-    })
-    .select("*")
-    .single();
+function getPayPalCustomUserId(data: PayPalOrderResponse) {
+  return data.purchase_units?.[0]?.custom_id || "";
+}
 
-  if (walletInsertError) {
-    throw new Error(walletInsertError.message);
-  }
+function getCapturedAmountUsd(data: PayPalOrderResponse) {
+  const capturedAmount =
+    data.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value ||
+    data.purchase_units?.[0]?.amount?.value ||
+    "0";
 
-  return newWallet;
+  const amount = Number(capturedAmount);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function getPayerName(data: PayPalOrderResponse) {
+  const givenName = data.payer?.name?.given_name || "";
+  const surname = data.payer?.name?.surname || "";
+  const fullName = `${givenName} ${surname}`.trim();
+
+  return fullName || "PayPal User";
 }
 
 export async function POST(request: Request) {
   try {
-    const supabaseAdmin = getSupabaseAdmin();
-
-    const body = await request.json();
-    const orderId = String(body.orderId || "");
-    const userId = String(body.userId || "");
+    const authenticatedUserId = await getAuthenticatedUserId(request);
+    const body = (await request.json()) as { orderId?: string };
+    const orderId = String(body.orderId || "").trim();
 
     if (!orderId) {
       return NextResponse.json(
@@ -96,36 +189,26 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!userId) {
-      return NextResponse.json({ error: "Missing user ID." }, { status: 400 });
-    }
-
-    const wallet = await ensureWallet(supabaseAdmin, userId);
-
-    const { data: existingTopup, error: duplicateCheckError } =
-      await supabaseAdmin
-        .from("wallet_topups")
-        .select("*")
-        .eq("payment_method", "PayPal")
-        .eq("payment_note", `PayPal Order ID: ${orderId}`)
-        .maybeSingle();
-
-    if (duplicateCheckError) {
-      throw new Error(duplicateCheckError.message);
-    }
-
-    if (existingTopup) {
-      return NextResponse.json({
-        status: "COMPLETED",
-        duplicated: true,
-        amountIdr: Number(existingTopup.amount || 0),
-        message: "PayPal order already processed.",
-      });
-    }
-
     const accessToken = await getPayPalAccessToken();
+    const orderLookup = await getPayPalOrder(orderId, accessToken);
 
-    const response = await fetch(
+    if (!orderLookup.ok) {
+      return NextResponse.json(
+        { error: "Failed to verify PayPal order.", details: orderLookup.data },
+        { status: orderLookup.status }
+      );
+    }
+
+    const customUserId = getPayPalCustomUserId(orderLookup.data);
+
+    if (customUserId !== authenticatedUserId) {
+      return NextResponse.json(
+        { error: "PayPal order does not belong to the authenticated user." },
+        { status: 403 }
+      );
+    }
+
+    const captureResponse = await fetch(
       `${PAYPAL_API}/v2/checkout/orders/${orderId}/capture`,
       {
         method: "POST",
@@ -137,24 +220,30 @@ export async function POST(request: Request) {
       }
     );
 
-    const data = await response.json();
+    const capturedData = (await captureResponse.json()) as PayPalOrderResponse;
 
-    if (!response.ok) {
+    if (!captureResponse.ok) {
       return NextResponse.json(
-        { error: "Failed to capture PayPal order.", details: data },
-        { status: response.status }
+        { error: "Failed to capture PayPal order.", details: capturedData },
+        { status: captureResponse.status }
       );
     }
 
-    if (data.status !== "COMPLETED") {
+    if (capturedData.status !== "COMPLETED") {
       return NextResponse.json(
-        { error: "PayPal payment is not completed.", details: data },
+        { error: "PayPal payment is not completed.", details: capturedData },
         { status: 400 }
       );
     }
 
-    const capture = data.purchase_units?.[0]?.payments?.captures?.[0] || null;
-    const paypalAmountUsd = Number(capture?.amount?.value || 0);
+    if (getPayPalCustomUserId(capturedData) !== authenticatedUserId) {
+      return NextResponse.json(
+        { error: "Captured PayPal order owner mismatch." },
+        { status: 403 }
+      );
+    }
+
+    const paypalAmountUsd = getCapturedAmountUsd(capturedData);
 
     if (!paypalAmountUsd || paypalAmountUsd <= 0) {
       return NextResponse.json(
@@ -164,76 +253,31 @@ export async function POST(request: Request) {
     }
 
     const amountIdr = Math.round(paypalAmountUsd * TOPUP_RATE);
-    const oldBalance = Number(wallet.balance || 0);
-    const newBalance = oldBalance + amountIdr;
+    const supabaseAdmin = getSupabaseAdmin();
 
-    const { error: updateWalletError } = await supabaseAdmin
-      .from("wallets")
-      .update({
-        balance: newBalance,
-        status: "active",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", wallet.id);
+    const { data: rpcResult, error: rpcError } = await supabaseAdmin.rpc(
+      "credit_wallet_paypal_topup",
+      {
+        p_user_id: authenticatedUserId,
+        p_paypal_order_id: orderId,
+        p_amount_idr: amountIdr,
+        p_paypal_amount_usd: paypalAmountUsd,
+        p_payer_name: getPayerName(capturedData),
+        p_payer_email: capturedData.payer?.email_address || null,
+      }
+    );
 
-    if (updateWalletError) {
-      throw new Error(updateWalletError.message);
-    }
-
-    const payerName =
-      data.payer?.name?.given_name ||
-      data.payer?.name?.surname ||
-      "PayPal User";
-
-    const payerEmail = data.payer?.email_address || null;
-
-    const { error: topupInsertError } = await supabaseAdmin
-      .from("wallet_topups")
-      .insert({
-        user_id: userId,
-        wallet_id: wallet.id,
-        amount: amountIdr,
-        payment_method: "PayPal",
-        sender_name: payerName,
-        sender_account: payerEmail,
-        payment_note: `PayPal Order ID: ${orderId}`,
-        payment_image: null,
-        status: "approved",
-        admin_note: `Auto approved by PayPal. USD ${paypalAmountUsd.toFixed(
-          2
-        )} x Rp ${TOPUP_RATE.toLocaleString("id-ID")}`,
-        processed_at: new Date().toISOString(),
-      });
-
-    if (topupInsertError) {
-      throw new Error(topupInsertError.message);
-    }
-
-    const { error: transactionInsertError } = await supabaseAdmin
-      .from("wallet_transactions")
-      .insert({
-        user_id: userId,
-        wallet_id: wallet.id,
-        type: "topup",
-        amount: amountIdr,
-        description: `PayPal wallet top up - Order ${orderId}`,
-        status: "completed",
-      });
-
-    if (transactionInsertError) {
-      console.error(
-        "Wallet transaction insert error:",
-        transactionInsertError.message
-      );
+    if (rpcError) {
+      throw new Error(rpcError.message);
     }
 
     const { error: notificationError } = await supabaseAdmin
       .from("notifications")
       .insert({
-        user_id: userId,
+        user_id: authenticatedUserId,
         type: "wallet_topup_success",
-        title: "Wallet Top Up Berhasil",
-        message: `Saldo wallet kamu bertambah Rp ${amountIdr.toLocaleString(
+        title: "Wallet Top Up Successful",
+        message: `Your wallet balance increased by Rp ${amountIdr.toLocaleString(
           "id-ID"
         )} via PayPal.`,
         link_url: "/wallet/topup",
@@ -245,23 +289,22 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
-      id: data.id,
-      status: data.status,
+      id: capturedData.id,
+      status: capturedData.status,
       paypalAmountUsd,
       amountIdr,
-      oldBalance,
-      newBalance,
-      payer: data.payer || null,
+      rpcResult,
+      payer: capturedData.payer || null,
     });
   } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unexpected PayPal capture order error.";
+
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unexpected PayPal capture order error.",
-      },
-      { status: 500 }
+      { error: message },
+      { status: message.includes("Authentication") ? 401 : 500 }
     );
   }
 }

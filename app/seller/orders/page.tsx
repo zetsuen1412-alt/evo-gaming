@@ -23,18 +23,9 @@ type Order = {
   status: string | null;
   payment_proof: string | null;
   payment_image: string | null;
+  completed_at: string | null;
+  escrow_status: string | null;
   created_at: string;
-};
-
-type Wallet = {
-  id: number;
-  user_id: string;
-  balance: string | number;
-  pending_balance: string | number;
-  total_earned: string | number;
-  total_spent: string | number;
-  total_withdrawn: string | number;
-  status: string;
 };
 
 const orderStatuses = [
@@ -184,128 +175,6 @@ export default function SellerOrdersV3WalletReleasePage() {
     setOrders(data || []);
   }
 
-  async function ensureSellerWallet(sellerId: string) {
-    const { data: existingWallet, error: walletFetchError } = await supabase
-      .from("wallets")
-      .select("*")
-      .eq("user_id", sellerId)
-      .maybeSingle();
-
-    if (walletFetchError) {
-      throw new Error(walletFetchError.message);
-    }
-
-    if (existingWallet) {
-      return existingWallet as Wallet;
-    }
-
-    const { data: createdWallet, error: walletCreateError } = await supabase
-      .from("wallets")
-      .insert({
-        user_id: sellerId,
-        balance: 0,
-        pending_balance: 0,
-        total_earned: 0,
-        total_spent: 0,
-        total_withdrawn: 0,
-        status: "active",
-      })
-      .select("*")
-      .single();
-
-    if (walletCreateError) {
-      throw new Error(walletCreateError.message);
-    }
-
-    return createdWallet as Wallet;
-  }
-
-  async function hasExistingReleaseTransaction(walletId: number, orderId: number) {
-    const { data, error } = await supabase
-      .from("wallet_transactions")
-      .select("id")
-      .eq("wallet_id", walletId)
-      .eq("order_id", orderId)
-      .eq("type", "sale_release")
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    return Boolean(data);
-  }
-
-  async function releaseSellerEarning(order: Order) {
-    if (!order.seller_id) return;
-
-    const wallet = await ensureSellerWallet(order.seller_id);
-
-    if (wallet.status !== "active") {
-      throw new Error("Seller wallet is frozen.");
-    }
-
-    const alreadyReleased = await hasExistingReleaseTransaction(
-      wallet.id,
-      order.id
-    );
-
-    if (alreadyReleased) {
-      return;
-    }
-
-    const earningAmount = Number(order.total_price || order.price || 0);
-
-    if (earningAmount <= 0) {
-      return;
-    }
-
-    const balanceBefore = Number(wallet.balance || 0);
-    const balanceAfter = balanceBefore + earningAmount;
-
-    const { error: walletUpdateError } = await supabase
-      .from("wallets")
-      .update({
-        balance: balanceAfter,
-        total_earned: Number(wallet.total_earned || 0) + earningAmount,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", wallet.id)
-      .eq("user_id", order.seller_id);
-
-    if (walletUpdateError) {
-      throw new Error(walletUpdateError.message);
-    }
-
-    const { error: transactionError } = await supabase
-      .from("wallet_transactions")
-      .insert({
-        wallet_id: wallet.id,
-        user_id: order.seller_id,
-        type: "sale_release",
-        amount: earningAmount,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        order_id: order.id,
-        description: `Seller earning released from completed order #${order.id}`,
-        status: "completed",
-      });
-
-    if (transactionError) {
-      throw new Error(transactionError.message);
-    }
-
-    await createNotification({
-      userId: order.seller_id,
-      type: "payment",
-      title: "Seller Earning Released",
-      message: `${formatPrice(
-        earningAmount
-      )} has been added to your wallet from completed order #${order.id}.`,
-      linkUrl: "/wallet",
-    });
-  }
-
   useEffect(() => {
     async function initializePage() {
       const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -341,11 +210,20 @@ export default function SellerOrdersV3WalletReleasePage() {
 
     setUpdatingOrderId(order.id);
 
+    const updatePayload: {
+      status: string;
+      completed_at?: string;
+      escrow_status?: string;
+    } = { status: newStatus };
+
+    if (newStatus === "Completed") {
+      updatePayload.completed_at = new Date().toISOString();
+      updatePayload.escrow_status = "holding";
+    }
+
     const { error } = await supabase
       .from("orders")
-      .update({
-        status: newStatus,
-      })
+      .update(updatePayload)
       .eq("id", order.id)
       .eq("seller_id", user.id);
 
@@ -355,21 +233,6 @@ export default function SellerOrdersV3WalletReleasePage() {
       return;
     }
 
-    if (newStatus === "Completed") {
-      try {
-        await releaseSellerEarning({
-          ...order,
-          status: newStatus,
-        });
-      } catch (releaseError) {
-        console.error("Seller earning release error:", releaseError);
-        alert(
-          releaseError instanceof Error
-            ? releaseError.message
-            : "Order completed, but failed to release wallet earning."
-        );
-      }
-    }
 
     await createNotification({
       userId: order.buyer_id,
@@ -397,7 +260,7 @@ export default function SellerOrdersV3WalletReleasePage() {
         userId: order.seller_id,
         type: "seller",
         title: "Order Completed",
-        message: `Order #${order.id} has been completed and the earning has been released to your wallet.`,
+        message: `Order #${order.id} has been completed. Earning will be released after escrow holding period.`,
         linkUrl: "/wallet",
       });
     }
@@ -531,7 +394,7 @@ export default function SellerOrdersV3WalletReleasePage() {
 
             <p className="mt-5 max-w-2xl text-gray-300">
               Manage buyer orders, verify payments, update delivery status, and
-              automatically release seller earnings to wallet when completed.
+              mark orders as completed. Escrow release is handled securely by the server after the holding period.
             </p>
 
             <p className="mt-3 text-sm text-gray-500">

@@ -1,6 +1,17 @@
 "use client";
 
 import { PayPalButtons, PayPalScriptProvider } from "@paypal/react-paypal-js";
+import { supabase } from "@/lib/supabase";
+
+async function getAccessToken() {
+  const { data, error } = await supabase.auth.getSession();
+
+  if (error || !data.session?.access_token) {
+    throw new Error("Please login first before testing PayPal.");
+  }
+
+  return data.session.access_token;
+}
 
 export default function TestPaypal() {
   return (
@@ -8,7 +19,7 @@ export default function TestPaypal() {
       <div className="mx-auto max-w-xl rounded-2xl border border-slate-700 bg-[#111827] p-6">
         <h1 className="text-2xl font-black">PayPal Sandbox Test</h1>
         <p className="mt-2 text-sm text-gray-400">
-          Test pembayaran sandbox sebesar $5.00.
+          Test authenticated sandbox payment for $5.00.
         </p>
 
         <div className="mt-6">
@@ -28,13 +39,16 @@ export default function TestPaypal() {
                 label: "paypal",
               }}
               createOrder={async () => {
+                const accessToken = await getAccessToken();
+
                 const response = await fetch("/api/paypal/create-order", {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
+                    Authorization: `Bearer ${accessToken}`,
                   },
                   body: JSON.stringify({
-                    amount: 5,
+                    amountUsd: 5,
                   }),
                 });
 
@@ -47,10 +61,13 @@ export default function TestPaypal() {
                 return data.id;
               }}
               onApprove={async (data) => {
+                const accessToken = await getAccessToken();
+
                 const response = await fetch("/api/paypal/capture-order", {
                   method: "POST",
                   headers: {
                     "Content-Type": "application/json",
+                    Authorization: `Bearer ${accessToken}`,
                   },
                   body: JSON.stringify({
                     orderId: data.orderID,
@@ -64,11 +81,11 @@ export default function TestPaypal() {
                   return;
                 }
 
-                alert(`Pembayaran berhasil. Status: ${result.status}`);
+                alert(`Payment successful. Status: ${result.status}`);
               }}
               onError={(error) => {
                 console.error("PayPal error:", error);
-                alert("PayPal error. Cek console browser.");
+                alert("PayPal error. Check browser console.");
               }}
             />
           </PayPalScriptProvider>

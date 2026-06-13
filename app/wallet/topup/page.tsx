@@ -65,6 +65,17 @@ function getStatusClass(status: string) {
   return "border-white/10 bg-white/[0.04] text-gray-300";
 }
 
+
+async function getAccessToken() {
+  const { data, error } = await supabase.auth.getSession();
+
+  if (error || !data.session?.access_token) {
+    throw new Error("Please login again before using PayPal.");
+  }
+
+  return data.session.access_token;
+}
+
 function createSafeFileName(fileName: string) {
   const extension = fileName.split(".").pop() || "jpg";
 
@@ -497,13 +508,15 @@ export default function WalletTopUpPageV1() {
 
                     setPaypalLoading(true);
 
+                    const accessToken = await getAccessToken();
+
                     const response = await fetch("/api/paypal/create-order", {
                       method: "POST",
                       headers: {
                         "Content-Type": "application/json",
+                        Authorization: `Bearer ${accessToken}`,
                       },
                       body: JSON.stringify({
-                        userId: user.id,
                         amountUsd: selectedPaypalUsd,
                         rate: PAYPAL_RATE,
                       }),
@@ -519,14 +532,16 @@ export default function WalletTopUpPageV1() {
                     return data.id;
                   }}
                   onApprove={async (data) => {
+                    const accessToken = await getAccessToken();
+
                     const response = await fetch("/api/paypal/capture-order", {
                       method: "POST",
                       headers: {
                         "Content-Type": "application/json",
+                        Authorization: `Bearer ${accessToken}`,
                       },
                       body: JSON.stringify({
                         orderId: data.orderID,
-                        userId: user.id,
                       }),
                     });
 

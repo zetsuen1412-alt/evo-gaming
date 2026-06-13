@@ -282,33 +282,6 @@ export default function CheckoutV3WalletPaymentPage() {
     setCouponError("");
   }
 
-  async function createBuyerWalletIfMissing(userId: string) {
-    const { data: existingWallet } = await supabase
-      .from("wallets")
-      .select("*")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (existingWallet) return existingWallet as Wallet;
-
-    const { data, error } = await supabase
-      .from("wallets")
-      .insert({
-        user_id: userId,
-        balance: 0,
-        pending_balance: 0,
-        total_earned: 0,
-        total_spent: 0,
-        total_withdrawn: 0,
-        status: "active",
-      })
-      .select("*")
-      .single();
-
-    if (error) throw new Error(error.message);
-    return data as Wallet;
-  }
-
   async function saveCouponUsage(orderId: number, buyerId: string) {
     if (!appliedCoupon) return;
 
@@ -341,48 +314,31 @@ export default function CheckoutV3WalletPaymentPage() {
     });
   }
 
-  async function payWithWallet(orderId: number, buyerId: string) {
-    const wallet = await createBuyerWalletIfMissing(buyerId);
+  async function createWalletOrder() {
+    const { data, error } = await supabase.rpc("checkout_wallet_order", {
+      p_product_id: Number(productId),
+      p_buyer_note: buyerNote.trim() || null,
+      p_coupon_id: appliedCoupon?.id || null,
+      p_discount_amount: discountAmount,
+    });
 
-    if (wallet.status !== "active") {
-      throw new Error("Your wallet is frozen.");
+    if (error) {
+      throw new Error(error.message);
     }
 
-    const balanceBefore = Number(wallet.balance || 0);
+    const result = data as {
+      order_id?: number;
+      status?: string;
+      total_price?: number;
+      balance_before?: number;
+      balance_after?: number;
+    } | null;
 
-    if (balanceBefore < finalTotal) {
-      throw new Error("Insufficient wallet balance.");
+    if (!result?.order_id) {
+      throw new Error("Wallet checkout failed to create an order.");
     }
 
-    const balanceAfter = balanceBefore - finalTotal;
-
-    const { error: walletError } = await supabase
-      .from("wallets")
-      .update({
-        balance: balanceAfter,
-        total_spent: Number(wallet.total_spent || 0) + finalTotal,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", wallet.id)
-      .eq("user_id", buyerId);
-
-    if (walletError) throw new Error(walletError.message);
-
-    const { error: transactionError } = await supabase
-      .from("wallet_transactions")
-      .insert({
-        wallet_id: wallet.id,
-        user_id: buyerId,
-        type: "purchase",
-        amount: finalTotal,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        order_id: orderId,
-        description: `Wallet payment for order #${orderId}`,
-        status: "completed",
-      });
-
-    if (transactionError) throw new Error(transactionError.message);
+    return result;
   }
 
   async function createOrder() {
@@ -415,9 +371,48 @@ export default function CheckoutV3WalletPaymentPage() {
 
     const buyer = sessionData.session.user;
 
+    if (paymentMethod === "wallet") {
+      try {
+        const walletOrder = await createWalletOrder();
+        const orderId = walletOrder.order_id as number;
+
+        await createNotification({
+          userId: buyer.id,
+          type: "payment",
+          title: "Wallet Payment Successful",
+          message: `Your wallet payment for order #${orderId} was successful.`,
+          linkUrl: `/order/${orderId}`,
+        });
+
+        await notifyCouponApplied(orderId, buyer.id);
+
+        await createNotification({
+          userId: product.seller_id,
+          type: "order",
+          title: "New Wallet Paid Order",
+          message: `${buyer.email || "A buyer"} paid with wallet for ${
+            product.title
+          }. You can process the order now.`,
+          linkUrl: "/seller/orders",
+        });
+
+        alert("Wallet payment successful. Order is now processing.");
+        window.location.href = `/order/${orderId}`;
+        return;
+      } catch (error) {
+        alert(
+          error instanceof Error
+            ? error.message
+            : "Wallet checkout failed."
+        );
+        setCreatingOrder(false);
+        return;
+      }
+    }
+
     const noteWithCoupon = [
       buyerNote.trim() ? `Buyer Note: ${buyerNote.trim()}` : null,
-      `Payment Method: ${paymentMethod === "wallet" ? "Wallet Balance" : "Manual Transfer"}`,
+      "Payment Method: Manual Transfer",
       appliedCoupon
         ? `Coupon: ${appliedCoupon.code} (${formatPrice(discountAmount)} discount)`
         : null,
@@ -427,8 +422,7 @@ export default function CheckoutV3WalletPaymentPage() {
       .filter(Boolean)
       .join("\n");
 
-    const initialStatus =
-      paymentMethod === "wallet" ? "Processing" : "Pending Payment";
+    const initialStatus = "Pending Payment";
 
     const { data: orderData, error: orderError } = await supabase
       .from("orders")
@@ -465,33 +459,6 @@ export default function CheckoutV3WalletPaymentPage() {
     try {
       await saveCouponUsage(orderData.id, buyer.id);
 
-      if (paymentMethod === "wallet") {
-        await payWithWallet(orderData.id, buyer.id);
-
-        await createNotification({
-          userId: buyer.id,
-          type: "payment",
-          title: "Wallet Payment Successful",
-          message: `Your wallet payment for order #${orderData.id} was successful.`,
-          linkUrl: `/order/${orderData.id}`,
-        });
-
-        await notifyCouponApplied(orderData.id, buyer.id);
-
-        await createNotification({
-          userId: product.seller_id,
-          type: "order",
-          title: "New Wallet Paid Order",
-          message: `${buyer.email || "A buyer"} paid with wallet for ${
-            product.title
-          }. You can process the order now.`,
-          linkUrl: "/seller/orders",
-        });
-
-        alert("Wallet payment successful. Order is now processing.");
-        window.location.href = `/order/${orderData.id}`;
-        return;
-      }
 
       await createNotification({
         userId: buyer.id,
