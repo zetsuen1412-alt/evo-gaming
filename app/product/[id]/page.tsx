@@ -1,441 +1,233 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
-type Product = {
-  id: number;
-  title: string;
-  description: string | null;
-  price: string | number | null;
-  seller: string | null;
-  seller_id: string | null;
-  seller_name: string | null;
-  category: string | null;
-  category_id: number | null;
-  game_name: string | null;
-  game_category_id: number | null;
-  image_url: string | null;
-  stock: number | null;
-  status: string | null;
-  slug: string | null;
-  created_at: string;
-};
+type Product = Record<string, any>;
 
-type SellerProfile = {
+type Profile = {
   id: string;
-  email: string | null;
-  username: string | null;
-  seller_name: string | null;
-  seller_status: string | null;
-  avatar_url: string | null;
-  bio: string | null;
-  discord: string | null;
-  created_at: string;
+  email?: string | null;
+  username?: string | null;
+  avatar_url?: string | null;
+  role?: string | null;
 };
 
-type Category = {
-  id: number;
-  name: string;
-  slug: string;
-  icon: string | null;
-};
-
-type GameMaster = {
-  id: number;
-  name: string;
-  slug: string;
-  first_letter: string | null;
-  status: string | null;
-  image_url: string | null;
-};
-
-type WishlistRow = {
-  id: number;
-  user_id: string;
-  product_id: number;
-};
-
-type SellerReview = {
-  id: number;
-  order_id: number;
-  product_id: number | null;
-  seller_id: string;
-  buyer_id: string;
-  rating: number;
-  review_text: string | null;
-  created_at: string;
-};
-
-function formatPrice(value: string | number | null) {
-  const numberValue = Number(value || 0);
-
-  if (!Number.isFinite(numberValue)) {
-    return "Rp 0";
-  }
-
-  return `Rp ${numberValue.toLocaleString("id-ID")}`;
+function formatPrice(value: unknown) {
+  const price = Number(value || 0);
+  if (!Number.isFinite(price)) return "Rp 0";
+  return `Rp ${price.toLocaleString("id-ID")}`;
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return "-";
-
-  return new Date(value).toLocaleDateString("id-ID", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+function getProductTitle(product?: Product | null) {
+  return (
+    product?.title ||
+    product?.name ||
+    product?.product ||
+    product?.product_name ||
+    "Product"
+  );
 }
 
-function renderStars(rating: number) {
-  const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
-
-  return "★★★★★"
-    .split("")
-    .map((star, index) => (index < safeRating ? "★" : "☆"))
-    .join("");
+function getProductDescription(product?: Product | null) {
+  return (
+    product?.description ||
+    product?.details ||
+    product?.product_description ||
+    product?.short_description ||
+    "No description available."
+  );
 }
 
-export default function ProductDetailV5WishlistPage() {
-  const params = useParams();
-  const productId = String(params.id || "");
+function getProductPrice(product?: Product | null) {
+  return product?.price || product?.total_price || product?.amount || 0;
+}
 
-  const [user, setUser] = useState<User | null>(null);
-
-  const [loading, setLoading] = useState(true);
-  const [buying, setBuying] = useState(false);
-  const [messaging, setMessaging] = useState(false);
-  const [wishlistLoading, setWishlistLoading] = useState(false);
-
-  const [product, setProduct] = useState<Product | null>(null);
-  const [sellerProfile, setSellerProfile] = useState<SellerProfile | null>(
+function getProductImage(product?: Product | null) {
+  return (
+    product?.image_url ||
+    product?.thumbnail_url ||
+    product?.image ||
+    product?.product_image ||
+    product?.main_image ||
     null
   );
-  const [category, setCategory] = useState<Category | null>(null);
-  const [gameMaster, setGameMaster] = useState<GameMaster | null>(null);
-  const [relatedProducts, setRelatedProducts] = useState<Product[]>([]);
-  const [wishlistRow, setWishlistRow] = useState<WishlistRow | null>(null);
-  const [sellerReviews, setSellerReviews] = useState<SellerReview[]>([]);
+}
 
-  const sellerDisplayName = useMemo(() => {
-    return (
-      sellerProfile?.seller_name ||
-      sellerProfile?.username ||
-      product?.seller_name ||
-      product?.seller ||
-      "Unknown Seller"
-    );
-  }, [sellerProfile, product]);
+function getProductSellerId(product?: Product | null) {
+  return (
+    product?.seller_id ||
+    product?.user_id ||
+    product?.owner_id ||
+    product?.profile_id ||
+    null
+  );
+}
 
-  const categoryDisplayName = useMemo(() => {
-    return category?.name || product?.category || "Marketplace";
-  }, [category, product]);
+function getSellerName(profile?: Profile | null) {
+  return profile?.username || profile?.email || "Seller";
+}
 
-  const gameDisplayName = useMemo(() => {
-    return gameMaster?.name || product?.game_name || "-";
-  }, [gameMaster, product]);
+function avatarLetter(profile?: Profile | null) {
+  return getSellerName(profile).slice(0, 1).toUpperCase();
+}
 
-  const averageRating = useMemo(() => {
-    if (sellerReviews.length === 0) return 0;
+export default function ProductDetailPage() {
+  const params = useParams();
+  const productId = Number(params?.id);
 
-    const total = sellerReviews.reduce(
-      (sum, review) => sum + Number(review.rating || 0),
-      0
-    );
+  const [user, setUser] = useState<User | null>(null);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [seller, setSeller] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [chatLoading, setChatLoading] = useState(false);
 
-    return total / sellerReviews.length;
-  }, [sellerReviews]);
-
-  const latestReviews = useMemo(() => {
-    return sellerReviews.slice(0, 5);
-  }, [sellerReviews]);
-
-  const backToGameUrl = useMemo(() => {
-    if (!category?.slug || !gameMaster?.slug) {
-      return "/";
-    }
-
-    return `/categories/${category.slug}/${gameMaster.slug}-${category.slug}`;
-  }, [category, gameMaster]);
-
-  useEffect(() => {
-    if (productId) {
-      loadProduct();
-    }
-  }, [productId]);
+  const sellerId = useMemo(() => getProductSellerId(product), [product]);
+  const title = useMemo(() => getProductTitle(product), [product]);
+  const description = useMemo(() => getProductDescription(product), [product]);
+  const price = useMemo(() => getProductPrice(product), [product]);
+  const image = useMemo(() => getProductImage(product), [product]);
 
   async function loadProduct() {
-    try {
-      setLoading(true);
+    setLoading(true);
 
-      const { data: userData } = await supabase.auth.getUser();
-      const currentUser = userData.user || null;
-      setUser(currentUser);
+    const { data: authData } = await supabase.auth.getUser();
+    setUser(authData.user || null);
 
-      const { data: productData, error: productError } = await supabase
-        .from("products")
-        .select("*")
-        .eq("id", Number(productId))
+    const { data: productData, error: productError } = await supabase
+      .from("products")
+      .select("*")
+      .eq("id", productId)
+      .maybeSingle();
+
+    if (productError) {
+      alert(productError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (!productData) {
+      setProduct(null);
+      setLoading(false);
+      return;
+    }
+
+    setProduct(productData as Product);
+
+    const foundSellerId = getProductSellerId(productData);
+
+    if (foundSellerId) {
+      const { data: sellerData } = await supabase
+        .from("profiles")
+        .select("id,email,username,avatar_url,role")
+        .eq("id", foundSellerId)
         .maybeSingle();
 
-      if (productError) {
-        alert(productError.message);
-        setLoading(false);
-        return;
-      }
-
-      if (!productData) {
-        setProduct(null);
-        setLoading(false);
-        return;
-      }
-
-      setProduct(productData);
-
-      if (currentUser) {
-        const { data: wishlistData } = await supabase
-          .from("wishlists")
-          .select("id,user_id,product_id")
-          .eq("user_id", currentUser.id)
-          .eq("product_id", productData.id)
-          .maybeSingle();
-
-        setWishlistRow(wishlistData || null);
-      }
-
-      if (productData.seller_id) {
-        const { data: sellerData } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", productData.seller_id)
-          .maybeSingle();
-
-        setSellerProfile(sellerData || null);
-
-        const { data: reviewData, error: reviewError } = await supabase
-          .from("seller_reviews")
-          .select("*")
-          .eq("seller_id", productData.seller_id)
-          .order("id", { ascending: false });
-
-        if (reviewError) {
-          console.error("Seller reviews load error:", reviewError.message);
-          setSellerReviews([]);
-        } else {
-          setSellerReviews(reviewData || []);
-        }
-      }
-
-      if (productData.category_id) {
-        const { data: categoryData } = await supabase
-          .from("categories")
-          .select("*")
-          .eq("id", productData.category_id)
-          .maybeSingle();
-
-        setCategory(categoryData || null);
-      }
-
-      if (productData.game_category_id) {
-        const { data: gameData } = await supabase
-          .from("game_master")
-          .select("*")
-          .eq("id", productData.game_category_id)
-          .maybeSingle();
-
-        setGameMaster(gameData || null);
-      } else if (productData.game_name) {
-        const { data: gameData } = await supabase
-          .from("game_master")
-          .select("*")
-          .ilike("name", productData.game_name)
-          .maybeSingle();
-
-        setGameMaster(gameData || null);
-      }
-
-      const { data: relatedData } = await supabase
-        .from("products")
-        .select("*")
-        .eq("category_id", productData.category_id)
-        .eq("game_category_id", productData.game_category_id)
-        .eq("status", "active")
-        .neq("id", productData.id)
-        .limit(4);
-
-      setRelatedProducts(relatedData || []);
-      setLoading(false);
-    } catch (error) {
-      console.error("Load product detail error:", error);
-      alert("Failed to load product detail.");
-      setLoading(false);
+      setSeller((sellerData || null) as Profile | null);
     }
+
+    setLoading(false);
   }
 
-  async function toggleWishlist() {
+  async function handleChatSeller() {
     if (!product) return;
 
-    if (!user) {
-      alert("Please login before using wishlist.");
-      window.location.href = "/";
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !authData.user) {
+      alert("Please login first using the Login / Signup button.");
       return;
     }
 
-    setWishlistLoading(true);
+    const currentUser = authData.user;
+    const currentSellerId = getProductSellerId(product);
 
-    if (wishlistRow) {
-      const { error } = await supabase
-        .from("wishlists")
-        .delete()
-        .eq("id", wishlistRow.id)
-        .eq("user_id", user.id);
-
-      if (error) {
-        alert(error.message);
-        setWishlistLoading(false);
-        return;
-      }
-
-      setWishlistRow(null);
-      setWishlistLoading(false);
+    if (!currentSellerId) {
+      alert("Seller ID not found for this product.");
       return;
     }
 
-    const { data, error } = await supabase
-      .from("wishlists")
+    if (currentSellerId === currentUser.id) {
+      alert("You cannot chat with yourself on your own product.");
+      return;
+    }
+
+    setChatLoading(true);
+
+    const { data: existingRoom, error: existingError } = await supabase
+      .from("chat_rooms")
+      .select("*")
+      .eq("buyer_id", currentUser.id)
+      .eq("seller_id", currentSellerId)
+      .eq("product_id", productId)
+      .is("order_id", null)
+      .maybeSingle();
+
+    if (existingError) {
+      alert(existingError.message);
+      setChatLoading(false);
+      return;
+    }
+
+    if (existingRoom?.id) {
+      window.location.href = `/messages?room=${existingRoom.id}`;
+      return;
+    }
+
+    const firstMessage = `Halo kak, produk "${getProductTitle(product)}" masih tersedia?`;
+
+    const { data: newRoom, error: roomError } = await supabase
+      .from("chat_rooms")
       .insert({
-        user_id: user.id,
-        product_id: product.id,
+        buyer_id: currentUser.id,
+        seller_id: currentSellerId,
+        product_id: productId,
+        order_id: null,
+        last_message: firstMessage,
+        last_message_at: new Date().toISOString(),
       })
-      .select("id,user_id,product_id")
+      .select("*")
       .single();
 
-    if (error) {
-      alert(error.message);
-      setWishlistLoading(false);
+    if (roomError) {
+      alert(roomError.message);
+      setChatLoading(false);
       return;
     }
 
-    setWishlistRow(data);
-    setWishlistLoading(false);
+    const { error: messageError } = await supabase.from("chat_messages").insert({
+      room_id: newRoom.id,
+      sender_id: currentUser.id,
+      receiver_id: currentSellerId,
+      message: firstMessage,
+      is_read: false,
+    });
+
+    if (messageError) {
+      alert(messageError.message);
+      setChatLoading(false);
+      return;
+    }
+
+    window.location.href = `/messages?room=${newRoom.id}`;
   }
 
-  async function handleBuyNow() {
-    if (!product) return;
-
-    if (product.status !== "active") {
-      alert("This product is currently unavailable.");
+  useEffect(() => {
+    if (!Number.isFinite(productId)) {
+      setLoading(false);
       return;
     }
 
-    if (Number(product.stock || 0) <= 0) {
-      alert("This product is out of stock.");
-      return;
-    }
-
-    try {
-      setBuying(true);
-
-      const { data: sessionData } = await supabase.auth.getSession();
-
-      if (!sessionData.session?.user) {
-        alert("Please login before buying.");
-        window.location.href = "/";
-        return;
-      }
-
-      window.location.href = `/checkout/${product.id}`;
-    } catch (error) {
-      console.error("Buy product error:", error);
-      alert("Failed to continue checkout.");
-      setBuying(false);
-    }
-  }
-
-  async function handleMessageSeller() {
-    if (!product) return;
-
-    if (!product.seller_id) {
-      alert("Seller not found.");
-      return;
-    }
-
-    try {
-      setMessaging(true);
-
-      const { data: sessionData } = await supabase.auth.getSession();
-
-      if (!sessionData.session?.user) {
-        alert("Please login before sending messages.");
-        window.location.href = "/";
-        return;
-      }
-
-      const currentUser = sessionData.session.user;
-
-      if (currentUser.id === product.seller_id) {
-        alert("You cannot message yourself.");
-        setMessaging(false);
-        return;
-      }
-
-      const { data: existingRoom, error: existingRoomError } = await supabase
-        .from("chat_rooms")
-        .select("*")
-        .eq("buyer_id", currentUser.id)
-        .eq("seller_id", product.seller_id)
-        .eq("product_id", product.id)
-        .is("order_id", null)
-        .maybeSingle();
-
-      if (existingRoomError) {
-        alert(existingRoomError.message);
-        setMessaging(false);
-        return;
-      }
-
-      let roomId = existingRoom?.id;
-
-      if (!existingRoom) {
-        const { data: createdRoom, error: createRoomError } = await supabase
-          .from("chat_rooms")
-          .insert({
-            buyer_id: currentUser.id,
-            seller_id: product.seller_id,
-            product_id: product.id,
-            order_id: null,
-            last_message: `Started conversation about: ${product.title}`,
-            last_message_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (createRoomError) {
-          alert(createRoomError.message);
-          setMessaging(false);
-          return;
-        }
-
-        roomId = createdRoom.id;
-      }
-
-      window.location.href = `/messages?room=${roomId}`;
-    } catch (error) {
-      console.error("Message seller error:", error);
-      alert("Failed to open message room.");
-      setMessaging(false);
-    }
-  }
+    loadProduct();
+  }, [productId]);
 
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">
-          Loading product detail...
-        </p>
+        <p className="text-xl font-black text-cyan-300">Loading product...</p>
       </main>
     );
   }
@@ -443,383 +235,109 @@ export default function ProductDetailV5WishlistPage() {
   if (!product) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
-        <div className="rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
-          <h1 className="text-3xl font-black text-red-300">
-            Product not found
-          </h1>
-
+        <div className="max-w-md rounded-3xl border border-red-400/30 bg-red-400/10 p-8 text-center">
+          <h1 className="text-3xl font-black text-red-300">Product Not Found</h1>
+          <p className="mt-4 text-gray-300">This product does not exist or was removed.</p>
           <Link
             href="/"
             className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
           >
-            Back to Home
+            Back to Marketplace
           </Link>
         </div>
       </main>
     );
   }
 
-  const isAvailable =
-    product.status === "active" && Number(product.stock || 0) > 0;
-
-  const isWishlisted = Boolean(wishlistRow);
-
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <section className="relative overflow-hidden border-b border-white/10 px-8 py-10">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
+      <section className="border-b border-white/10 px-6 py-10">
+        <div className="mx-auto max-w-7xl">
+          <Link href="/" className="text-sm font-black text-cyan-300 hover:text-cyan-200">
+            ← Back to Marketplace
+          </Link>
 
-        <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-6 lg:flex-row lg:items-start">
-          <div>
-            <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              {categoryDisplayName} / {gameDisplayName}
-            </p>
-
-            <h1 className="mt-5 max-w-5xl text-4xl font-black md:text-6xl">
-              {product.title}
-            </h1>
-
-            <p className="mt-4 text-gray-400">
-              Listed by {sellerDisplayName} · Created{" "}
-              {formatDate(product.created_at)}
-            </p>
-
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <span className="rounded-full border border-yellow-400/30 bg-yellow-400/10 px-4 py-2 text-sm font-black text-yellow-300">
-                {sellerReviews.length > 0
-                  ? `${averageRating.toFixed(1)} / 5`
-                  : "No rating yet"}
-              </span>
-
-              <span className="text-yellow-300">
-                {sellerReviews.length > 0 ? renderStars(averageRating) : "☆☆☆☆☆"}
-              </span>
-
-              <span className="text-sm text-gray-400">
-                {sellerReviews.length} seller review
-                {sellerReviews.length === 1 ? "" : "s"}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/wishlist"
-              className="w-fit rounded-full border border-pink-400 px-5 py-2 font-bold text-pink-300 transition hover:bg-pink-400 hover:text-black"
-            >
-              Wishlist
-            </Link>
-
-            <Link
-              href={backToGameUrl}
-              className="w-fit rounded-full border border-cyan-400 px-5 py-2 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-            >
-              Back to Game
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto grid max-w-7xl gap-8 px-8 py-10 lg:grid-cols-[1fr_420px]">
-        <div className="space-y-8">
-          <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30">
-            <div className="flex h-[420px] items-center justify-center bg-black">
-              {product.image_url ? (
-                <img
-                  src={product.image_url}
-                  alt={product.title}
-                  className="h-full w-full object-cover"
-                />
-              ) : gameMaster?.image_url ? (
-                <img
-                  src={gameMaster.image_url}
-                  alt={gameMaster.name}
-                  className="h-full w-full object-cover"
-                />
+          <div className="mt-8 grid gap-8 lg:grid-cols-[520px_1fr]">
+            <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#0b1020]">
+              {image ? (
+                <img src={image} alt={title} className="h-[420px] w-full object-cover" />
               ) : (
-                <div className="text-center">
-                  <p className="text-8xl">🎮</p>
-                  <p className="mt-4 text-gray-500">No product image</p>
+                <div className="flex h-[420px] w-full items-center justify-center bg-cyan-400/5 text-7xl">
+                  🎮
                 </div>
               )}
             </div>
-          </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-            <h2 className="text-3xl font-black">Product Description</h2>
+            <div>
+              <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+                Product Detail
+              </p>
 
-            <p className="mt-5 whitespace-pre-line leading-8 text-gray-300">
-              {product.description || "No description provided."}
-            </p>
-          </div>
+              <h1 className="mt-5 text-4xl font-black leading-tight md:text-6xl">
+                {title}
+              </h1>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-            <h2 className="text-3xl font-black">Product Information</h2>
+              <p className="mt-5 text-4xl font-black text-green-300">
+                {formatPrice(price)}
+              </p>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <p className="text-sm text-gray-400">Category</p>
-                <p className="mt-1 font-black">{categoryDisplayName}</p>
-              </div>
+              <p className="mt-5 max-w-2xl whitespace-pre-wrap leading-7 text-gray-300">
+                {description}
+              </p>
 
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <p className="text-sm text-gray-400">Game</p>
-                <p className="mt-1 font-black">{gameDisplayName}</p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <p className="text-sm text-gray-400">Stock</p>
-                <p className="mt-1 font-black">{product.stock || 0}</p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <p className="text-sm text-gray-400">Status</p>
-                <p
-                  className={`mt-1 font-black ${
-                    product.status === "active"
-                      ? "text-green-300"
-                      : "text-red-300"
-                  }`}
-                >
-                  {product.status || "unknown"}
+              <div className="mt-8 rounded-3xl border border-white/10 bg-[#0b1020] p-5">
+                <p className="text-sm font-black uppercase tracking-widest text-gray-500">
+                  Seller
                 </p>
-              </div>
-            </div>
-          </div>
 
-          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-7 shadow-2xl shadow-black/30">
-            <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
-              <div>
-                <h2 className="text-3xl font-black text-yellow-300">
-                  Seller Reviews
-                </h2>
-                <p className="mt-2 text-sm text-gray-300">
-                  Latest buyer feedback for this seller.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-yellow-400/30 bg-black/30 px-5 py-3 text-right">
-                <p className="text-2xl font-black text-yellow-300">
-                  {sellerReviews.length > 0 ? averageRating.toFixed(1) : "0.0"}
-                </p>
-                <p className="text-xs text-gray-400">
-                  {sellerReviews.length} reviews
-                </p>
-              </div>
-            </div>
-
-            {latestReviews.length === 0 ? (
-              <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-6 text-center">
-                <p className="text-gray-400">No seller reviews yet.</p>
-              </div>
-            ) : (
-              <div className="mt-6 grid gap-4">
-                {latestReviews.map((review) => (
-                  <div
-                    key={review.id}
-                    className="rounded-2xl border border-white/10 bg-black/30 p-5"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="font-black text-yellow-300">
-                          {renderStars(review.rating)}
-                        </p>
-                        <p className="mt-1 text-sm text-gray-400">
-                          Rating {review.rating}/5 · {formatDate(review.created_at)}
-                        </p>
-                      </div>
-
-                      <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-black text-cyan-300">
-                        Order #{review.order_id}
-                      </span>
-                    </div>
-
-                    <p className="mt-4 whitespace-pre-line text-sm leading-6 text-gray-300">
-                      {review.review_text || "No written review."}
-                    </p>
+                <div className="mt-4 flex items-center gap-4">
+                  <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-cyan-400 font-black text-black">
+                    {seller?.avatar_url ? (
+                      <img src={seller.avatar_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      avatarLetter(seller)
+                    )}
                   </div>
-                ))}
+
+                  <div>
+                    <p className="font-black">{getSellerName(seller)}</p>
+                    <p className="text-sm text-green-300">● Online</p>
+                  </div>
+                </div>
               </div>
-            )}
-          </div>
 
-          {relatedProducts.length > 0 && (
-            <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-              <h2 className="text-3xl font-black">Related Products</h2>
-
-              <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-                {relatedProducts.map((item) => (
-                  <Link
-                    key={item.id}
-                    href={`/product/${item.id}`}
-                    className="overflow-hidden rounded-2xl border border-white/10 bg-black/30 transition hover:border-cyan-400"
-                  >
-                    <div className="flex h-32 items-center justify-center bg-black">
-                      {item.image_url ? (
-                        <img
-                          src={item.image_url}
-                          alt={item.title}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-4xl">🎮</span>
-                      )}
-                    </div>
-
-                    <div className="p-4">
-                      <h3 className="line-clamp-2 font-black">{item.title}</h3>
-
-                      <p className="mt-2 font-black text-cyan-300">
-                        {formatPrice(item.price)}
-                      </p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <aside className="h-fit space-y-6">
-          <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-7 shadow-2xl shadow-black/30">
-            <p className="text-sm font-bold text-gray-300">Price</p>
-
-            <h2 className="mt-2 text-5xl font-black text-cyan-300">
-              {formatPrice(product.price)}
-            </h2>
-
-            <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-400">Availability</span>
-                <span
-                  className={`font-black ${
-                    isAvailable ? "text-green-300" : "text-red-300"
-                  }`}
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                <button
+                  onClick={handleChatSeller}
+                  disabled={chatLoading}
+                  className="h-14 rounded-2xl bg-cyan-400 px-8 font-black text-black hover:bg-cyan-300 disabled:opacity-60"
                 >
-                  {isAvailable ? "Available" : "Unavailable"}
-                </span>
+                  {chatLoading ? "Opening Chat..." : "Chat Seller"}
+                </button>
+
+                <Link
+                  href={`/checkout?product=${productId}`}
+                  className="inline-flex h-14 items-center justify-center rounded-2xl bg-green-400 px-8 font-black text-black hover:bg-green-300"
+                >
+                  Buy Now
+                </Link>
+
+                <Link
+                  href="/messages"
+                  className="inline-flex h-14 items-center justify-center rounded-2xl border border-white/10 px-8 font-black text-gray-200 hover:bg-white hover:text-black"
+                >
+                  Open Messages
+                </Link>
               </div>
 
-              <div className="mt-3 flex items-center justify-between">
-                <span className="text-gray-400">Stock</span>
-                <span className="font-black">{product.stock || 0}</span>
-              </div>
+              {!user && (
+                <p className="mt-4 text-sm text-yellow-300">
+                  Login dulu untuk chat seller atau membeli produk.
+                </p>
+              )}
             </div>
-
-            <button
-              onClick={handleBuyNow}
-              disabled={!isAvailable || buying}
-              className="mt-6 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {buying ? "Opening Checkout..." : "Buy Now"}
-            </button>
-
-            <button
-              onClick={toggleWishlist}
-              disabled={wishlistLoading}
-              className={`mt-4 w-full rounded-2xl border py-4 text-lg font-black transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                isWishlisted
-                  ? "border-pink-400 bg-pink-400 text-black hover:bg-pink-300"
-                  : "border-pink-400 text-pink-300 hover:bg-pink-400 hover:text-black"
-              }`}
-            >
-              {wishlistLoading
-                ? "Updating Wishlist..."
-                : isWishlisted
-                ? "♥ Remove from Wishlist"
-                : "♡ Add to Wishlist"}
-            </button>
-
-            <button
-              onClick={handleMessageSeller}
-              disabled={messaging || !product.seller_id}
-              className="mt-4 w-full rounded-2xl border border-yellow-400 py-4 text-lg font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {messaging ? "Opening Chat..." : "💬 Message Seller"}
-            </button>
-
-            <p className="mt-4 text-center text-sm text-gray-400">
-              Secure order flow by ComePlayers.
-            </p>
           </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-            <h2 className="text-2xl font-black">Seller Information</h2>
-
-            <div className="mt-5 flex items-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-cyan-400/30 bg-cyan-400/10">
-                {sellerProfile?.avatar_url ? (
-                  <img
-                    src={sellerProfile.avatar_url}
-                    alt={sellerDisplayName}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <span className="text-2xl font-black text-cyan-300">
-                    {sellerDisplayName.charAt(0).toUpperCase()}
-                  </span>
-                )}
-              </div>
-
-              <div>
-                <p className="text-xl font-black">{sellerDisplayName}</p>
-                <p className="text-sm text-green-300">
-                  {sellerProfile?.seller_status === "approved"
-                    ? "Verified Seller"
-                    : "Seller"}
-                </p>
-                <p className="mt-1 text-sm text-yellow-300">
-                  {sellerReviews.length > 0
-                    ? `${renderStars(averageRating)} ${averageRating.toFixed(
-                        1
-                      )}/5`
-                    : "☆☆☆☆☆ No reviews yet"}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                <p className="text-xs text-gray-500">Rating</p>
-                <p className="mt-1 font-black text-yellow-300">
-                  {sellerReviews.length > 0 ? averageRating.toFixed(1) : "0.0"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                <p className="text-xs text-gray-500">Reviews</p>
-                <p className="mt-1 font-black text-cyan-300">
-                  {sellerReviews.length}
-                </p>
-              </div>
-            </div>
-
-            <p className="mt-5 line-clamp-4 text-sm leading-6 text-gray-400">
-              {sellerProfile?.bio ||
-                "Trusted ComePlayers seller offering gaming products and services."}
-            </p>
-
-            {product.seller_id && (
-              <Link
-                href={`/seller-profile/${product.seller_id}`}
-                className="mt-6 block rounded-2xl border border-cyan-400 px-5 py-3 text-center font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-              >
-                View Seller Profile
-              </Link>
-            )}
-          </div>
-
-          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-7">
-            <h2 className="text-xl font-black text-yellow-300">
-              Buyer Protection
-            </h2>
-
-            <p className="mt-3 text-sm leading-6 text-gray-300">
-              Always complete transactions through ComePlayers order flow. Do
-              not send payment outside the platform.
-            </p>
-          </div>
-        </aside>
+        </div>
       </section>
     </main>
   );
