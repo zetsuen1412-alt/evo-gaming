@@ -3,7 +3,7 @@ import { supabase } from "@/lib/supabase";
 
 export async function GET() {
   const { data, error } = await supabase
-    .from("game_categories")
+    .from("categories")
     .select("id,name,slug,description,icon,sort_order")
     .eq("is_active", true)
     .order("sort_order", { ascending: true });

@@ -1,712 +1,580 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { User } from "@supabase/supabase-js";
+import { useEffect, useMemo, useState } from "react";
+import {
+  FaCheckCircle,
+  FaClock,
+  FaCreditCard,
+  FaEye,
+  FaFilter,
+  FaReceipt,
+  FaSearch,
+  FaShoppingBag,
+  FaStore,
+  FaWallet,
+} from "react-icons/fa";
 import { supabase } from "@/lib/supabase";
-import { createNotification } from "@/lib/createNotification";
 
 type Order = {
   id: number;
-  buyer_id: string | null;
-  buyer: string | null;
-  seller_id: string | null;
-  product_id: number | null;
-  product: string | null;
-  price: string | number | null;
-  quantity: number | null;
-  total_price: string | number | null;
-  category_id: number | null;
-  category_name: string | null;
-  game_master_id: number | null;
-  game_name: string | null;
-  status: string | null;
-  payment_proof: string | null;
-  payment_image: string | null;
-  completed_at: string | null;
-  escrow_status: string | null;
-  created_at: string;
+  created_at?: string | null;
+  product?: string | null;
+  buyer?: string | null;
+  price?: string | number | null;
+  status?: string | null;
+  payment_proof?: string | null;
+  product_id?: number | null;
+  buyer_id?: string | null;
+  seller_id?: string | null;
+  quantity?: number | null;
+  total_amount?: string | number | null;
+  total_price?: string | number | null;
+  payment_status?: string | null;
+  product_title?: string | null;
+  seller_name?: string | null;
+  game_name?: string | null;
+  category?: string | null;
 };
 
-const orderStatuses = [
-  "all",
-  "Pending Payment",
-  "Payment Verification",
-  "Processing",
-  "Completed",
-  "Cancelled",
+type Product = {
+  id: number;
+  title?: string | null;
+  image_url?: string | null;
+  price?: string | number | null;
+  game_name?: string | null;
+  category?: string | null;
+};
+
+type ProductMap = Record<number, Product>;
+
+const FILTERS = [
+  { label: "All Orders", value: "all" },
+  { label: "Pending", value: "pending" },
+  { label: "Waiting Payment", value: "waiting_payment" },
+  { label: "Paid", value: "paid" },
+  { label: "Completed", value: "completed" },
+  { label: "Cancelled", value: "cancelled" },
 ];
 
-const statusOptions = [
-  "Pending Payment",
-  "Payment Verification",
-  "Processing",
-  "Completed",
-  "Cancelled",
-];
-
-function normalizeStatus(status: string | null) {
-  if (status === "pending") return "Pending Payment";
-  if (status === "pending_payment") return "Pending Payment";
-  if (status === "Menunggu Pembayaran") return "Pending Payment";
-  if (status === "Menunggu Cek Pembayaran") return "Payment Verification";
-  if (status === "Diproses") return "Processing";
-  if (status === "Selesai") return "Completed";
-  if (status === "Dibatalkan") return "Cancelled";
-  return status || "Pending Payment";
+function numberPrice(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
-function getStatusClass(status: string | null) {
-  const normalizedStatus = normalizeStatus(status);
-
-  if (normalizedStatus === "Completed") {
-    return "border-green-400/20 bg-green-400/10 text-green-300";
-  }
-
-  if (normalizedStatus === "Processing") {
-    return "border-blue-400/20 bg-blue-400/10 text-blue-300";
-  }
-
-  if (normalizedStatus === "Cancelled") {
-    return "border-red-400/20 bg-red-400/10 text-red-300";
-  }
-
-  if (normalizedStatus === "Payment Verification") {
-    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
-  }
-
-  return "border-cyan-400/20 bg-cyan-400/10 text-cyan-300";
+function formatPrice(value: string | number | null | undefined) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(numberPrice(value));
 }
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-
-  if (!Number.isFinite(price)) {
-    return "Rp 0";
-  }
-
-  return `Rp ${price.toLocaleString("id-ID")}`;
+function getOrderTotal(order: Order, product?: Product | null) {
+  return (
+    numberPrice(order.total_amount) ||
+    numberPrice(order.total_price) ||
+    numberPrice(order.price) ||
+    numberPrice(product?.price)
+  );
 }
 
-function getBuyerNotificationMessage(status: string, order: Order) {
-  if (status === "Payment Verification") {
-    return `Your payment proof for order #${order.id} is waiting for verification.`;
-  }
-
-  if (status === "Processing") {
-    return `Your order #${order.id} is now being processed by the seller.`;
-  }
-
-  if (status === "Completed") {
-    return `Your order #${order.id} has been completed successfully. You can now leave a review.`;
-  }
-
-  if (status === "Cancelled") {
-    return `Your order #${order.id} was cancelled by the seller.`;
-  }
-
-  return `Your order #${order.id} status was updated to ${status}.`;
+function normalizeStatus(value?: string | null) {
+  return String(value || "pending").toLowerCase();
 }
 
-export default function SellerOrdersV3WalletReleasePage() {
-  const [user, setUser] = useState<User | null>(null);
+function prettyStatus(value?: string | null) {
+  return String(value || "pending")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function statusStyle(value?: string | null) {
+  const status = normalizeStatus(value);
+
+  if (status.includes("complete")) {
+    return "border-emerald-400/40 bg-emerald-400/10 text-emerald-300";
+  }
+
+  if (status.includes("paid")) {
+    return "border-cyan-400/40 bg-cyan-400/10 text-cyan-300";
+  }
+
+  if (status.includes("waiting")) {
+    return "border-yellow-400/40 bg-yellow-400/10 text-yellow-300";
+  }
+
+  if (status.includes("cancel")) {
+    return "border-red-400/40 bg-red-400/10 text-red-300";
+  }
+
+  return "border-slate-400/30 bg-slate-400/10 text-slate-300";
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function fallbackImage(title: string) {
+  return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
+    title || "Order"
+  )}`;
+}
+
+export default function SellerOrdersPage() {
+  const [sellerId, setSellerId] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [products, setProducts] = useState<ProductMap>({});
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [error, setError] = useState("");
 
-  const [activeStatus, setActiveStatus] = useState("all");
-  const [search, setSearch] = useState("");
-  const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
-  const [messagingOrderId, setMessagingOrderId] = useState<number | null>(null);
+  async function loadSellerOrders() {
+    setLoading(true);
+    setError("");
 
-  const filteredOrders = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const { data: authData } = await supabase.auth.getUser();
+    const currentUser = authData.user;
 
-    return orders.filter((order) => {
-      const normalizedStatus = normalizeStatus(order.status);
-
-      const matchesStatus =
-        activeStatus === "all" || normalizedStatus === activeStatus;
-
-      const matchesSearch =
-        !query ||
-        (order.product || "").toLowerCase().includes(query) ||
-        (order.buyer || "").toLowerCase().includes(query) ||
-        (order.category_name || "").toLowerCase().includes(query) ||
-        (order.game_name || "").toLowerCase().includes(query) ||
-        String(order.id).includes(query);
-
-      return matchesStatus && matchesSearch;
-    });
-  }, [orders, activeStatus, search]);
-
-  const totalRevenue = useMemo(() => {
-    return orders
-      .filter((order) => normalizeStatus(order.status) === "Completed")
-      .reduce(
-        (sum, order) => sum + Number(order.total_price || order.price || 0),
-        0
-      );
-  }, [orders]);
-
-  const pendingPaymentCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Pending Payment"
-  ).length;
-
-  const verificationCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Payment Verification"
-  ).length;
-
-  const processingCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Processing"
-  ).length;
-
-  async function loadSellerOrders(userId: string) {
-    const { data, error } = await supabase
-      .from("orders")
-      .select("*")
-      .eq("seller_id", userId)
-      .order("id", { ascending: false });
-
-    if (error) {
-      alert(error.message);
+    if (!currentUser) {
+      setSellerId(null);
+      setOrders([]);
+      setProducts({});
+      setLoading(false);
       return;
     }
 
-    setOrders(data || []);
+    setSellerId(currentUser.id);
+
+    const { data: orderData, error: orderError } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("seller_id", currentUser.id)
+      .order("created_at", { ascending: false });
+
+    if (orderError) {
+      setError(orderError.message);
+      setOrders([]);
+      setProducts({});
+      setLoading(false);
+      return;
+    }
+
+    const safeOrders = orderData || [];
+    setOrders(safeOrders);
+
+    const productIds = Array.from(
+      new Set(
+        safeOrders
+          .map((order) => order.product_id)
+          .filter((id): id is number => typeof id === "number")
+      )
+    );
+
+    if (productIds.length > 0) {
+      const { data: productData } = await supabase
+        .from("products")
+        .select(`
+          id,
+          title,
+          image_url,
+          price,
+          game_name,
+          category
+        `)
+        .in("id", productIds);
+
+      const map: ProductMap = {};
+
+      (productData || []).forEach((product) => {
+        map[product.id] = product;
+      });
+
+      setProducts(map);
+    } else {
+      setProducts({});
+    }
+
+    setLoading(false);
   }
 
   useEffect(() => {
-    async function initializePage() {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-
-      if (userError) {
-        alert(userError.message);
-        setLoading(false);
-        return;
-      }
-
-      if (!userData.user) {
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-
-      setUser(userData.user);
-      await loadSellerOrders(userData.user.id);
-      setLoading(false);
-    }
-
-    initializePage();
+    loadSellerOrders();
   }, []);
 
-  async function updateOrderStatus(order: Order, newStatus: string) {
-    if (!user) return;
+  const stats = useMemo(() => {
+    const totalOrders = orders.length;
+    const pending = orders.filter((order) =>
+      normalizeStatus(order.status).includes("pending")
+    ).length;
+    const paid = orders.filter(
+      (order) =>
+        normalizeStatus(order.status).includes("paid") ||
+        normalizeStatus(order.payment_status).includes("paid")
+    ).length;
+    const completed = orders.filter((order) =>
+      normalizeStatus(order.status).includes("completed")
+    ).length;
+    const revenue = orders.reduce((sum, order) => {
+      const product = order.product_id ? products[order.product_id] : null;
+      const isPaid =
+        normalizeStatus(order.status).includes("paid") ||
+        normalizeStatus(order.payment_status).includes("paid") ||
+        normalizeStatus(order.status).includes("completed");
 
-    const previousStatus = normalizeStatus(order.status);
+      return isPaid ? sum + getOrderTotal(order, product) : sum;
+    }, 0);
 
-    if (previousStatus === newStatus) {
-      return;
+    return {
+      totalOrders,
+      pending,
+      paid,
+      completed,
+      revenue,
+    };
+  }, [orders, products]);
+
+  const filteredOrders = useMemo(() => {
+    let list = [...orders];
+
+    if (filter !== "all") {
+      list = list.filter((order) => {
+        const orderStatus = normalizeStatus(order.status);
+        const paymentStatus = normalizeStatus(order.payment_status);
+
+        return orderStatus === filter || paymentStatus === filter;
+      });
     }
 
-    setUpdatingOrderId(order.id);
+    if (query.trim()) {
+      const q = query.toLowerCase();
 
-    const updatePayload: {
-      status: string;
-      completed_at?: string;
-      escrow_status?: string;
-    } = { status: newStatus };
+      list = list.filter((order) => {
+        const product = order.product_id ? products[order.product_id] : null;
 
-    if (newStatus === "Completed") {
-      updatePayload.completed_at = new Date().toISOString();
-      updatePayload.escrow_status = "holding";
+        return `${order.id} ${order.product || ""} ${order.product_title || ""} ${
+          product?.title || ""
+        } ${order.game_name || ""} ${product?.game_name || ""} ${
+          order.buyer || ""
+        } ${order.buyer_id || ""}`
+          .toLowerCase()
+          .includes(q);
+      });
     }
 
-    const { error } = await supabase
+    return list;
+  }, [orders, products, filter, query]);
+
+  async function markCompleted(orderId: number) {
+    setUpdatingId(orderId);
+    setError("");
+
+    const { error: updateError } = await supabase
       .from("orders")
-      .update(updatePayload)
-      .eq("id", order.id)
-      .eq("seller_id", user.id);
+      .update({
+        status: "completed",
+      })
+      .eq("id", orderId);
 
-    if (error) {
-      alert(error.message);
-      setUpdatingOrderId(null);
+    if (updateError) {
+      setError(updateError.message);
+      setUpdatingId(null);
       return;
     }
 
-
-    await createNotification({
-      userId: order.buyer_id,
-      type: "order",
-      title: `Order ${newStatus}`,
-      message: getBuyerNotificationMessage(newStatus, order),
-      linkUrl:
-        newStatus === "Completed"
-          ? `/review/${order.id}`
-          : `/order/${order.id}`,
-    });
-
-    if (newStatus === "Processing") {
-      await createNotification({
-        userId: order.seller_id,
-        type: "seller",
-        title: "Order Processing Started",
-        message: `You started processing order #${order.id}.`,
-        linkUrl: "/seller/orders",
-      });
-    }
-
-    if (newStatus === "Completed") {
-      await createNotification({
-        userId: order.seller_id,
-        type: "seller",
-        title: "Order Completed",
-        message: `Order #${order.id} has been completed. Earning will be released after escrow holding period.`,
-        linkUrl: "/wallet",
-      });
-    }
-
-    if (newStatus === "Cancelled") {
-      await createNotification({
-        userId: order.seller_id,
-        type: "seller",
-        title: "Order Cancelled",
-        message: `You cancelled order #${order.id}.`,
-        linkUrl: "/seller/orders",
-      });
-    }
-
-    await loadSellerOrders(user.id);
-    setUpdatingOrderId(null);
-  }
-
-
-  async function handleMessageBuyer(order: Order) {
-    if (!user) return;
-
-    if (!order.buyer_id || !order.seller_id) {
-      alert("Buyer or seller not found.");
-      return;
-    }
-
-    if (order.seller_id !== user.id) {
-      alert("You are not allowed to message this buyer.");
-      return;
-    }
-
-    if (order.buyer_id === user.id) {
-      alert("You cannot message yourself.");
-      return;
-    }
-
-    try {
-      setMessagingOrderId(order.id);
-
-      const { data: existingRoom, error: existingRoomError } = await supabase
-        .from("chat_rooms")
-        .select("*")
-        .eq("buyer_id", order.buyer_id)
-        .eq("seller_id", order.seller_id)
-        .eq("order_id", order.id)
-        .maybeSingle();
-
-      if (existingRoomError) {
-        alert(existingRoomError.message);
-        setMessagingOrderId(null);
-        return;
-      }
-
-      let roomId = existingRoom?.id;
-
-      if (!existingRoom) {
-        const { data: createdRoom, error: createRoomError } = await supabase
-          .from("chat_rooms")
-          .insert({
-            buyer_id: order.buyer_id,
-            seller_id: order.seller_id,
-            product_id: order.product_id,
-            order_id: order.id,
-            last_message: `Started conversation about order #${order.id}`,
-            last_message_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (createRoomError) {
-          alert(createRoomError.message);
-          setMessagingOrderId(null);
-          return;
-        }
-
-        roomId = createdRoom.id;
-      }
-
-      window.location.href = `/messages?room=${roomId}`;
-    } catch (error) {
-      console.error("Message buyer error:", error);
-      alert("Failed to open buyer chat.");
-      setMessagingOrderId(null);
-    }
+    await loadSellerOrders();
+    setUpdatingId(null);
   }
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">
-          Loading seller orders...
-        </p>
+      <main className="min-h-screen bg-[#050816] px-4 py-20 text-center text-white">
+        Loading seller orders...
       </main>
     );
   }
 
-  if (!user) {
+  if (!sellerId) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
-        <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
-          <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
+      <main className="min-h-screen bg-[#050816] text-white">
+        <section className="mx-auto max-w-4xl px-4 py-24 text-center">
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-cyan-400/30 bg-cyan-400/10">
+            <FaStore className="text-4xl text-cyan-300" />
+          </div>
 
-          <p className="mt-4 text-gray-400">
-            Please login first to manage seller orders.
+          <h1 className="mt-8 text-5xl font-black">Seller Orders</h1>
+
+          <p className="mx-auto mt-4 max-w-xl text-slate-300">
+            Please login as seller to view incoming marketplace orders.
           </p>
 
           <Link
             href="/"
-            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
+            className="mt-8 inline-flex rounded-xl bg-cyan-400 px-6 py-4 font-black text-black hover:bg-cyan-300"
           >
-            Back to Home
+            Back Home
           </Link>
-        </div>
+        </section>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#020617] text-white">
-      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
-
-        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
-          <div>
-            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Seller Dashboard
-            </p>
-
-            <h1 className="text-5xl font-black md:text-7xl">Seller Orders</h1>
-
-            <p className="mt-5 max-w-2xl text-gray-300">
-              Manage buyer orders, verify payments, update delivery status, and
-              mark orders as completed. Escrow release is handled securely by the server after the holding period.
-            </p>
-
-            <p className="mt-3 text-sm text-gray-500">
-              Logged in as {user.email}
-            </p>
+    <main className="min-h-screen bg-[#050816] text-white">
+      <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.16),transparent_35%)]">
+        <div className="mx-auto max-w-7xl px-4 py-10">
+          <div className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-5 py-2 text-sm font-black text-cyan-200">
+            Seller Center
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/wallet"
-              className="inline-flex h-12 items-center justify-center rounded-full border border-green-400 px-6 font-bold text-green-300 transition hover:bg-green-400 hover:text-black"
-            >
-              Wallet
-            </Link>
+          <h1 className="mt-8 text-5xl font-black">Seller Orders</h1>
 
-            <Link
-              href="/seller/products"
-              className="inline-flex h-12 items-center justify-center rounded-full border border-white/10 px-6 font-bold text-gray-300 transition hover:bg-white hover:text-black"
-            >
-              Products
-            </Link>
-
-            <Link
-              href="/notifications"
-              className="inline-flex h-12 items-center justify-center rounded-full border border-yellow-400 px-6 font-bold text-yellow-300 transition hover:bg-yellow-400 hover:text-black"
-            >
-              Notifications
-            </Link>
-
-            <Link
-              href="/seller"
-              className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-            >
-              Dashboard
-            </Link>
-          </div>
+          <p className="mt-3 max-w-2xl text-slate-300">
+            Manage incoming orders, track payments, deliver products, and update
+            completion status.
+          </p>
         </div>
       </section>
 
-      <section className="px-8 py-10">
-        <div className="mb-8 grid gap-5 md:grid-cols-5">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Total Orders</p>
-            <p className="mt-2 text-3xl font-black text-cyan-300">
-              {orders.length}
-            </p>
+      <section className="mx-auto max-w-7xl px-4 py-10">
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+            <FaReceipt className="text-3xl text-cyan-300" />
+            <p className="mt-4 text-sm text-slate-400">Total Orders</p>
+            <p className="mt-1 text-3xl font-black">{stats.totalOrders}</p>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Pending Payment</p>
-            <p className="mt-2 text-3xl font-black text-cyan-300">
-              {pendingPaymentCount}
-            </p>
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+            <FaClock className="text-3xl text-yellow-300" />
+            <p className="mt-4 text-sm text-slate-400">Pending</p>
+            <p className="mt-1 text-3xl font-black">{stats.pending}</p>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Verification</p>
-            <p className="mt-2 text-3xl font-black text-yellow-300">
-              {verificationCount}
-            </p>
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+            <FaCreditCard className="text-3xl text-cyan-300" />
+            <p className="mt-4 text-sm text-slate-400">Paid</p>
+            <p className="mt-1 text-3xl font-black">{stats.paid}</p>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Processing</p>
-            <p className="mt-2 text-3xl font-black text-blue-300">
-              {processingCount}
-            </p>
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+            <FaCheckCircle className="text-3xl text-emerald-300" />
+            <p className="mt-4 text-sm text-slate-400">Completed</p>
+            <p className="mt-1 text-3xl font-black">{stats.completed}</p>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Completed Revenue</p>
-            <p className="mt-2 text-2xl font-black text-green-300">
-              {formatPrice(totalRevenue)}
+          <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-5">
+            <FaWallet className="text-3xl text-cyan-300" />
+            <p className="mt-4 text-sm text-slate-300">Revenue</p>
+            <p className="mt-1 text-2xl font-black text-cyan-300">
+              {formatPrice(stats.revenue)}
             </p>
           </div>
         </div>
 
-        <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
-          <input
-            type="text"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search by product, buyer, category, game, or order ID..."
-            className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
-          />
+        <div className="mt-8 rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+          <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
+            <div className="relative">
+              <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
 
-          <div className="flex flex-wrap gap-3">
-            {orderStatuses.map((status) => (
-              <button
-                key={status}
-                onClick={() => setActiveStatus(status)}
-                className={`rounded-full px-5 py-3 text-sm font-bold transition ${
-                  activeStatus === status
-                    ? "bg-cyan-400 text-black"
-                    : "border border-white/10 bg-white/[0.04] text-gray-300 hover:border-cyan-400 hover:text-white"
-                }`}
-              >
-                {status === "all" ? "All" : status}
-              </button>
-            ))}
-          </div>
-        </div>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search by order, product, buyer, or game..."
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-11 py-4 text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
+              />
+            </div>
 
-        {filteredOrders.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-10 text-center">
-            <h2 className="text-3xl font-black">No seller orders found.</h2>
-
-            <p className="mt-3 text-gray-400">
-              Buyer orders will appear here after checkout.
-            </p>
-          </div>
-        ) : (
-          <div className="grid gap-6">
-            {filteredOrders.map((order) => {
-              const normalizedStatus = normalizeStatus(order.status);
-              const totalPrice = Number(order.total_price || order.price || 0);
-
-              return (
-                <div
-                  key={order.id}
-                  className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30"
+            <select
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              className="rounded-xl border border-white/10 bg-black/40 px-4 py-4 text-white outline-none focus:border-cyan-400"
+            >
+              {FILTERS.map((item) => (
+                <option
+                  key={item.value}
+                  value={item.value}
+                  className="bg-[#050816]"
                 >
-                  <div className="grid gap-6 xl:grid-cols-[1fr_280px]">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <h2 className="text-2xl font-black">
-                          {order.product || "Unknown Product"}
-                        </h2>
-
-                        <span
-                          className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClass(
-                            order.status
-                          )}`}
-                        >
-                          {normalizedStatus}
-                        </span>
-                      </div>
-
-                      <p className="mt-3 text-3xl font-black text-cyan-300">
-                        {formatPrice(totalPrice)}
-                      </p>
-
-                      <div className="mt-5 grid gap-4 md:grid-cols-2">
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Order ID</p>
-                          <p className="mt-1 font-bold">#{order.id}</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Buyer</p>
-                          <p className="mt-1 break-words font-bold">
-                            {order.buyer || order.buyer_id || "Unknown Buyer"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Category</p>
-                          <p className="mt-1 font-bold">
-                            {order.category_name || "-"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Game</p>
-                          <p className="mt-1 font-bold">
-                            {order.game_name || "-"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Quantity</p>
-                          <p className="mt-1 font-bold">
-                            {order.quantity || 1}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Created</p>
-                          <p className="mt-1 font-bold">
-                            {order.created_at
-                              ? new Date(order.created_at).toLocaleString()
-                              : "-"}
-                          </p>
-                        </div>
-                      </div>
-
-                      {order.payment_proof && (
-                        <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
-                          <p className="text-sm font-black text-cyan-300">
-                            Payment Details
-                          </p>
-
-                          <p className="mt-3 whitespace-pre-line text-sm leading-6 text-gray-300">
-                            {order.payment_proof}
-                          </p>
-                        </div>
-                      )}
-
-                      {order.payment_image && (
-                        <div className="mt-5">
-                          <p className="mb-3 font-bold text-cyan-300">
-                            Payment Proof Image
-                          </p>
-
-                          <a
-                            href={order.payment_image}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-block"
-                          >
-                            <img
-                              src={order.payment_image}
-                              alt="Payment Proof"
-                              className="h-40 w-72 rounded-xl border border-white/10 object-cover transition hover:scale-105"
-                            />
-                          </a>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col gap-3">
-                      <label className="text-sm font-bold text-gray-400">
-                        Update Status
-                      </label>
-
-                      <select
-                        value={normalizedStatus}
-                        onChange={(event) =>
-                          updateOrderStatus(order, event.target.value)
-                        }
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl border border-white/10 bg-black px-4 py-3 font-bold text-white outline-none focus:border-cyan-400 disabled:opacity-60"
-                      >
-                        {statusOptions.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
-
-                      <button
-                        onClick={() =>
-                          updateOrderStatus(order, "Payment Verification")
-                        }
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-yellow-400 px-5 py-3 font-black text-black hover:bg-yellow-300 disabled:opacity-60"
-                      >
-                        Mark Verification
-                      </button>
-
-                      <button
-                        onClick={() => updateOrderStatus(order, "Processing")}
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-blue-500 px-5 py-3 font-black text-white hover:bg-blue-400 disabled:opacity-60"
-                      >
-                        Mark Processing
-                      </button>
-
-                      <button
-                        onClick={() => updateOrderStatus(order, "Completed")}
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-green-500 px-5 py-3 font-black text-white hover:bg-green-400 disabled:opacity-60"
-                      >
-                        Mark Completed + Release Wallet
-                      </button>
-
-                      <button
-                        onClick={() => updateOrderStatus(order, "Cancelled")}
-                        disabled={updatingOrderId === order.id}
-                        className="rounded-2xl bg-red-500 px-5 py-3 font-black text-white hover:bg-red-400 disabled:opacity-60"
-                      >
-                        Cancel Order
-                      </button>
-
-                      <button
-                        onClick={() => handleMessageBuyer(order)}
-                        disabled={messagingOrderId === order.id || !order.buyer_id}
-                        className="rounded-2xl border border-yellow-400 px-5 py-3 font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {messagingOrderId === order.id
-                          ? "Opening Chat..."
-                          : "💬 Message Buyer"}
-                      </button>
-
-                      {order.product_id && (
-                        <Link
-                          href={`/product/${order.product_id}`}
-                          className="rounded-2xl border border-cyan-400/40 px-5 py-3 text-center font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-                        >
-                          View Product
-                        </Link>
-                      )}
-
-                      <Link
-                        href={`/order/${order.id}`}
-                        className="rounded-2xl border border-white/10 px-5 py-3 text-center font-black text-gray-300 transition hover:bg-white hover:text-black"
-                      >
-                        View Order Detail
-                      </Link>
-
-                      {updatingOrderId === order.id && (
-                        <p className="text-center text-sm text-gray-400">
-                          Updating order...
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                  {item.label}
+                </option>
+              ))}
+            </select>
           </div>
-        )}
+
+          <div className="mt-5 flex items-center gap-2 text-sm text-slate-400">
+            <FaFilter className="text-cyan-300" />
+            Showing {filteredOrders.length} of {orders.length} orders
+          </div>
+        </div>
+
+        {error ? (
+          <div className="mt-6 rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-200">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="mt-8 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04]">
+          {filteredOrders.length === 0 ? (
+            <div className="p-12 text-center">
+              <FaShoppingBag className="mx-auto text-5xl text-cyan-300" />
+
+              <h2 className="mt-6 text-3xl font-black">No seller orders yet</h2>
+
+              <p className="mx-auto mt-3 max-w-xl text-slate-400">
+                Incoming buyer orders for your products will appear here.
+              </p>
+
+              <Link
+                href="/seller/products"
+                className="mt-8 inline-flex rounded-xl bg-cyan-400 px-6 py-4 font-black text-black hover:bg-cyan-300"
+              >
+                Manage Products
+              </Link>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1000px] text-left">
+                <thead className="border-b border-white/10 bg-black/30 text-sm text-slate-400">
+                  <tr>
+                    <th className="px-5 py-4">Order</th>
+                    <th className="px-5 py-4">Product</th>
+                    <th className="px-5 py-4">Buyer</th>
+                    <th className="px-5 py-4">Game</th>
+                    <th className="px-5 py-4">Total</th>
+                    <th className="px-5 py-4">Status</th>
+                    <th className="px-5 py-4">Created</th>
+                    <th className="px-5 py-4 text-right">Action</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filteredOrders.map((order) => {
+                    const product =
+                      order.product_id ? products[order.product_id] : null;
+                    const title =
+                      order.product_title ||
+                      order.product ||
+                      product?.title ||
+                      "Product";
+                    const buyer = order.buyer || order.buyer_id || "-";
+                    const game = order.game_name || product?.game_name || "-";
+                    const total = getOrderTotal(order, product);
+
+                    return (
+                      <tr
+                        key={order.id}
+                        className="border-b border-white/10 align-top transition hover:bg-white/[0.03]"
+                      >
+                        <td className="px-5 py-5">
+                          <p className="font-black">#{order.id}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Qty: {order.quantity || 1}
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-5">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="h-14 w-14 rounded-xl bg-cover bg-center"
+                              style={{
+                                backgroundImage: `url(${
+                                  product?.image_url || fallbackImage(title)
+                                })`,
+                              }}
+                            />
+
+                            <div>
+                              <p className="line-clamp-2 font-bold">{title}</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {order.category || product?.category || "Game Product"}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-5">
+                          <p className="max-w-[180px] truncate text-sm text-slate-300">
+                            {buyer}
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-5">
+                          <p className="max-w-[160px] truncate text-sm text-slate-300">
+                            {game}
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-5">
+                          <p className="font-black text-cyan-300">
+                            {formatPrice(total)}
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-5">
+                          <div className="space-y-2">
+                            <span
+                              className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${statusStyle(
+                                order.status
+                              )}`}
+                            >
+                              {prettyStatus(order.status)}
+                            </span>
+
+                            <span
+                              className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${statusStyle(
+                                order.payment_status
+                              )}`}
+                            >
+                              Pay: {prettyStatus(order.payment_status)}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-5">
+                          <p className="text-sm text-slate-400">
+                            {formatDate(order.created_at)}
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-5">
+                          <div className="flex justify-end gap-2">
+                            <Link
+                              href={`/order-success/${order.id}`}
+                              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-black/30 text-cyan-300 hover:border-cyan-400"
+                              title="View Order"
+                            >
+                              <FaEye />
+                            </Link>
+
+                            {!normalizeStatus(order.status).includes("completed") ? (
+                              <button
+                                onClick={() => markCompleted(order.id)}
+                                disabled={updatingId === order.id}
+                                className="inline-flex items-center justify-center rounded-xl bg-emerald-400 px-4 py-2 text-sm font-black text-black hover:bg-emerald-300 disabled:opacity-60"
+                              >
+                                {updatingId === order.id
+                                  ? "Updating..."
+                                  : "Complete"}
+                              </button>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </section>
     </main>
   );

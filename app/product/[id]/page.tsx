@@ -1,342 +1,373 @@
-"use client";
-
-import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import type { User } from "@supabase/supabase-js";
+import { notFound } from "next/navigation";
+import {
+  FaBolt,
+  FaBoxOpen,
+  FaCheckCircle,
+  FaClock,
+  FaComments,
+  FaGamepad,
+  FaGem,
+  FaShieldAlt,
+  FaShoppingCart,
+  FaStar,
+  FaStore,
+  FaTag,
+  FaUserShield,
+  FaWallet,
+} from "react-icons/fa";
 import { supabase } from "@/lib/supabase";
 
-type Product = Record<string, any>;
-
-type Profile = {
-  id: string;
-  email?: string | null;
-  username?: string | null;
-  avatar_url?: string | null;
-  role?: string | null;
+type PageProps = {
+  params: Promise<{
+    id: string;
+  }>;
 };
 
-function formatPrice(value: unknown) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
+function numberPrice(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
-function getProductTitle(product?: Product | null) {
-  return (
-    product?.title ||
-    product?.name ||
-    product?.product ||
-    product?.product_name ||
-    "Product"
-  );
+function formatPrice(value: string | number | null | undefined) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(numberPrice(value));
 }
 
-function getProductDescription(product?: Product | null) {
-  return (
-    product?.description ||
-    product?.details ||
-    product?.product_description ||
-    product?.short_description ||
-    "No description available."
-  );
+function fallbackImage(title: string) {
+  return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
+    title || "ComePlayers Product"
+  )}`;
 }
 
-function getProductPrice(product?: Product | null) {
-  return product?.price || product?.total_price || product?.amount || 0;
+function getCategoryIcon(category?: string | null) {
+  const value = (category || "").toLowerCase();
+
+  if (value.includes("coin")) return FaGem;
+  if (value.includes("account")) return FaGamepad;
+  if (value.includes("boost")) return FaBolt;
+  if (value.includes("top")) return FaWallet;
+  if (value.includes("item")) return FaBoxOpen;
+
+  return FaTag;
 }
 
-function getProductImage(product?: Product | null) {
-  return (
-    product?.image_url ||
-    product?.thumbnail_url ||
-    product?.image ||
-    product?.product_image ||
-    product?.main_image ||
-    null
-  );
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
-function getProductSellerId(product?: Product | null) {
-  return (
-    product?.seller_id ||
-    product?.user_id ||
-    product?.owner_id ||
-    product?.profile_id ||
-    null
-  );
-}
+export default async function ProductDetailPage({ params }: PageProps) {
+  const { id } = await params;
 
-function getSellerName(profile?: Profile | null) {
-  return profile?.username || profile?.email || "Seller";
-}
+  const productId = Number(id);
+  const productQueryKey = decodeURIComponent(id);
 
-function avatarLetter(profile?: Profile | null) {
-  return getSellerName(profile).slice(0, 1).toUpperCase();
-}
+  let productQuery = supabase
+    .from("products")
+    .select(`
+      id,
+      created_at,
+      title,
+      price,
+      seller,
+      seller_id,
+      seller_name,
+      description,
+      category,
+      slug,
+      image_url,
+      stock,
+      status,
+      category_id,
+      game_category_id,
+      game_name
+    `);
 
-export default function ProductDetailPage() {
-  const params = useParams();
-  const productId = Number(params?.id);
-
-  const [user, setUser] = useState<User | null>(null);
-  const [product, setProduct] = useState<Product | null>(null);
-  const [seller, setSeller] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [chatLoading, setChatLoading] = useState(false);
-
-  const sellerId = useMemo(() => getProductSellerId(product), [product]);
-  const title = useMemo(() => getProductTitle(product), [product]);
-  const description = useMemo(() => getProductDescription(product), [product]);
-  const price = useMemo(() => getProductPrice(product), [product]);
-  const image = useMemo(() => getProductImage(product), [product]);
-
-  async function loadProduct() {
-    setLoading(true);
-
-    const { data: authData } = await supabase.auth.getUser();
-    setUser(authData.user || null);
-
-    const { data: productData, error: productError } = await supabase
-      .from("products")
-      .select("*")
-      .eq("id", productId)
-      .maybeSingle();
-
-    if (productError) {
-      alert(productError.message);
-      setLoading(false);
-      return;
-    }
-
-    if (!productData) {
-      setProduct(null);
-      setLoading(false);
-      return;
-    }
-
-    setProduct(productData as Product);
-
-    const foundSellerId = getProductSellerId(productData);
-
-    if (foundSellerId) {
-      const { data: sellerData } = await supabase
-        .from("profiles")
-        .select("id,email,username,avatar_url,role")
-        .eq("id", foundSellerId)
-        .maybeSingle();
-
-      setSeller((sellerData || null) as Profile | null);
-    }
-
-    setLoading(false);
+  if (Number.isFinite(productId) && productId > 0) {
+    productQuery = productQuery.eq("id", productId);
+  } else {
+    productQuery = productQuery.eq("slug", productQueryKey);
   }
 
-  async function handleChatSeller() {
-    if (!product) return;
+  const { data: product } = await productQuery.maybeSingle();
 
-    const { data: authData, error: authError } = await supabase.auth.getUser();
-
-    if (authError || !authData.user) {
-      alert("Please login first using the Login / Signup button.");
-      return;
-    }
-
-    const currentUser = authData.user;
-    const currentSellerId = getProductSellerId(product);
-
-    if (!currentSellerId) {
-      alert("Seller ID not found for this product.");
-      return;
-    }
-
-    if (currentSellerId === currentUser.id) {
-      alert("You cannot chat with yourself on your own product.");
-      return;
-    }
-
-    setChatLoading(true);
-
-    const { data: existingRoom, error: existingError } = await supabase
-      .from("chat_rooms")
-      .select("*")
-      .eq("buyer_id", currentUser.id)
-      .eq("seller_id", currentSellerId)
-      .eq("product_id", productId)
-      .is("order_id", null)
-      .maybeSingle();
-
-    if (existingError) {
-      alert(existingError.message);
-      setChatLoading(false);
-      return;
-    }
-
-    if (existingRoom?.id) {
-      window.location.href = `/messages?room=${existingRoom.id}`;
-      return;
-    }
-
-    const firstMessage = `Halo kak, produk "${getProductTitle(product)}" masih tersedia?`;
-
-    const { data: newRoom, error: roomError } = await supabase
-      .from("chat_rooms")
-      .insert({
-        buyer_id: currentUser.id,
-        seller_id: currentSellerId,
-        product_id: productId,
-        order_id: null,
-        last_message: firstMessage,
-        last_message_at: new Date().toISOString(),
-      })
-      .select("*")
-      .single();
-
-    if (roomError) {
-      alert(roomError.message);
-      setChatLoading(false);
-      return;
-    }
-
-    const { error: messageError } = await supabase.from("chat_messages").insert({
-      room_id: newRoom.id,
-      sender_id: currentUser.id,
-      receiver_id: currentSellerId,
-      message: firstMessage,
-      is_read: false,
-    });
-
-    if (messageError) {
-      alert(messageError.message);
-      setChatLoading(false);
-      return;
-    }
-
-    window.location.href = `/messages?room=${newRoom.id}`;
+  if (!product || product.status !== "active") {
+    notFound();
   }
 
-  useEffect(() => {
-    if (!Number.isFinite(productId)) {
-      setLoading(false);
-      return;
-    }
-
-    loadProduct();
-  }, [productId]);
-
-  if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">Loading product...</p>
-      </main>
-    );
-  }
-
-  if (!product) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
-        <div className="max-w-md rounded-3xl border border-red-400/30 bg-red-400/10 p-8 text-center">
-          <h1 className="text-3xl font-black text-red-300">Product Not Found</h1>
-          <p className="mt-4 text-gray-300">This product does not exist or was removed.</p>
-          <Link
-            href="/"
-            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
-          >
-            Back to Marketplace
-          </Link>
-        </div>
-      </main>
-    );
-  }
+  const gameSlug = product.game_name ? slugify(product.game_name) : "";
+  const categorySlug = product.category ? slugify(product.category) : "";
+  const gameOffersHref = gameSlug
+    ? `/games/${gameSlug}/offers${categorySlug ? `?category=${categorySlug}` : ""}`
+    : "";
+  const CategoryIcon = getCategoryIcon(product.category);
+  const imageUrl = product.image_url || fallbackImage(product.title);
+  const sellerName = product.seller_name || product.seller || "Verified Seller";
+  const stock = Number(product.stock ?? 1);
 
   return (
-    <main className="min-h-screen bg-[#020617] text-white">
-      <section className="border-b border-white/10 px-6 py-10">
-        <div className="mx-auto max-w-7xl">
-          <Link href="/" className="text-sm font-black text-cyan-300 hover:text-cyan-200">
-            ← Back to Marketplace
-          </Link>
+    <main className="min-h-screen bg-[#050816] text-white">
+      <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_35%)]">
+        <div className="mx-auto max-w-7xl px-4 py-10">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
+            <Link href="/" className="hover:text-cyan-300">
+              Home
+            </Link>
+            <span>/</span>
 
-          <div className="mt-8 grid gap-8 lg:grid-cols-[520px_1fr]">
-            <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#0b1020]">
-              {image ? (
-                <img src={image} alt={title} className="h-[420px] w-full object-cover" />
-              ) : (
-                <div className="flex h-[420px] w-full items-center justify-center bg-cyan-400/5 text-7xl">
-                  🎮
+            {product.game_name ? (
+              <>
+                <Link
+                  href={`/games/${gameSlug}`}
+                  className="hover:text-cyan-300"
+                >
+                  {product.game_name}
+                </Link>
+                <span>/</span>
+              </>
+            ) : null}
+
+            <span className="text-cyan-300">{product.title}</span>
+          </div>
+
+          <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_420px]">
+            <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04]">
+              <div className="relative h-[420px] bg-black">
+                <Image
+                  src={imageUrl}
+                  alt={product.title}
+                  fill
+                  className="object-cover"
+                  unoptimized
+                />
+
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+
+                <div className="absolute left-5 top-5 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-xs font-black text-black">
+                    <CategoryIcon />
+                    {product.category || "Game Product"}
+                  </span>
+
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-4 py-2 text-xs font-black text-emerald-300">
+                    <FaShieldAlt />
+                    Secure
+                  </span>
                 </div>
-              )}
+              </div>
+
+              <div className="p-6">
+                <h1 className="text-4xl font-black leading-tight">
+                  {product.title}
+                </h1>
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {product.game_name ? (
+                    <Link
+                      href={gameOffersHref || `/games/${gameSlug}/offers`}
+                      className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200 hover:border-cyan-300"
+                    >
+                      {product.game_name}
+                    </Link>
+                  ) : null}
+
+                  <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
+                    Stock: {stock}
+                  </span>
+
+                  <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
+                    Fast Delivery
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-                Product Detail
-              </p>
+            <aside className="space-y-5">
+              <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-6">
+                <p className="text-sm font-bold text-cyan-200">Total Price</p>
 
-              <h1 className="mt-5 text-4xl font-black leading-tight md:text-6xl">
-                {title}
-              </h1>
-
-              <p className="mt-5 text-4xl font-black text-green-300">
-                {formatPrice(price)}
-              </p>
-
-              <p className="mt-5 max-w-2xl whitespace-pre-wrap leading-7 text-gray-300">
-                {description}
-              </p>
-
-              <div className="mt-8 rounded-3xl border border-white/10 bg-[#0b1020] p-5">
-                <p className="text-sm font-black uppercase tracking-widest text-gray-500">
-                  Seller
+                <p className="mt-2 text-4xl font-black text-cyan-300">
+                  {formatPrice(product.price)}
                 </p>
 
-                <div className="mt-4 flex items-center gap-4">
-                  <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-cyan-400 font-black text-black">
-                    {seller?.avatar_url ? (
-                      <img src={seller.avatar_url} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      avatarLetter(seller)
-                    )}
+                <div className="mt-6 space-y-3">
+                  <Link
+                    href={`/checkout/${product.id}`}
+                    className="flex w-full items-center justify-center gap-3 rounded-xl bg-cyan-400 px-5 py-4 font-black text-black transition hover:bg-cyan-300"
+                  >
+                    <FaShoppingCart />
+                    Buy Now
+                  </Link>
+
+                  <Link
+                    href={`/messages?seller=${product.seller_id || ""}&product=${product.id}`}
+                    className="flex w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-black/30 px-5 py-4 font-black text-white transition hover:border-cyan-400"
+                  >
+                    <FaComments />
+                    Chat Seller
+                  </Link>
+                </div>
+
+                <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                    <FaShieldAlt className="text-emerald-300" />
+                    <p className="mt-2 font-bold">Escrow Protected</p>
+                  </div>
+
+                  <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                    <FaClock className="text-yellow-300" />
+                    <p className="mt-2 font-bold">Fast Delivery</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+                <h2 className="flex items-center gap-2 text-xl font-black">
+                  <FaStore className="text-cyan-300" />
+                  Seller
+                </h2>
+
+                <div className="mt-5 flex items-center gap-4">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-cyan-400 text-xl font-black text-black">
+                    {sellerName.charAt(0).toUpperCase()}
                   </div>
 
                   <div>
-                    <p className="font-black">{getSellerName(seller)}</p>
-                    <p className="text-sm text-green-300">● Online</p>
+                    <p className="font-black">{sellerName}</p>
+                    <p className="mt-1 flex items-center gap-2 text-sm text-yellow-300">
+                      <FaStar /> 4.9 Seller Rating
+                    </p>
                   </div>
                 </div>
+
+                <div className="mt-5 space-y-3 text-sm text-slate-300">
+                  <p className="flex items-center gap-2">
+                    <FaCheckCircle className="text-emerald-300" />
+                    Verified marketplace seller
+                  </p>
+
+                  <p className="flex items-center gap-2">
+                    <FaUserShield className="text-cyan-300" />
+                    Protected by ComePlayers
+                  </p>
+                </div>
+
+                {product.seller_id ? (
+                  <Link
+                    href={`/seller-profile/${product.seller_id}`}
+                    className="mt-5 block rounded-xl border border-cyan-400/40 px-5 py-3 text-center font-black text-cyan-300 hover:bg-cyan-400 hover:text-black"
+                  >
+                    View Seller Profile
+                  </Link>
+                ) : null}
               </div>
+            </aside>
+          </div>
+        </div>
+      </section>
 
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <button
-                  onClick={handleChatSeller}
-                  disabled={chatLoading}
-                  className="h-14 rounded-2xl bg-cyan-400 px-8 font-black text-black hover:bg-cyan-300 disabled:opacity-60"
-                >
-                  {chatLoading ? "Opening Chat..." : "Chat Seller"}
-                </button>
+      <section className="mx-auto max-w-7xl px-4 py-10">
+        <div className="grid gap-8 lg:grid-cols-[1fr_360px]">
+          <div className="space-y-8">
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+              <h2 className="text-2xl font-black">Product Description</h2>
 
-                <Link
-                  href={`/checkout?product=${productId}`}
-                  className="inline-flex h-14 items-center justify-center rounded-2xl bg-green-400 px-8 font-black text-black hover:bg-green-300"
-                >
-                  Buy Now
-                </Link>
-
-                <Link
-                  href="/messages"
-                  className="inline-flex h-14 items-center justify-center rounded-2xl border border-white/10 px-8 font-black text-gray-200 hover:bg-white hover:text-black"
-                >
-                  Open Messages
-                </Link>
+              <div className="mt-5 whitespace-pre-line rounded-2xl border border-white/10 bg-black/30 p-5 leading-7 text-slate-300">
+                {product.description || "No description provided by seller."}
               </div>
+            </div>
 
-              {!user && (
-                <p className="mt-4 text-sm text-yellow-300">
-                  Login dulu untuk chat seller atau membeli produk.
-                </p>
-              )}
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+              <h2 className="text-2xl font-black">How It Works</h2>
+
+              <div className="mt-6 grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-400 text-black">
+                    <FaShoppingCart />
+                  </div>
+
+                  <h3 className="mt-4 font-black">1. Place Order</h3>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Buyer checks product details and starts checkout.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-yellow-400 text-black">
+                    <FaWallet />
+                  </div>
+
+                  <h3 className="mt-4 font-black">2. Payment Held</h3>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Payment is protected while seller delivers the item.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-400 text-black">
+                    <FaCheckCircle />
+                  </div>
+
+                  <h3 className="mt-4 font-black">3. Complete Safely</h3>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Buyer confirms delivery and transaction is completed.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
+
+          <aside className="space-y-6">
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+              <h3 className="text-xl font-black">Product Info</h3>
+
+              <div className="mt-5 space-y-4 text-sm">
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-slate-400">Category</span>
+                  <span className="font-bold">{product.category || "-"}</span>
+                </div>
+
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-slate-400">Game</span>
+                  <span className="font-bold">{product.game_name || "-"}</span>
+                </div>
+
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-slate-400">Stock</span>
+                  <span className="font-bold">{stock}</span>
+                </div>
+
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-slate-400">Status</span>
+                  <span className="font-bold text-emerald-300">Active</span>
+                </div>
+
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Product ID</span>
+                  <span className="font-bold">#{product.id}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-emerald-400/20 bg-emerald-400/10 p-6">
+              <h3 className="text-xl font-black text-emerald-200">
+                Buyer Protection
+              </h3>
+
+              <p className="mt-3 text-sm leading-6 text-slate-300">
+                Your payment is protected through ComePlayers marketplace flow.
+                Always complete transactions inside ComePlayers.
+              </p>
+            </div>
+          </aside>
         </div>
       </section>
     </main>

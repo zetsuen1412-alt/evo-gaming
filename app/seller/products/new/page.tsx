@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
@@ -30,15 +31,6 @@ type GameMaster = {
   image_url: string | null;
 };
 
-type CategoryGameMasterRow = {
-  id: number;
-  category_id: number;
-  game_master_id: number;
-  status: string | null;
-  sort_order: number | null;
-  game_master: GameMaster | null;
-};
-
 function createSlug(value: string) {
   return value
     .toLowerCase()
@@ -49,6 +41,9 @@ function createSlug(value: string) {
 }
 
 export default function ProductUploadV3Page() {
+  const searchParams = useSearchParams();
+  const requestedGameSlug = searchParams.get("game") || "";
+  const requestedCategoryValue = searchParams.get("category") || "";
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
 
@@ -56,7 +51,6 @@ export default function ProductUploadV3Page() {
   const [games, setGames] = useState<GameMaster[]>([]);
 
   const [loading, setLoading] = useState(true);
-  const [gameLoading, setGameLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [title, setTitle] = useState("");
@@ -86,12 +80,6 @@ export default function ProductUploadV3Page() {
   useEffect(() => {
     initializePage();
   }, []);
-
-  useEffect(() => {
-    if (selectedCategoryId) {
-      loadMappedGames(Number(selectedCategoryId));
-    }
-  }, [selectedCategoryId]);
 
   async function initializePage() {
     try {
@@ -140,22 +128,51 @@ export default function ProductUploadV3Page() {
 
       setProfile(profileData);
 
-      const { data: categoryData, error: categoryError } = await supabase
-        .from("categories")
-        .select("*")
-        .order("id", { ascending: true });
+      const [categoryResult, gameResult] = await Promise.all([
+        supabase.from("categories").select("*").order("id", { ascending: true }),
+        supabase
+          .from("game_master")
+          .select("id,name,slug,first_letter,status,image_url")
+          .eq("status", "active")
+          .order("name", { ascending: true }),
+      ]);
 
-      if (categoryError) {
-        alert(categoryError.message);
+      if (categoryResult.error) {
+        alert(categoryResult.error.message);
         setLoading(false);
         return;
       }
 
-      const activeCategories = categoryData || [];
+      if (gameResult.error) {
+        alert(gameResult.error.message);
+        setLoading(false);
+        return;
+      }
+
+      const activeCategories = categoryResult.data || [];
+      const activeGames = gameResult.data || [];
+
       setCategories(activeCategories);
+      setGames(activeGames);
 
       if (activeCategories.length > 0) {
-        setSelectedCategoryId(String(activeCategories[0].id));
+        const normalizedRequest = requestedCategoryValue.toLowerCase();
+        const requestedCategory = activeCategories.find((category) => {
+          return (
+            category.slug.toLowerCase() === normalizedRequest ||
+            category.name.toLowerCase() === normalizedRequest
+          );
+        });
+
+        setSelectedCategoryId(String((requestedCategory || activeCategories[0]).id));
+      }
+
+      if (activeGames.length > 0) {
+        const requestedGame = activeGames.find(
+          (game) => game.slug.toLowerCase() === requestedGameSlug.toLowerCase()
+        );
+
+        setSelectedGameId(String((requestedGame || activeGames[0]).id));
       }
 
       setLoading(false);
@@ -164,57 +181,6 @@ export default function ProductUploadV3Page() {
       alert("Failed to load product upload page.");
       setLoading(false);
     }
-  }
-
-  async function loadMappedGames(categoryId: number) {
-    setGameLoading(true);
-    setGames([]);
-    setSelectedGameId("");
-
-    const { data, error } = await supabase
-      .from("category_game_master")
-      .select(
-        `
-        id,
-        category_id,
-        game_master_id,
-        status,
-        sort_order,
-        game_master:game_master_id (
-          id,
-          name,
-          slug,
-          first_letter,
-          status,
-          image_url
-        )
-      `
-      )
-      .eq("category_id", categoryId)
-      .eq("status", "active")
-      .order("sort_order", { ascending: true });
-
-    if (error) {
-      alert(error.message);
-      setGameLoading(false);
-      return;
-    }
-
-    const rows = (data || []) as unknown as CategoryGameMasterRow[];
-
-    const mappedGames = rows
-      .map((row) => row.game_master)
-      .filter((game): game is GameMaster => Boolean(game))
-      .filter((game) => game.status === "active")
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    setGames(mappedGames);
-
-    if (mappedGames.length > 0) {
-      setSelectedGameId(String(mappedGames[0].id));
-    }
-
-    setGameLoading(false);
   }
 
   async function submitProduct(event: React.FormEvent) {
@@ -298,7 +264,7 @@ export default function ProductUploadV3Page() {
     }
 
     alert("Product created successfully.");
-    window.location.href = `/categories/${selectedCategory.slug}/${selectedGame.slug}-${selectedCategory.slug}`;
+    window.location.href = `/games/${selectedGame.slug}/offers?category=${encodeURIComponent(selectedCategory.name)}`;
   }
 
   if (loading) {
@@ -327,7 +293,7 @@ export default function ProductUploadV3Page() {
             </h1>
 
             <p className="mt-5 max-w-2xl text-gray-300">
-              Select category and game from ComePlayers Game Master catalog.
+              Select a marketplace category and any active game from the unified ComePlayers Game Master catalog.
             </p>
           </div>
 
@@ -375,13 +341,11 @@ export default function ProductUploadV3Page() {
               <select
                 value={selectedGameId}
                 onChange={(event) => setSelectedGameId(event.target.value)}
-                disabled={gameLoading || games.length === 0}
+                disabled={games.length === 0}
                 className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400 disabled:opacity-60"
               >
-                {gameLoading ? (
-                  <option value="">Loading games...</option>
-                ) : games.length === 0 ? (
-                  <option value="">No games mapped to this category</option>
+                {games.length === 0 ? (
+                  <option value="">No active games found</option>
                 ) : (
                   games.map((game) => (
                     <option key={game.id} value={game.id}>
@@ -550,9 +514,9 @@ export default function ProductUploadV3Page() {
             <h3 className="font-black">Listing Path</h3>
 
             <p className="mt-2 break-words text-sm text-gray-400">
-              /categories/{selectedCategory?.slug || "category"}/
-              {selectedGame?.slug || "game"}-
-              {selectedCategory?.slug || "category"}
+              /games/{selectedGame?.slug || "game"}/offers?category={encodeURIComponent(
+                selectedCategory?.name || "category",
+              )}
             </p>
           </div>
         </aside>

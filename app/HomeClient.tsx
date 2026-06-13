@@ -107,7 +107,7 @@ export default function Home() {
             <h2 className="text-4xl font-black">Select Categories</h2>
 
             <p className="mt-2 text-gray-300">
-              Explore trusted gaming products by category.
+              Explore trusted games by marketplace category.
             </p>
           </div>
         </div>
@@ -125,7 +125,7 @@ export default function Home() {
             {filteredCategories.map((category) => (
               <Link
                 key={category.id}
-                href={`/categories/${category.slug}`}
+                href={`/games?category=${encodeURIComponent(category.slug)}`}
                 className="group rounded-3xl border border-white/10 bg-white/[0.055] p-6 shadow-2xl shadow-black/30 backdrop-blur transition hover:-translate-y-1 hover:border-cyan-400 hover:bg-cyan-950/20"
               >
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-2xl">
@@ -136,7 +136,7 @@ export default function Home() {
                   {category.name}
                 </h3>
 
-                <p className="mt-2 text-gray-400">Explore products</p>
+                <p className="mt-2 text-gray-400">Browse games</p>
               </Link>
             ))}
           </div>

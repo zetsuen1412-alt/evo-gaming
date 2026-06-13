@@ -1,552 +1,478 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { User } from "@supabase/supabase-js";
+import { useEffect, useMemo, useState } from "react";
+import {
+  FaBoxOpen,
+  FaClock,
+  FaCreditCard,
+  FaFilter,
+  FaReceipt,
+  FaSearch,
+  FaShieldAlt,
+  FaShoppingBag,
+  FaStore,
+} from "react-icons/fa";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
   id: number;
-  buyer_id: string | null;
-  buyer: string | null;
-  seller_id: string | null;
-  product_id: number | null;
-  product: string | null;
-  price: string | number | null;
-  quantity: number | null;
-  total_price: string | number | null;
-  category_id: number | null;
-  category_name: string | null;
-  game_master_id: number | null;
-  game_name: string | null;
-  status: string | null;
-  payment_proof: string | null;
-  payment_image: string | null;
-  created_at: string;
+  created_at?: string | null;
+  product?: string | null;
+  buyer?: string | null;
+  price?: string | number | null;
+  status?: string | null;
+  payment_proof?: string | null;
+  product_id?: number | null;
+  buyer_id?: string | null;
+  seller_id?: string | null;
+  quantity?: number | null;
+  total_amount?: string | number | null;
+  total_price?: string | number | null;
+  payment_status?: string | null;
+  product_title?: string | null;
+  seller_name?: string | null;
+  game_name?: string | null;
+  category?: string | null;
 };
 
-const orderStatuses = [
-  "all",
-  "Pending Payment",
-  "Payment Verification",
-  "Processing",
-  "Completed",
-  "Cancelled",
+type Product = {
+  id: number;
+  title?: string | null;
+  image_url?: string | null;
+  price?: string | number | null;
+  game_name?: string | null;
+  category?: string | null;
+  seller_name?: string | null;
+};
+
+type ProductMap = Record<number, Product>;
+
+const FILTERS = [
+  { label: "All Orders", value: "all" },
+  { label: "Pending", value: "pending" },
+  { label: "Waiting Payment", value: "waiting_payment" },
+  { label: "Paid", value: "paid" },
+  { label: "Completed", value: "completed" },
+  { label: "Cancelled", value: "cancelled" },
 ];
 
-function normalizeStatus(status: string | null) {
-  if (status === "pending") return "Pending Payment";
-  if (status === "pending_payment") return "Pending Payment";
-  if (status === "Menunggu Pembayaran") return "Pending Payment";
-  if (status === "Menunggu Cek Pembayaran") return "Payment Verification";
-  if (status === "Diproses") return "Processing";
-  if (status === "Selesai") return "Completed";
-  if (status === "Dibatalkan") return "Cancelled";
-  return status || "Pending Payment";
+function numberPrice(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
-function getStatusClass(status: string | null) {
-  const normalizedStatus = normalizeStatus(status);
-
-  if (normalizedStatus === "Completed") {
-    return "border-green-400/20 bg-green-400/10 text-green-300";
-  }
-
-  if (normalizedStatus === "Processing") {
-    return "border-blue-400/20 bg-blue-400/10 text-blue-300";
-  }
-
-  if (normalizedStatus === "Cancelled") {
-    return "border-red-400/20 bg-red-400/10 text-red-300";
-  }
-
-  if (normalizedStatus === "Payment Verification") {
-    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
-  }
-
-  return "border-cyan-400/20 bg-cyan-400/10 text-cyan-300";
+function formatPrice(value: string | number | null | undefined) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(numberPrice(value));
 }
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
+function getOrderTotal(order: Order, product?: Product | null) {
+  return (
+    numberPrice(order.total_amount) ||
+    numberPrice(order.total_price) ||
+    numberPrice(order.price) ||
+    numberPrice(product?.price)
+  );
 }
 
-export default function MyOrdersV3Page() {
-  const [user, setUser] = useState<User | null>(null);
+function fallbackImage(title: string) {
+  return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
+    title || "Order"
+  )}`;
+}
+
+function normalizeStatus(value?: string | null) {
+  return String(value || "pending").toLowerCase();
+}
+
+function statusStyle(status?: string | null) {
+  const value = normalizeStatus(status);
+
+  if (value.includes("complete")) {
+    return "border-emerald-400/40 bg-emerald-400/10 text-emerald-300";
+  }
+
+  if (value.includes("paid")) {
+    return "border-cyan-400/40 bg-cyan-400/10 text-cyan-300";
+  }
+
+  if (value.includes("waiting")) {
+    return "border-yellow-400/40 bg-yellow-400/10 text-yellow-300";
+  }
+
+  if (value.includes("cancel")) {
+    return "border-red-400/40 bg-red-400/10 text-red-300";
+  }
+
+  return "border-slate-400/30 bg-slate-400/10 text-slate-300";
+}
+
+function prettyStatus(status?: string | null) {
+  return String(status || "pending")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("id-ID", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+export default function MyOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
+  const [products, setProducts] = useState<ProductMap>({});
+  const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [messagingOrderId, setMessagingOrderId] = useState<number | null>(null);
-
-  const [activeStatus, setActiveStatus] = useState("all");
-  const [search, setSearch] = useState("");
-
-  const filteredOrders = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return orders.filter((order) => {
-      const normalizedStatus = normalizeStatus(order.status);
-      const matchesStatus =
-        activeStatus === "all" || normalizedStatus === activeStatus;
-
-      const matchesSearch =
-        !query ||
-        (order.product || "").toLowerCase().includes(query) ||
-        (order.category_name || "").toLowerCase().includes(query) ||
-        (order.game_name || "").toLowerCase().includes(query) ||
-        String(order.id).includes(query);
-
-      return matchesStatus && matchesSearch;
-    });
-  }, [orders, activeStatus, search]);
-
-  const pendingPaymentCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Pending Payment"
-  ).length;
-
-  const verificationCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Payment Verification"
-  ).length;
-
-  const processingCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Processing"
-  ).length;
-
-  const completedCount = orders.filter(
-    (order) => normalizeStatus(order.status) === "Completed"
-  ).length;
-
-  const totalSpent = orders
-    .filter((order) => normalizeStatus(order.status) === "Completed")
-    .reduce(
-      (sum, order) => sum + Number(order.total_price || order.price || 0),
-      0
-    );
+  const [userId, setUserId] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     async function loadOrders() {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
+      setLoading(true);
+      setError("");
 
-      if (userError) {
-        alert(userError.message);
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUser = authData.user;
+
+      if (!currentUser) {
+        setUserId(null);
+        setOrders([]);
+        setProducts({});
         setLoading(false);
         return;
       }
 
-      if (!userData.user) {
-        setUser(null);
-        setLoading(false);
-        return;
-      }
+      setUserId(currentUser.id);
 
-      setUser(userData.user);
-
-      const { data, error } = await supabase
+      const { data: orderData, error: orderError } = await supabase
         .from("orders")
         .select("*")
-        .or(`buyer_id.eq.${userData.user.id},buyer.eq.${userData.user.email}`)
-        .order("id", { ascending: false });
+        .or(`buyer_id.eq.${currentUser.id},buyer.eq.${currentUser.email}`)
+        .order("created_at", { ascending: false });
 
-      if (error) {
-        alert(error.message);
+      if (orderError) {
+        setError(orderError.message);
+        setOrders([]);
+        setProducts({});
         setLoading(false);
         return;
       }
 
-      setOrders(data || []);
+      const safeOrders = orderData || [];
+      setOrders(safeOrders);
+
+      const productIds = Array.from(
+        new Set(
+          safeOrders
+            .map((order) => order.product_id)
+            .filter((id): id is number => typeof id === "number")
+        )
+      );
+
+      if (productIds.length > 0) {
+        const { data: productData } = await supabase
+          .from("products")
+          .select(`
+            id,
+            title,
+            image_url,
+            price,
+            game_name,
+            category,
+            seller_name
+          `)
+          .in("id", productIds);
+
+        const map: ProductMap = {};
+
+        (productData || []).forEach((product) => {
+          map[product.id] = product;
+        });
+
+        setProducts(map);
+      } else {
+        setProducts({});
+      }
+
       setLoading(false);
     }
 
     loadOrders();
   }, []);
 
-  async function handleMessageSeller(order: Order) {
-    if (!user) return;
+  const filteredOrders = useMemo(() => {
+    let list = [...orders];
 
-    if (!order.buyer_id || !order.seller_id) {
-      alert("Buyer or seller not found.");
-      return;
+    if (filter !== "all") {
+      list = list.filter((order) => {
+        const orderStatus = normalizeStatus(order.status);
+        const paymentStatus = normalizeStatus(order.payment_status);
+
+        return orderStatus === filter || paymentStatus === filter;
+      });
     }
 
-    const isBuyer = order.buyer_id === user.id || order.buyer === user.email;
+    if (query.trim()) {
+      const q = query.toLowerCase();
 
-    if (!isBuyer) {
-      alert("You are not allowed to message this seller.");
-      return;
+      list = list.filter((order) => {
+        const product = order.product_id ? products[order.product_id] : null;
+
+        return `${order.id} ${order.product || ""} ${order.product_title || ""} ${
+          product?.title || ""
+        } ${order.game_name || ""} ${product?.game_name || ""} ${
+          order.seller_name || ""
+        } ${product?.seller_name || ""}`
+          .toLowerCase()
+          .includes(q);
+      });
     }
 
-    if (order.seller_id === user.id) {
-      alert("You cannot message yourself.");
-      return;
-    }
-
-    try {
-      setMessagingOrderId(order.id);
-
-      const { data: existingRoom, error: existingRoomError } = await supabase
-        .from("chat_rooms")
-        .select("*")
-        .eq("buyer_id", order.buyer_id)
-        .eq("seller_id", order.seller_id)
-        .eq("order_id", order.id)
-        .maybeSingle();
-
-      if (existingRoomError) {
-        alert(existingRoomError.message);
-        setMessagingOrderId(null);
-        return;
-      }
-
-      let roomId = existingRoom?.id;
-
-      if (!existingRoom) {
-        const { data: createdRoom, error: createRoomError } = await supabase
-          .from("chat_rooms")
-          .insert({
-            buyer_id: order.buyer_id,
-            seller_id: order.seller_id,
-            product_id: order.product_id,
-            order_id: order.id,
-            last_message: `Started conversation about order #${order.id}`,
-            last_message_at: new Date().toISOString(),
-          })
-          .select()
-          .single();
-
-        if (createRoomError) {
-          alert(createRoomError.message);
-          setMessagingOrderId(null);
-          return;
-        }
-
-        roomId = createdRoom.id;
-      }
-
-      window.location.href = `/messages?room=${roomId}`;
-    } catch (error) {
-      console.error("Message seller error:", error);
-      alert("Failed to open seller chat.");
-      setMessagingOrderId(null);
-    }
-  }
+    return list;
+  }, [orders, products, filter, query]);
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">
-          Loading your orders...
-        </p>
+      <main className="min-h-screen bg-[#050816] px-4 py-20 text-center text-white">
+        Loading your orders...
       </main>
     );
   }
 
-  if (!user) {
+  if (!userId) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
-        <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
-          <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
+      <main className="min-h-screen bg-[#050816] text-white">
+        <section className="mx-auto max-w-4xl px-4 py-24 text-center">
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-cyan-400/30 bg-cyan-400/10">
+            <FaShoppingBag className="text-4xl text-cyan-300" />
+          </div>
 
-          <p className="mt-4 text-gray-400">
-            Please login first to view your orders.
+          <h1 className="mt-8 text-5xl font-black">My Orders</h1>
+
+          <p className="mx-auto mt-4 max-w-xl text-slate-300">
+            Please login to view your purchases and marketplace order history.
           </p>
 
           <Link
             href="/"
-            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
+            className="mt-8 inline-flex rounded-xl bg-cyan-400 px-6 py-4 font-black text-black hover:bg-cyan-300"
           >
-            Back to Home
+            Back Home
           </Link>
-        </div>
+        </section>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#020617] text-white">
-      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
-
-        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
-          <div>
-            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Buyer Dashboard
-            </p>
-
-            <h1 className="text-5xl font-black md:text-7xl">My Orders</h1>
-
-            <p className="mt-5 max-w-2xl text-gray-300">
-              Track your purchases, payment status, and delivery progress.
-            </p>
-
-            <p className="mt-3 text-sm text-gray-500">
-              Logged in as {user.email}
-            </p>
+    <main className="min-h-screen bg-[#050816] text-white">
+      <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.16),transparent_35%)]">
+        <div className="mx-auto max-w-7xl px-4 py-10">
+          <div className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-5 py-2 text-sm font-black text-cyan-200">
+            Purchase Center
           </div>
 
-          <Link
-            href="/"
-            className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-          >
-            Browse Products
-          </Link>
+          <h1 className="mt-8 text-5xl font-black">My Orders</h1>
+
+          <p className="mt-3 max-w-2xl text-slate-300">
+            Track your purchases, payment status, seller delivery, and order
+            history inside ComePlayers.
+          </p>
         </div>
       </section>
 
-      <section className="px-8 py-10">
-        <div className="mb-8 grid gap-5 md:grid-cols-5">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Total Orders</p>
-            <p className="mt-2 text-3xl font-black text-cyan-300">
-              {orders.length}
-            </p>
-          </div>
+      <section className="mx-auto max-w-7xl px-4 py-10">
+        <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+          <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
+            <div className="relative">
+              <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Pending Payment</p>
-            <p className="mt-2 text-3xl font-black text-cyan-300">
-              {pendingPaymentCount}
-            </p>
-          </div>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search by order, product, seller, or game..."
+                className="w-full rounded-xl border border-white/10 bg-black/40 px-11 py-4 text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
+              />
+            </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Verification</p>
-            <p className="mt-2 text-3xl font-black text-yellow-300">
-              {verificationCount}
-            </p>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Processing</p>
-            <p className="mt-2 text-3xl font-black text-blue-300">
-              {processingCount}
-            </p>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Completed Spent</p>
-            <p className="mt-2 text-2xl font-black text-green-300">
-              {formatPrice(totalSpent)}
-            </p>
-          </div>
-        </div>
-
-        <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
-          <input
-            type="text"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search by product, category, game, or order ID..."
-            className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
-          />
-
-          <div className="flex flex-wrap gap-3">
-            {orderStatuses.map((status) => (
-              <button
-                key={status}
-                onClick={() => setActiveStatus(status)}
-                className={`rounded-full px-5 py-3 text-sm font-bold transition ${
-                  activeStatus === status
-                    ? "bg-cyan-400 text-black"
-                    : "border border-white/10 bg-white/[0.04] text-gray-300 hover:border-cyan-400 hover:text-white"
-                }`}
-              >
-                {status === "all" ? "All" : status}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {filteredOrders.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-10 text-center">
-            <h2 className="text-3xl font-black">No orders found.</h2>
-
-            <p className="mt-3 text-gray-400">
-              You do not have any orders with this filter yet.
-            </p>
-
-            <Link
-              href="/"
-              className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
+            <select
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              className="rounded-xl border border-white/10 bg-black/40 px-4 py-4 text-white outline-none focus:border-cyan-400"
             >
-              Browse Products
-            </Link>
+              {FILTERS.map((item) => (
+                <option key={item.value} value={item.value} className="bg-[#050816]">
+                  {item.label}
+                </option>
+              ))}
+            </select>
           </div>
-        ) : (
-          <div className="grid gap-6">
-            {filteredOrders.map((order) => {
-              const normalizedStatus = normalizeStatus(order.status);
-              const totalPrice = Number(order.total_price || order.price || 0);
 
-              const canPay =
-                normalizedStatus === "Pending Payment" ||
-                normalizedStatus === "Payment Verification";
+          <div className="mt-5 flex items-center gap-2 text-sm text-slate-400">
+            <FaFilter className="text-cyan-300" />
+            Showing {filteredOrders.length} of {orders.length} orders
+          </div>
+        </div>
 
-              const canReview = normalizedStatus === "Completed";
+        {error ? (
+          <div className="mt-6 rounded-2xl border border-red-400/30 bg-red-400/10 p-5 text-red-200">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="mt-8 space-y-5">
+          {filteredOrders.length === 0 ? (
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-12 text-center">
+              <FaBoxOpen className="mx-auto text-5xl text-cyan-300" />
+
+              <h2 className="mt-6 text-3xl font-black">No orders found</h2>
+
+              <p className="mx-auto mt-3 max-w-xl text-slate-400">
+                Your orders will appear here after you buy a product from
+                ComePlayers marketplace.
+              </p>
+
+              <Link
+                href="/games"
+                className="mt-8 inline-flex rounded-xl bg-cyan-400 px-6 py-4 font-black text-black hover:bg-cyan-300"
+              >
+                Browse Games
+              </Link>
+            </div>
+          ) : (
+            filteredOrders.map((order) => {
+              const product = order.product_id ? products[order.product_id] : null;
+              const title =
+                order.product_title || order.product || product?.title || "Product";
+              const seller =
+                order.seller_name || product?.seller_name || "Verified Seller";
+              const game = order.game_name || product?.game_name || "-";
+              const category = order.category || product?.category || "Game Product";
+              const total = getOrderTotal(order, product);
+              const image = product?.image_url || fallbackImage(title);
 
               return (
                 <div
                   key={order.id}
-                  className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30"
+                  className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04] transition hover:border-cyan-400/50"
                 >
-                  <div className="grid gap-6 xl:grid-cols-[1fr_260px]">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <h2 className="text-2xl font-black">
-                          {order.product || "Unknown Product"}
-                        </h2>
+                  <div className="grid gap-0 lg:grid-cols-[260px_1fr_260px]">
+                    <div
+                      className="min-h-56 bg-cover bg-center"
+                      style={{ backgroundImage: `url(${image})` }}
+                    />
 
+                    <div className="p-6">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span
-                          className={`rounded-full border px-3 py-1 text-xs font-black ${getStatusClass(
+                          className={`rounded-full border px-4 py-1 text-xs font-black ${statusStyle(
                             order.status
                           )}`}
                         >
-                          {normalizedStatus}
+                          {prettyStatus(order.status)}
+                        </span>
+
+                        <span
+                          className={`rounded-full border px-4 py-1 text-xs font-black ${statusStyle(
+                            order.payment_status
+                          )}`}
+                        >
+                          Payment: {prettyStatus(order.payment_status)}
                         </span>
                       </div>
 
-                      <p className="mt-3 text-3xl font-black text-cyan-300">
-                        {formatPrice(totalPrice)}
-                      </p>
+                      <h2 className="mt-4 text-2xl font-black">{title}</h2>
 
-                      <div className="mt-5 grid gap-4 md:grid-cols-2">
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Order ID</p>
-                          <p className="mt-1 font-bold">#{order.id}</p>
-                        </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <span className="rounded-full bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200">
+                          {category}
+                        </span>
 
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Category</p>
-                          <p className="mt-1 font-bold">
-                            {order.category_name || "-"}
-                          </p>
-                        </div>
+                        <span className="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-300">
+                          {game}
+                        </span>
 
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Game</p>
-                          <p className="mt-1 font-bold">
-                            {order.game_name || "-"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Quantity</p>
-                          <p className="mt-1 font-bold">
-                            {order.quantity || 1}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Created</p>
-                          <p className="mt-1 font-bold">
-                            {order.created_at
-                              ? new Date(order.created_at).toLocaleString()
-                              : "-"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Seller ID</p>
-                          <p className="mt-1 break-words font-bold">
-                            {order.seller_id || "-"}
-                          </p>
-                        </div>
+                        <span className="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-300">
+                          Qty: {order.quantity || 1}
+                        </span>
                       </div>
 
-                      {order.payment_proof && (
-                        <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
-                          <p className="text-sm font-black text-cyan-300">
-                            Payment Details
-                          </p>
+                      <div className="mt-5 grid gap-3 text-sm text-slate-300 md:grid-cols-2">
+                        <p className="flex items-center gap-2">
+                          <FaReceipt className="text-cyan-300" />
+                          Order #{order.id}
+                        </p>
 
-                          <p className="mt-3 whitespace-pre-line text-sm leading-6 text-gray-300">
-                            {order.payment_proof}
-                          </p>
-                        </div>
-                      )}
+                        <p className="flex items-center gap-2">
+                          <FaStore className="text-cyan-300" />
+                          {seller}
+                        </p>
 
-                      {order.payment_image && (
-                        <div className="mt-5">
-                          <p className="mb-3 font-bold text-cyan-300">
-                            Payment Proof Image
-                          </p>
+                        <p className="flex items-center gap-2">
+                          <FaClock className="text-yellow-300" />
+                          {formatDate(order.created_at)}
+                        </p>
 
-                          <a
-                            href={order.payment_image}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-block"
-                          >
-                            <img
-                              src={order.payment_image}
-                              alt="Payment Proof"
-                              className="h-40 w-72 rounded-xl border border-white/10 object-cover transition hover:scale-105"
-                            />
-                          </a>
-                        </div>
-                      )}
+                        <p className="flex items-center gap-2">
+                          <FaShieldAlt className="text-emerald-300" />
+                          Protected transaction
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="flex flex-col gap-3">
-                      {canPay && (
+                    <div className="border-t border-white/10 p-6 lg:border-l lg:border-t-0">
+                      <p className="text-sm text-slate-400">Total</p>
+                      <p className="mt-2 text-3xl font-black text-cyan-300">
+                        {formatPrice(total)}
+                      </p>
+
+                      <div className="mt-6 space-y-3">
                         <Link
-                          href={`/payment?order=${order.id}`}
-                          className="rounded-2xl bg-cyan-400 px-5 py-3 text-center font-black text-black transition hover:bg-cyan-300"
+                          href={`/order-success/${order.id}`}
+                          className="flex items-center justify-center gap-2 rounded-xl bg-cyan-400 px-5 py-3 font-black text-black hover:bg-cyan-300"
                         >
-                          Continue Payment
+                          <FaReceipt />
+                          View Order
                         </Link>
-                      )}
 
-                      <button
-                        onClick={() => handleMessageSeller(order)}
-                        disabled={messagingOrderId === order.id || !order.seller_id}
-                        className="rounded-2xl border border-yellow-400 px-5 py-3 font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {messagingOrderId === order.id
-                          ? "Opening Chat..."
-                          : "💬 Message Seller"}
-                      </button>
+                        {product?.id ? (
+                          <Link
+                            href={`/product/${product.id}`}
+                            className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/30 px-5 py-3 font-black text-white hover:border-cyan-400"
+                          >
+                            <FaShoppingBag />
+                            Product
+                          </Link>
+                        ) : null}
 
-                      {order.product_id && (
-                        <Link
-                          href={`/product/${order.product_id}`}
-                          className="rounded-2xl border border-cyan-400/40 px-5 py-3 text-center font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-                        >
-                          View Product
-                        </Link>
-                      )}
-
-                      <Link
-                        href={`/order/${order.id}`}
-                        className="rounded-2xl border border-white/10 px-5 py-3 text-center font-black text-white transition hover:bg-white hover:text-black"
-                      >
-                        View Order Detail
-                      </Link>
-
-                      {canReview && (
-                        <Link
-                          href={`/review/${order.id}`}
-                          className="rounded-2xl bg-yellow-400 px-5 py-3 text-center font-black text-black transition hover:bg-yellow-300"
-                        >
-                          Leave Review
-                        </Link>
-                      )}
-
-                      <button
-                        onClick={() =>
-                          alert("Support chat will be connected later.")
-                        }
-                        className="rounded-2xl border border-white/10 px-5 py-3 font-black text-gray-300 transition hover:bg-white hover:text-black"
-                      >
-                        Contact Support
-                      </button>
+                        {normalizeStatus(order.payment_status) !== "paid" &&
+                        normalizeStatus(order.status) !== "paid" ? (
+                          <Link
+                            href={`/payment/${order.id}`}
+                            className="flex items-center justify-center gap-2 rounded-xl border border-yellow-400/40 bg-yellow-400/10 px-5 py-3 font-black text-yellow-200 hover:bg-yellow-400 hover:text-black"
+                          >
+                            <FaCreditCard />
+                            Pay Now
+                          </Link>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </div>
               );
-            })}
-          </div>
-        )}
+            })
+          )}
+        </div>
       </section>
     </main>
   );

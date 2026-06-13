@@ -36,7 +36,7 @@ type Stats = {
   pendingSellers: number;
   products: number;
   games: number;
-  mappings: number;
+  categories: number;
   orders: number;
   disputes: number;
   revenue: number;
@@ -70,7 +70,7 @@ export default function AdminDashboardV4Page() {
     pendingSellers: 0,
     products: 0,
     games: 0,
-    mappings: 0,
+    categories: 0,
     orders: 0,
     disputes: 0,
     revenue: 0,
@@ -146,11 +146,11 @@ export default function AdminDashboardV4Page() {
         bg: "bg-blue-400/10",
       },
       {
-        title: "Category Mapping",
-        description: "Map games into marketplace categories.",
+        title: "Marketplace Categories",
+        description: "Unified category filters now use all active Game Master entries.",
         href: "/admin/category-mapping",
-        value: stats.mappings,
-        label: "mappings",
+        value: stats.categories,
+        label: "categories",
         accent: "text-pink-300",
         border: "border-pink-400/20",
         bg: "bg-pink-400/10",
@@ -216,7 +216,7 @@ export default function AdminDashboardV4Page() {
       ordersResult,
       applicationsResult,
       gamesResult,
-      mappingsResult,
+      categoriesResult,
       disputesResult,
     ] = await Promise.all([
       supabase.from("profiles").select("*"),
@@ -227,7 +227,7 @@ export default function AdminDashboardV4Page() {
         .select("*")
         .order("id", { ascending: false }),
       supabase.from("game_master").select("*"),
-      supabase.from("category_game_master").select("*"),
+      supabase.from("categories").select("*"),
       supabase
         .from("disputes")
         .select("*")
@@ -239,7 +239,7 @@ export default function AdminDashboardV4Page() {
     if (ordersResult.error) alert(ordersResult.error.message);
     if (applicationsResult.error) alert(applicationsResult.error.message);
     if (gamesResult.error) alert(gamesResult.error.message);
-    if (mappingsResult.error) alert(mappingsResult.error.message);
+    if (categoriesResult.error) alert(categoriesResult.error.message);
     if (disputesResult.error) alert(disputesResult.error.message);
 
     const profiles = profilesResult.data || [];
@@ -247,7 +247,7 @@ export default function AdminDashboardV4Page() {
     const orders = ordersResult.data || [];
     const applications = applicationsResult.data || [];
     const games = gamesResult.data || [];
-    const mappings = mappingsResult.data || [];
+    const categories = categoriesResult.data || [];
     const disputes = disputesResult.data || [];
 
     const sellers = profiles.filter(
@@ -275,7 +275,7 @@ export default function AdminDashboardV4Page() {
       pendingSellers: pendingSellers.length,
       products: products.length,
       games: games.length,
-      mappings: mappings.length,
+      categories: categories.length,
       orders: orders.length,
       disputes: disputes.length,
       revenue,

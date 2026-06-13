@@ -56,6 +56,55 @@ function formatPrice(value: number | null | undefined) {
   }).format(Number(value || 0));
 }
 
+function normalizeCategorySlug(value: string | null | undefined) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function offersUrl(gameSlug: string, categoryName?: string) {
+  if (!categoryName) return `/games/${gameSlug}/offers`;
+
+  const params = new URLSearchParams({ category: categoryName });
+  return `/games/${gameSlug}/offers?${params.toString()}`;
+}
+
+
+const FALLBACK_MARKETPLACE_CATEGORIES = [
+  { id: 1, name: "Game Accounts", slug: "game-accounts", icon: null },
+  { id: 2, name: "Game Coins", slug: "game-coins", icon: null },
+  { id: 3, name: "Game Items", slug: "game-items", icon: null },
+  { id: 4, name: "Boosting", slug: "boosting", icon: null },
+  { id: 5, name: "Top Up", slug: "top-up", icon: null },
+  { id: 6, name: "Gift Cards", slug: "gift-cards", icon: null },
+];
+
+function getCategoryIcon(categoryName: string) {
+  const slug = normalizeCategorySlug(categoryName);
+
+  if (slug.includes("account")) return FaGamepad;
+  if (slug.includes("coin") || slug.includes("currency")) return FaGem;
+  if (slug.includes("item")) return FaBoxOpen;
+  if (slug.includes("boost")) return FaBolt;
+  if (slug.includes("top-up") || slug.includes("topup")) return FaWallet;
+  if (slug.includes("gift")) return FaGift;
+
+  return FaTags;
+}
+
+function sellerCreateUrl(gameSlug: string, categoryName?: string) {
+  const params = new URLSearchParams({ game: gameSlug });
+
+  if (categoryName) {
+    params.set("category", categoryName);
+  }
+
+  return `/seller/products/new?${params.toString()}`;
+}
+
 export default async function GameDetailPage({ params }: PageProps) {
   const { slug } = await params;
 
@@ -91,7 +140,7 @@ export default async function GameDetailPage({ params }: PageProps) {
   const platforms = safeArray(game.platforms);
   const stores = safeArray(game.stores);
 
-  const { data: products } = await supabase
+  const productsQuery = supabase
     .from("products")
     .select(`
       id,
@@ -105,18 +154,51 @@ export default async function GameDetailPage({ params }: PageProps) {
       created_at
     `)
     .or(`game_slug.eq.${game.slug},game.eq.${gameName},game_name.eq.${gameName}`)
-    .eq("status", "active")
-    .order("created_at", { ascending: false })
-    .limit(8);
+    .eq("status", "active");
 
-  const categories = [
-    ["Game Accounts", FaGamepad],
-    ["Game Coins", FaGem],
-    ["Game Items", FaBoxOpen],
-    ["Boosting", FaBolt],
-    ["Top Up", FaWallet],
-    ["Gift Cards", FaGift],
-  ];
+  const [
+    { data: products },
+    { data: categoryProducts },
+    { data: marketplaceCategories },
+  ] = await Promise.all([
+    productsQuery.order("created_at", { ascending: false }).limit(8),
+    supabase
+      .from("products")
+      .select("category")
+      .or(`game_slug.eq.${game.slug},game.eq.${gameName},game_name.eq.${gameName}`)
+      .eq("status", "active"),
+    supabase
+      .from("categories")
+      .select("id,name,slug,icon")
+      .order("id", { ascending: true }),
+  ]);
+
+  const categoryCounts = (categoryProducts || []).reduce<Record<string, number>>(
+    (acc, item: any) => {
+      const key = normalizeCategorySlug(item.category);
+      if (!key) return acc;
+
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    },
+    {}
+  );
+
+  const totalOffers = categoryProducts?.length || game.offer_count || 0;
+
+  const marketplaceCategoryRows =
+    marketplaceCategories && marketplaceCategories.length > 0
+      ? marketplaceCategories
+      : FALLBACK_MARKETPLACE_CATEGORIES;
+
+  const categories = marketplaceCategoryRows.map((category: any) => ({
+    title: category.name,
+    slug: category.slug,
+    icon: getCategoryIcon(category.name),
+    count: categoryCounts[normalizeCategorySlug(category.slug)] ||
+      categoryCounts[normalizeCategorySlug(category.name)] ||
+      0,
+  }));
 
   return (
     <main className="min-h-screen bg-[#050816] text-white">
@@ -161,14 +243,14 @@ export default async function GameDetailPage({ params }: PageProps) {
 
               <div className="mt-8 flex gap-4">
                 <Link
-                  href={`/products?game=${game.slug}`}
+                  href={offersUrl(game.slug)}
                   className="rounded-xl bg-cyan-400 px-7 py-4 font-black text-black"
                 >
                   View Offers
                 </Link>
 
                 <Link
-                  href={`/seller/products/new?game=${game.slug}`}
+                  href={sellerCreateUrl(game.slug)}
                   className="rounded-xl border border-cyan-400 px-7 py-4 font-black text-cyan-300"
                 >
                   Create Offer
@@ -181,7 +263,7 @@ export default async function GameDetailPage({ params }: PageProps) {
                 <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
                   <p className="text-xs text-slate-300">Offers</p>
                   <p className="text-3xl font-black text-cyan-300">
-                    {game.offer_count || 0}
+                    {totalOffers}
                   </p>
                 </div>
 
@@ -217,18 +299,25 @@ export default async function GameDetailPage({ params }: PageProps) {
               </h2>
 
               <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {categories.map(([title, Icon]: any) => (
+                {categories.map(({ title, icon: Icon, count }) => (
                   <Link
                     key={title}
-                    href={`/products?game=${game.slug}&type=${encodeURIComponent(title)}`}
+                    href={offersUrl(game.slug, title)}
                     className="rounded-2xl border border-white/10 bg-black/30 p-5 hover:border-cyan-400"
                   >
-                    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
-                      <Icon />
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
+                        <Icon />
+                      </div>
+
+                      <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-black text-cyan-200">
+                        {count} offers
+                      </span>
                     </div>
-                    <h3 className="font-black">{title}</h3>
+
+                    <h3 className="mt-4 font-black">{title}</h3>
                     <p className="mt-2 text-sm text-slate-400">
-                      Browse {String(title).toLowerCase()} offers.
+                      Browse {title.toLowerCase()} offers.
                     </p>
                   </Link>
                 ))}
@@ -242,7 +331,7 @@ export default async function GameDetailPage({ params }: PageProps) {
                 </h2>
 
                 <Link
-                  href={`/products?game=${game.slug}`}
+                  href={offersUrl(game.slug)}
                   className="text-sm font-black text-cyan-300"
                 >
                   View all →
@@ -256,7 +345,7 @@ export default async function GameDetailPage({ params }: PageProps) {
                     Be the first seller to create an offer for {gameName}.
                   </p>
                   <Link
-                    href={`/seller/products/new?game=${game.slug}`}
+                    href={sellerCreateUrl(game.slug)}
                     className="mt-5 inline-block rounded-xl bg-cyan-400 px-5 py-3 font-black text-black"
                   >
                     Create First Offer
@@ -350,14 +439,14 @@ export default async function GameDetailPage({ params }: PageProps) {
 
               <div className="mt-5 space-y-3">
                 <Link
-                  href={`/products?game=${game.slug}`}
+                  href={offersUrl(game.slug)}
                   className="block rounded-xl bg-cyan-400 px-5 py-3 text-center font-black text-black"
                 >
                   Browse Offers
                 </Link>
 
                 <Link
-                  href={`/seller/products/new?game=${game.slug}`}
+                  href={sellerCreateUrl(game.slug)}
                   className="block rounded-xl border border-white/10 px-5 py-3 text-center font-black"
                 >
                   Sell This Game

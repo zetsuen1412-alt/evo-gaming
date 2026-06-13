@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import GameOffersClient from "./GameOffersClient";
@@ -30,5 +31,9 @@ export default async function GameOffersPage({ params }: PageProps) {
 
   if (!game) notFound();
 
-  return <GameOffersClient game={game} />;
+  return (
+    <Suspense fallback={null}>
+      <GameOffersClient game={game} />
+    </Suspense>
+  );
 }

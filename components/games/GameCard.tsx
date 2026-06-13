@@ -12,6 +12,7 @@ type GameCardProps = {
     is_trending?: boolean | null;
     rating?: number | null;
   };
+  href?: string;
 };
 
 function getGameImage(game: GameCardProps["game"]) {
@@ -23,10 +24,10 @@ function getGameImage(game: GameCardProps["game"]) {
   );
 }
 
-export default function GameCard({ game }: GameCardProps) {
+export default function GameCard({ game, href }: GameCardProps) {
   return (
     <Link
-      href={`/games/${game.slug}`}
+      href={href || `/games/${game.slug}`}
       className="group overflow-hidden rounded-2xl border border-white/10 bg-[#0b1220] shadow-xl shadow-black/30 transition hover:-translate-y-1 hover:border-cyan-400/70"
     >
       <div

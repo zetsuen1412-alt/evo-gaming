@@ -592,16 +592,12 @@ export default function MainHeader() {
   function handleSearch() {
     const query = search.trim();
 
-    if (selectedCategory) {
-      router.push(
-        query
-          ? `/categories/${selectedCategory}?q=${encodeURIComponent(query)}`
-          : `/categories/${selectedCategory}`
-      );
-      return;
-    }
+    const params = new URLSearchParams();
 
-    router.push(query ? `/?q=${encodeURIComponent(query)}` : "/");
+    if (query) params.set("q", query);
+    if (selectedCategory) params.set("category", selectedCategory);
+
+    router.push(params.toString() ? `/games?${params.toString()}` : "/games");
   }
 
   async function handleEmailAuth(event: React.FormEvent) {
