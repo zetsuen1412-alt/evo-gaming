@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import {
   FaBell,
+  FaCog,
   FaBullhorn,
   FaCommentDots,
   FaDiscord,
@@ -147,6 +148,8 @@ export default function MainHeader() {
   const [showNotificationDropdown, setShowNotificationDropdown] =
     useState(false);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [showProfileSellingMenu, setShowProfileSellingMenu] = useState(false);
+  const [showProfileSettingsMenu, setShowProfileSettingsMenu] = useState(false);
 
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
@@ -804,6 +807,8 @@ export default function MainHeader() {
     setLatestNotifications([]);
     setShowProfileDropdown(false);
     setShowNotificationDropdown(false);
+    setShowProfileSellingMenu(false);
+    setShowProfileSettingsMenu(false);
   }
 
   return (
@@ -1105,15 +1110,137 @@ export default function MainHeader() {
             </Link>
 
             <button
+              type="button"
               onClick={() => {
-                setShowProfileDropdown(false);
-                handleSellWithUs();
+                setShowProfileSellingMenu((value) => !value);
+                setShowProfileSettingsMenu(false);
               }}
-              className="flex items-center gap-3 rounded-xl px-4 py-3 text-left font-bold text-gray-300 transition hover:bg-[#202b42] hover:text-white"
+              className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition ${
+                showProfileSellingMenu
+                  ? "bg-[#202b42] text-white"
+                  : "text-gray-300 hover:bg-[#202b42] hover:text-white"
+              }`}
             >
-              <FaStore />
-              Seller Dashboard
+              <span className="flex items-center gap-3 font-bold">
+                <FaStore />
+                Selling
+              </span>
+              <span className={`text-xs transition ${showProfileSellingMenu ? "rotate-180" : ""}`}>
+                ▾
+              </span>
             </button>
+
+            {showProfileSellingMenu && (
+              <div className="ml-8 space-y-1 border-l border-slate-700 pl-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfileDropdown(false);
+                    handleSellWithUs();
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Become a Seller
+                </button>
+
+                <Link
+                  href="/seller"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Seller Dashboard
+                </Link>
+
+                <Link
+                  href="/seller/products"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Manage Products
+                </Link>
+
+                <Link
+                  href="/seller/products/new"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Create Product
+                </Link>
+
+                <Link
+                  href="/seller/orders"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Manage Orders
+                </Link>
+
+                <Link
+                  href="/wallet"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Payment
+                </Link>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowProfileSettingsMenu((value) => !value);
+                setShowProfileSellingMenu(false);
+              }}
+              className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition ${
+                showProfileSettingsMenu
+                  ? "bg-[#202b42] text-white"
+                  : "text-gray-300 hover:bg-[#202b42] hover:text-white"
+              }`}
+            >
+              <span className="flex items-center gap-3 font-bold">
+                <FaCog />
+                Settings
+              </span>
+              <span className={`text-xs transition ${showProfileSettingsMenu ? "rotate-180" : ""}`}>
+                ▾
+              </span>
+            </button>
+
+            {showProfileSettingsMenu && (
+              <div className="ml-8 space-y-1 border-l border-slate-700 pl-3">
+                <Link
+                  href="/account"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Account
+                </Link>
+
+                <Link
+                  href="/account/connects"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Social Connect
+                </Link>
+
+                <Link
+                  href="/account/security"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Privacy & Security
+                </Link>
+
+                <Link
+                  href="/account/verification"
+                  onClick={() => setShowProfileDropdown(false)}
+                  className="block rounded-lg px-3 py-2 text-sm text-gray-300 transition hover:bg-[#202b42] hover:text-cyan-300"
+                >
+                  Verification
+                </Link>
+              </div>
+            )}
 
             <button
               onClick={handleLogout}
