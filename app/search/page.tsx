@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
 import MarketplaceSearch from "@/components/marketplace/MarketplaceSearch";
@@ -34,6 +35,38 @@ type PageProps = {
     category?: string;
   }>;
 };
+
+
+export async function generateMetadata({ searchParams }: PageProps): Promise<Metadata> {
+  const params = await searchParams;
+  const query = params.q?.trim() || "";
+  const category = params.category?.trim() || "";
+  const title = query
+    ? `Search ${query} | ComePlayers Marketplace`
+    : "Search Marketplace | ComePlayers";
+  const description = category
+    ? `Search ${category} offers, games, and products on ComePlayers.`
+    : "Search games, products, and categories across the ComePlayers marketplace.";
+  const canonicalParams = new URLSearchParams();
+
+  if (query) canonicalParams.set("q", query);
+  if (category) canonicalParams.set("category", category);
+
+  const canonical = `/search${canonicalParams.toString() ? `?${canonicalParams.toString()}` : ""}`;
+
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      siteName: "ComePlayers",
+      type: "website",
+    },
+  };
+}
 
 function formatPrice(value: string | number | null | undefined) {
   const amount = Number(String(value ?? 0).replace(/[^\d]/g, "") || 0);

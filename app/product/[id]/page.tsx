@@ -1,7 +1,9 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
+  FaAward,
   FaBolt,
   FaBoxOpen,
   FaCheckCircle,
@@ -17,6 +19,7 @@ import {
   FaUserShield,
   FaWallet,
 } from "react-icons/fa";
+import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -25,6 +28,25 @@ type PageProps = {
   }>;
 };
 
+
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://comeplayers.com").replace(/\/$/, "");
+
+function absoluteUrl(path: string) {
+  if (!path) return SITE_URL;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  return `${SITE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function JsonLd({ data }: { data: unknown }) {
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{
+        __html: JSON.stringify(data).replace(/</g, "\\u003c"),
+      }}
+    />
+  );
+}
 function numberPrice(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
   if (typeof value === "number") return value;
@@ -62,6 +84,61 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { id } = await params;
+  const productId = Number(id);
+  const productQueryKey = decodeURIComponent(id);
+
+  let productQuery = supabase
+    .from("products")
+    .select("id,title,description,category,slug,image_url,status,game_name,price")
+    .limit(1);
+
+  if (Number.isFinite(productId) && productId > 0) {
+    productQuery = productQuery.eq("id", productId);
+  } else {
+    productQuery = productQuery.eq("slug", productQueryKey);
+  }
+
+  const { data: product } = await productQuery.maybeSingle();
+
+  if (!product || product.status !== "active") {
+    return {
+      title: "Product Not Found | ComePlayers",
+      robots: { index: false, follow: false },
+    };
+  }
+
+  const title = `${product.title} | ComePlayers`;
+  const description = product.description
+    ? String(product.description).slice(0, 155)
+    : `Buy ${product.title}${product.game_name ? ` for ${product.game_name}` : ""} on ComePlayers.`;
+  const canonicalKey = product.slug || String(product.id);
+  const canonical = `/product/${canonicalKey}`;
+  const image = product.image_url || fallbackImage(product.title);
+
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      siteName: "ComePlayers",
+      type: "website",
+      images: [{ url: image, alt: product.title }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [image],
+    },
+  };
 }
 
 export default async function ProductDetailPage({ params }: PageProps) {
@@ -108,35 +185,226 @@ export default async function ProductDetailPage({ params }: PageProps) {
   const gameOffersHref = gameSlug
     ? `/games/${gameSlug}/offers${categorySlug ? `?category=${categorySlug}` : ""}`
     : "";
+
+  let relatedProductsQuery = supabase
+    .from("products")
+    .select(`
+      id,
+      title,
+      slug,
+      price,
+      image_url,
+      category,
+      game_name,
+      stock,
+      status,
+      created_at,
+      seller_id,
+      seller_name,
+      seller
+    `)
+    .eq("status", "active")
+    .neq("id", product.id)
+    .limit(24);
+
+  if (product.game_name) {
+    relatedProductsQuery = relatedProductsQuery.eq("game_name", product.game_name);
+  } else if (product.category) {
+    relatedProductsQuery = relatedProductsQuery.eq("category", product.category);
+  }
+
+  const { data: relatedProductCandidates } = await relatedProductsQuery.order("created_at", {
+    ascending: false,
+  });
+
+  const relatedSellerIds = Array.from(
+    new Set(
+      (relatedProductCandidates || [])
+        .map((item: any) => item.seller_id)
+        .filter((sellerId): sellerId is string => Boolean(sellerId))
+    )
+  );
+
+  const [{ data: relatedProfiles }, { data: relatedReviews }, { data: relatedOrders }] =
+    relatedSellerIds.length > 0
+      ? await Promise.all([
+          supabase
+            .from("profiles")
+            .select("id,username,seller_name,seller_rating,seller_review_count")
+            .in("id", relatedSellerIds),
+          supabase.from("reviews").select("seller_id,rating").in("seller_id", relatedSellerIds),
+          supabase.from("orders").select("seller_id,status").in("seller_id", relatedSellerIds),
+        ])
+      : [{ data: [] }, { data: [] }, { data: [] }];
+
+  const relatedSellerStats = new Map<
+    string,
+    { name: string; ratingTotal: number; reviewCount: number; completedOrders: number }
+  >();
+
+  for (const sellerId of relatedSellerIds) {
+    relatedSellerStats.set(sellerId, {
+      name: "Verified Seller",
+      ratingTotal: 0,
+      reviewCount: 0,
+      completedOrders: 0,
+    });
+  }
+
+  for (const profile of relatedProfiles || []) {
+    if (!profile.id) continue;
+
+    const current = relatedSellerStats.get(profile.id);
+    if (!current) continue;
+
+    current.name = profile.seller_name || profile.username || current.name;
+
+    if (profile.seller_rating && profile.seller_review_count) {
+      current.ratingTotal = Number(profile.seller_rating) * Number(profile.seller_review_count);
+      current.reviewCount = Number(profile.seller_review_count);
+    }
+  }
+
+  for (const review of relatedReviews || []) {
+    if (!review.seller_id) continue;
+
+    const current = relatedSellerStats.get(review.seller_id);
+    if (!current) continue;
+
+    current.ratingTotal += Number(review.rating || 0);
+    current.reviewCount += 1;
+  }
+
+  for (const order of relatedOrders || []) {
+    if (!order.seller_id || order.status !== "completed") continue;
+
+    const current = relatedSellerStats.get(order.seller_id);
+    if (!current) continue;
+
+    current.completedOrders += 1;
+  }
+
+  const basePrice = Math.max(numberPrice(product.price), 1);
+  const relatedProducts = (relatedProductCandidates || [])
+    .map((item: any) => {
+      const stats = item.seller_id ? relatedSellerStats.get(item.seller_id) : null;
+      const sellerRating = stats?.reviewCount
+        ? Number((stats.ratingTotal / stats.reviewCount).toFixed(1))
+        : null;
+      const priceDelta = Math.abs(numberPrice(item.price) - basePrice) / basePrice;
+      const sameCategory =
+        Boolean(product.category && item.category) &&
+        slugify(String(item.category)) === slugify(String(product.category));
+      const inStock = Number(item.stock ?? 1) > 0;
+
+      const score =
+        (sameCategory ? 45 : 0) +
+        Math.max(0, 25 - priceDelta * 25) +
+        (sellerRating ? sellerRating * 4 : 0) +
+        Math.min(Number(stats?.completedOrders || 0), 50) * 0.25 +
+        (inStock ? 8 : -10);
+
+      return {
+        ...item,
+        seller_display_name: stats?.name || item.seller_name || item.seller || "Verified Seller",
+        seller_rating: sellerRating,
+        seller_review_count: stats?.reviewCount || 0,
+        seller_completed_orders: stats?.completedOrders || 0,
+        related_score: score,
+      };
+    })
+    .sort((a: any, b: any) => b.related_score - a.related_score)
+    .slice(0, 6);
+
   const CategoryIcon = getCategoryIcon(product.category);
   const imageUrl = product.image_url || fallbackImage(product.title);
   const sellerName = product.seller_name || product.seller || "Verified Seller";
   const stock = Number(product.stock ?? 1);
+  const productCanonicalPath = `/product/${product.slug || product.id}`;
+  const productStructuredData = [
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Home",
+          item: absoluteUrl("/"),
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: "Games",
+          item: absoluteUrl("/games"),
+        },
+        ...(product.game_name
+          ? [
+              {
+                "@type": "ListItem",
+                position: 3,
+                name: product.game_name,
+                item: absoluteUrl(`/games/${gameSlug}`),
+              },
+            ]
+          : []),
+        {
+          "@type": "ListItem",
+          position: product.game_name ? 4 : 3,
+          name: product.title,
+          item: absoluteUrl(productCanonicalPath),
+        },
+      ],
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: product.title,
+      description: product.description || `Buy ${product.title} on ComePlayers.`,
+      image: absoluteUrl(imageUrl),
+      sku: String(product.id),
+      category: product.category || "Game Product",
+      brand: product.game_name
+        ? {
+            "@type": "Brand",
+            name: product.game_name,
+          }
+        : undefined,
+      offers: {
+        "@type": "Offer",
+        url: absoluteUrl(productCanonicalPath),
+        priceCurrency: "IDR",
+        price: numberPrice(product.price),
+        availability: stock > 0
+          ? "https://schema.org/InStock"
+          : "https://schema.org/OutOfStock",
+        itemCondition: "https://schema.org/NewCondition",
+        seller: {
+          "@type": "Organization",
+          name: sellerName,
+        },
+      },
+    },
+  ];
 
   return (
     <main className="min-h-screen bg-[#050816] text-white">
+      <JsonLd data={productStructuredData} />
       <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_35%)]">
         <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-400">
-            <Link href="/" className="hover:text-cyan-300">
-              Home
-            </Link>
-            <span>/</span>
-
-            {product.game_name ? (
-              <>
-                <Link
-                  href={`/games/${gameSlug}`}
-                  className="hover:text-cyan-300"
-                >
-                  {product.game_name}
-                </Link>
-                <span>/</span>
-              </>
-            ) : null}
-
-            <span className="text-cyan-300">{product.title}</span>
-          </div>
+          <MarketplaceBreadcrumbs
+            items={[
+              { label: "Home", href: "/" },
+              { label: "Games", href: "/games" },
+              ...(product.game_name
+                ? [{ label: product.game_name, href: `/games/${gameSlug}` }]
+                : []),
+              ...(product.category && gameOffersHref
+                ? [{ label: product.category, href: gameOffersHref }]
+                : []),
+              { label: product.title },
+            ]}
+          />
 
           <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_420px]">
             <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04]">
@@ -284,6 +552,91 @@ export default async function ProductDetailPage({ params }: PageProps) {
                 {product.description || "No description provided by seller."}
               </div>
             </div>
+
+            {relatedProducts && relatedProducts.length > 0 ? (
+              <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-2xl font-black">Smart Related Offers</h2>
+                    <p className="mt-1 text-sm text-slate-400">
+                      Ranked by same game, category match, similar price, stock, and seller reputation.
+                    </p>
+                  </div>
+
+                  {gameOffersHref ? (
+                    <Link
+                      href={gameOffersHref}
+                      className="rounded-xl border border-cyan-400/40 px-4 py-3 text-sm font-black text-cyan-300 hover:bg-cyan-400 hover:text-black"
+                    >
+                      View All Offers
+                    </Link>
+                  ) : null}
+                </div>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {relatedProducts.map((item) => {
+                    const itemHref = `/product/${item.slug || item.id}`;
+                    const itemImage = item.image_url || fallbackImage(item.title);
+
+                    return (
+                      <Link
+                        key={item.id}
+                        href={itemHref}
+                        className="group overflow-hidden rounded-2xl border border-white/10 bg-black/30 transition hover:border-cyan-400"
+                      >
+                        <div className="relative h-36 bg-black">
+                          <Image
+                            src={itemImage}
+                            alt={item.title}
+                            fill
+                            className="object-cover transition group-hover:scale-105"
+                            unoptimized
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                        </div>
+
+                        <div className="p-4">
+                          <p className="line-clamp-2 font-black text-white group-hover:text-cyan-300">
+                            {item.title}
+                          </p>
+                          <p className="mt-2 text-xs text-slate-400">
+                            {item.game_name || product.game_name || "Game"}
+                            {item.category ? ` • ${item.category}` : ""}
+                          </p>
+                          <div className="mt-4 flex items-center justify-between gap-3">
+                            <span className="font-black text-cyan-300">
+                              {formatPrice(item.price)}
+                            </span>
+                            <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300">
+                              Stock {Number(item.stock ?? 1)}
+                            </span>
+                          </div>
+
+                          <div className="mt-3 grid gap-2 text-xs text-slate-400">
+                            <span className="inline-flex items-center gap-2">
+                              <FaStore className="text-cyan-300" />
+                              {item.seller_display_name}
+                            </span>
+                            <span className="inline-flex items-center gap-2">
+                              <FaStar className="text-yellow-300" />
+                              {item.seller_rating ? `${item.seller_rating} rating` : "New seller"}
+                              {Number(item.seller_completed_orders || 0) > 0
+                                ? ` • ${item.seller_completed_orders} completed`
+                                : ""}
+                            </span>
+                            {slugify(String(item.category || "")) === categorySlug ? (
+                              <span className="inline-flex items-center gap-2 text-emerald-300">
+                                <FaAward /> Same category match
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
               <h2 className="text-2xl font-black">How It Works</h2>

@@ -109,5 +109,79 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ products: data || [] });
+  const products = data || [];
+  const sellerIds = Array.from(
+    new Set(
+      products
+        .map((product) => product.seller_id)
+        .filter((sellerId): sellerId is string => Boolean(sellerId))
+    )
+  );
+
+  if (sellerIds.length === 0) {
+    return NextResponse.json({ products });
+  }
+
+  const [reviewsResult, ordersResult] = await Promise.all([
+    supabase
+      .from("reviews")
+      .select("seller_id,rating")
+      .in("seller_id", sellerIds),
+    supabase
+      .from("orders")
+      .select("seller_id,status")
+      .in("seller_id", sellerIds),
+  ]);
+
+  const sellerStats = new Map<
+    string,
+    { ratingTotal: number; reviewCount: number; completedOrders: number }
+  >();
+
+  for (const sellerId of sellerIds) {
+    sellerStats.set(sellerId, {
+      ratingTotal: 0,
+      reviewCount: 0,
+      completedOrders: 0,
+    });
+  }
+
+  if (!reviewsResult.error) {
+    for (const review of reviewsResult.data || []) {
+      if (!review.seller_id) continue;
+
+      const stats = sellerStats.get(review.seller_id);
+      if (!stats) continue;
+
+      stats.ratingTotal += Number(review.rating || 0);
+      stats.reviewCount += 1;
+    }
+  }
+
+  if (!ordersResult.error) {
+    for (const order of ordersResult.data || []) {
+      if (!order.seller_id || order.status !== "completed") continue;
+
+      const stats = sellerStats.get(order.seller_id);
+      if (!stats) continue;
+
+      stats.completedOrders += 1;
+    }
+  }
+
+  const enrichedProducts = products.map((product) => {
+    const stats = product.seller_id ? sellerStats.get(product.seller_id) : null;
+    const sellerRating = stats?.reviewCount
+      ? Number((stats.ratingTotal / stats.reviewCount).toFixed(1))
+      : null;
+
+    return {
+      ...product,
+      seller_rating: sellerRating,
+      seller_review_count: stats?.reviewCount || 0,
+      seller_completed_orders: stats?.completedOrders || 0,
+    };
+  });
+
+  return NextResponse.json({ products: enrichedProducts });
 }

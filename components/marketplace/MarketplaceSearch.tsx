@@ -76,11 +76,18 @@ export default function MarketplaceSearch({
   });
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
 
   const hasResults =
     results.games.length > 0 ||
     results.products.length > 0 ||
     results.categories.length > 0;
+
+  const quickLinks = [
+    ...results.games.map((game) => game.href),
+    ...results.products.map((product) => product.href),
+    ...results.categories.map((category) => category.href || `/games?category=${category.slug}`),
+  ];
 
   function searchHref() {
     const params = new URLSearchParams();
@@ -92,13 +99,16 @@ export default function MarketplaceSearch({
 
   function submitSearch() {
     setOpen(false);
+    setActiveIndex(-1);
     router.push(searchHref());
   }
 
   useEffect(() => {
+    const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       if (query.trim().length < 2 && selectedCategory.length < 2) {
         setResults({ games: [], products: [], categories: [] });
+        setActiveIndex(-1);
         setLoading(false);
         return;
       }
@@ -109,12 +119,15 @@ export default function MarketplaceSearch({
         const params = new URLSearchParams({ q: query.trim(), limit: "6" });
         if (selectedCategory) params.set("category", selectedCategory);
 
-        const response = await fetch(`/api/marketplace/search?${params.toString()}`);
+        const response = await fetch(`/api/marketplace/search?${params.toString()}`, {
+          signal: controller.signal,
+        });
         const json = await response.json();
 
         if (!response.ok) {
           console.error("Marketplace search error:", json.error || response.statusText);
           setResults({ games: [], products: [], categories: [] });
+          setActiveIndex(-1);
           return;
         }
 
@@ -123,16 +136,22 @@ export default function MarketplaceSearch({
           products: json.products || [],
           categories: json.categories || [],
         });
+        setActiveIndex(-1);
         setOpen(true);
       } catch (error) {
+        if ((error as DOMException).name === "AbortError") return;
         console.error("Marketplace search error:", error);
         setResults({ games: [], products: [], categories: [] });
+        setActiveIndex(-1);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }, 250);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [query, selectedCategory]);
 
   useEffect(() => {
@@ -145,6 +164,16 @@ export default function MarketplaceSearch({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  function resultIndex(section: "games" | "products" | "categories", index: number) {
+    if (section === "games") return index;
+    if (section === "products") return results.games.length + index;
+    return results.games.length + results.products.length + index;
+  }
+
+  function activeResultClass(index: number) {
+    return activeIndex === index ? "bg-white/10 ring-1 ring-cyan-400/50" : "hover:bg-white/10";
+  }
 
   return (
     <div ref={wrapperRef} className="relative w-full">
@@ -179,8 +208,42 @@ export default function MarketplaceSearch({
           onChange={(event) => setQuery(event.target.value)}
           onFocus={() => setOpen(true)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") submitSearch();
+            if (event.key === "ArrowDown" && quickLinks.length > 0) {
+              event.preventDefault();
+              setOpen(true);
+              setActiveIndex((current) => (current + 1) % quickLinks.length);
+              return;
+            }
+
+            if (event.key === "ArrowUp" && quickLinks.length > 0) {
+              event.preventDefault();
+              setOpen(true);
+              setActiveIndex((current) =>
+                current <= 0 ? quickLinks.length - 1 : current - 1
+              );
+              return;
+            }
+
+            if (event.key === "Escape") {
+              setOpen(false);
+              setActiveIndex(-1);
+              return;
+            }
+
+            if (event.key === "Enter") {
+              if (open && activeIndex >= 0 && quickLinks[activeIndex]) {
+                event.preventDefault();
+                setOpen(false);
+                router.push(quickLinks[activeIndex]);
+                return;
+              }
+
+              submitSearch();
+            }
           }}
+          role="combobox"
+          aria-expanded={open}
+          aria-label="Search marketplace"
           placeholder={placeholder}
           className={
             compact
@@ -218,7 +281,7 @@ export default function MarketplaceSearch({
                       key={`game-${game.id}`}
                       href={game.href}
                       onClick={() => setOpen(false)}
-                      className="flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition hover:bg-white/10"
+                      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition ${activeResultClass(resultIndex("games", results.games.indexOf(game)))}`}
                     >
                       <div>
                         <p className="font-bold text-white">{game.name}</p>
@@ -247,7 +310,7 @@ export default function MarketplaceSearch({
                       key={`product-${product.id}`}
                       href={product.href}
                       onClick={() => setOpen(false)}
-                      className="flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition hover:bg-white/10"
+                      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition ${activeResultClass(resultIndex("products", results.products.indexOf(product)))}`}
                     >
                       <div className="min-w-0">
                         <p className="line-clamp-1 font-bold text-white">{product.title}</p>
@@ -276,7 +339,7 @@ export default function MarketplaceSearch({
                         key={`category-${category.id}`}
                         href={category.href || `/games?category=${category.slug}`}
                         onClick={() => setOpen(false)}
-                        className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-bold text-slate-200 transition hover:border-cyan-400"
+                        className={`rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-bold text-slate-200 transition hover:border-cyan-400 ${activeResultClass(resultIndex("categories", results.categories.indexOf(category)))}`}
                       >
                         {category.icon ? `${category.icon} ` : ""}
                         {category.name}

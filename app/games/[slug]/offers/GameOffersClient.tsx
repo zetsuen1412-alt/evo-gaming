@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -41,21 +42,16 @@ type Product = {
   status?: string | null;
   seller_id?: string | null;
   seller_name?: string | null;
+  seller_rating?: number | null;
+  seller_review_count?: number | null;
+  seller_completed_orders?: number | null;
   stock?: number | null;
   created_at?: string | null;
   game_name?: string | null;
   game_category_id?: number | null;
 };
 
-const FALLBACK_CATEGORIES: Category[] = [
-  { name: "All", slug: "all" },
-  { name: "Game Accounts", slug: "game-accounts" },
-  { name: "Game Coins", slug: "game-coins" },
-  { name: "Game Items", slug: "game-items" },
-  { name: "Boosting", slug: "boosting" },
-  { name: "Top Up", slug: "top-up" },
-  { name: "Gift Cards", slug: "gift-cards" },
-];
+const BASE_CATEGORIES: Category[] = [{ name: "All", slug: "all" }];
 
 function toSlug(value: string) {
   return value
@@ -95,7 +91,7 @@ function categorySlug(value: string | null | undefined, categories: Category[]) 
 function mergeCategories(categories: Category[]) {
   const merged = new Map<string, Category>();
 
-  for (const item of [...FALLBACK_CATEGORIES, ...categories]) {
+  for (const item of [...BASE_CATEGORIES, ...categories]) {
     const slug = item.slug || toSlug(item.name);
     if (!slug) continue;
     merged.set(slug, { ...item, slug });
@@ -105,9 +101,11 @@ function mergeCategories(categories: Category[]) {
 }
 
 const SORTS = [
+  { label: "Recommended", value: "recommended" },
   { label: "Newest", value: "newest" },
-  { label: "Price: Low to High", value: "price_asc" },
-  { label: "Price: High to Low", value: "price_desc" },
+  { label: "Lowest Price", value: "price_asc" },
+  { label: "Highest Price", value: "price_desc" },
+  { label: "In Stock First", value: "stock_desc" },
 ];
 
 function titleCase(value: string) {
@@ -132,6 +130,24 @@ function formatPrice(value: string | number | null | undefined) {
     currency: "IDR",
     maximumFractionDigits: 0,
   }).format(numberPrice(value));
+}
+
+function stockValue(value: number | null | undefined) {
+  if (value === null || value === undefined) return 0;
+  return Number(value) || 0;
+}
+
+function createdTime(value: string | null | undefined) {
+  return new Date(value || 0).getTime();
+}
+
+function formatSellerRating(value: number | null | undefined) {
+  if (value === null || value === undefined) return "New";
+  return Number(value).toFixed(1);
+}
+
+function formatCount(value: number | null | undefined) {
+  return new Intl.NumberFormat("id-ID").format(Number(value || 0));
 }
 
 function gameImage(game: Game) {
@@ -163,13 +179,13 @@ export default function GameOffersClient({ game }: { game: Game }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [categories, setCategories] = useState<Category[]>(FALLBACK_CATEGORIES);
+  const [categories, setCategories] = useState<Category[]>(BASE_CATEGORIES);
   const safeInitialCategory = normalizeCategory(searchParams.get("category"), categories);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState(safeInitialCategory);
-  const [sort, setSort] = useState("newest");
+  const [sort, setSort] = useState("recommended");
   const [loading, setLoading] = useState(true);
 
   const gameName = titleCase(game.name);
@@ -193,7 +209,7 @@ export default function GameOffersClient({ game }: { game: Game }) {
         setCategories(mergeCategories(remoteCategories));
       } catch (error) {
         console.error("Load offer categories failed:", error);
-        setCategories(FALLBACK_CATEGORIES);
+        setCategories(BASE_CATEGORIES);
       }
     }
 
@@ -274,6 +290,26 @@ export default function GameOffersClient({ game }: { game: Game }) {
       );
     }
 
+    if (sort === "recommended") {
+      list.sort((a, b) => {
+        const completedOrderDiff =
+          Number(b.seller_completed_orders || 0) -
+          Number(a.seller_completed_orders || 0);
+        if (completedOrderDiff !== 0) return completedOrderDiff;
+
+        const ratingDiff = Number(b.seller_rating || 0) - Number(a.seller_rating || 0);
+        if (ratingDiff !== 0) return ratingDiff;
+
+        const stockDiff = stockValue(b.stock) - stockValue(a.stock);
+        if (stockDiff !== 0) return stockDiff;
+
+        const priceDiff = numberPrice(a.price) - numberPrice(b.price);
+        if (priceDiff !== 0) return priceDiff;
+
+        return createdTime(b.created_at) - createdTime(a.created_at);
+      });
+    }
+
     if (sort === "price_asc") {
       list.sort((a, b) => numberPrice(a.price) - numberPrice(b.price));
     }
@@ -282,12 +318,17 @@ export default function GameOffersClient({ game }: { game: Game }) {
       list.sort((a, b) => numberPrice(b.price) - numberPrice(a.price));
     }
 
+    if (sort === "stock_desc") {
+      list.sort((a, b) => {
+        const stockDiff = stockValue(b.stock) - stockValue(a.stock);
+        if (stockDiff !== 0) return stockDiff;
+
+        return createdTime(b.created_at) - createdTime(a.created_at);
+      });
+    }
+
     if (sort === "newest") {
-      list.sort(
-        (a, b) =>
-          new Date(b.created_at || 0).getTime() -
-          new Date(a.created_at || 0).getTime()
-      );
+      list.sort((a, b) => createdTime(b.created_at) - createdTime(a.created_at));
     }
 
     return list;
@@ -307,12 +348,14 @@ export default function GameOffersClient({ game }: { game: Game }) {
         <div className="absolute inset-0 bg-black/25 backdrop-blur-[1px]" />
 
         <div className="relative mx-auto max-w-7xl px-4 py-16">
-          <Link
-            href={`/games/${game.slug}`}
-            className="text-sm font-black text-cyan-300 hover:underline"
-          >
-            ← Back to {gameName}
-          </Link>
+          <MarketplaceBreadcrumbs
+            items={[
+              { label: "Home", href: "/" },
+              { label: "Games", href: "/games" },
+              { label: gameName, href: `/games/${game.slug}` },
+              { label: category !== "All" ? category : "Offers" },
+            ]}
+          />
 
           <h1 className="mt-8 text-5xl font-black md:text-7xl">
             {gameName} Offers
@@ -441,6 +484,24 @@ export default function GameOffersClient({ game }: { game: Game }) {
                     <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
                       <FaStore className="text-cyan-300" />
                       <span>{product.seller_name || "Verified Seller"}</span>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/10 px-3 py-2 font-black text-yellow-200">
+                        <span className="inline-flex items-center gap-1">
+                          <FaStar /> {formatSellerRating(product.seller_rating)}
+                        </span>
+                        <p className="mt-1 font-medium text-yellow-100/70">
+                          {formatCount(product.seller_review_count)} reviews
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2 font-black text-emerald-200">
+                        {formatCount(product.seller_completed_orders)}
+                        <p className="mt-1 font-medium text-emerald-100/70">
+                          completed
+                        </p>
+                      </div>
                     </div>
 
                     <div className="mt-3 flex items-center gap-2 text-xs text-emerald-300">

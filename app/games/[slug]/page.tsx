@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -11,14 +12,36 @@ import {
   FaStar,
   FaStore,
   FaTags,
+  FaTrophy,
+  FaUserShield,
   FaWallet,
 } from "react-icons/fa";
+import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
   params: Promise<{ slug: string }>;
 };
 
+
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://comeplayers.com").replace(/\/$/, "");
+
+function absoluteUrl(path: string) {
+  if (!path) return SITE_URL;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  return `${SITE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function JsonLd({ data }: { data: unknown }) {
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{
+        __html: JSON.stringify(data).replace(/</g, "\\u003c"),
+      }}
+    />
+  );
+}
 type JsonItem = {
   id?: number | string | null;
   name?: string | null;
@@ -56,6 +79,34 @@ function formatPrice(value: number | null | undefined) {
   }).format(Number(value || 0));
 }
 
+function formatCount(value: number | null | undefined) {
+  return new Intl.NumberFormat("id-ID", {
+    notation: Number(value || 0) >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: 1,
+  }).format(Number(value || 0));
+}
+
+function buildGameFaqs(gameName: string) {
+  return [
+    {
+      question: `How do I buy ${gameName} offers on ComePlayers?`,
+      answer: `Choose a ${gameName} category, compare seller price and reputation, open the product detail, then continue to checkout.`,
+    },
+    {
+      question: `What ${gameName} products can I find here?`,
+      answer: `You can browse available ${gameName} accounts, coins, items, boosting, top-up, gift cards, and other marketplace services depending on seller listings.`,
+    },
+    {
+      question: `Is buying ${gameName} products on ComePlayers safe?`,
+      answer: `ComePlayers is designed as a secure marketplace flow where buyers can review product details, seller information, and order status before completing a purchase.`,
+    },
+    {
+      question: `How long does ${gameName} delivery take?`,
+      answer: `Delivery time depends on the seller and product type. Always check the product detail page and order instructions before buying.`,
+    },
+  ];
+}
+
 function normalizeCategorySlug(value: string | null | undefined) {
   return String(value || "")
     .trim()
@@ -73,14 +124,49 @@ function offersUrl(gameSlug: string, categoryName?: string) {
 }
 
 
-const FALLBACK_MARKETPLACE_CATEGORIES = [
-  { id: 1, name: "Game Accounts", slug: "game-accounts", icon: null },
-  { id: 2, name: "Game Coins", slug: "game-coins", icon: null },
-  { id: 3, name: "Game Items", slug: "game-items", icon: null },
-  { id: 4, name: "Boosting", slug: "boosting", icon: null },
-  { id: 5, name: "Top Up", slug: "top-up", icon: null },
-  { id: 6, name: "Gift Cards", slug: "gift-cards", icon: null },
-];
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { slug } = await params;
+  const { data: game } = await supabase
+    .from("game_master")
+    .select("name,slug,background_image,cover_image_url,image_url,offer_count")
+    .eq("slug", slug)
+    .eq("status", "active")
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!game) {
+    return {
+      title: "Game Not Found | ComePlayers",
+      robots: { index: false, follow: false },
+    };
+  }
+
+  const title = `${game.name} Marketplace | ComePlayers`;
+  const description = `Buy and sell ${game.name} accounts, coins, items, boosting, top up, and gift card offers on ComePlayers.`;
+  const image = getGameImage(game);
+  const canonical = `/games/${game.slug}`;
+
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      siteName: "ComePlayers",
+      type: "website",
+      images: [{ url: image, alt: `${game.name} marketplace` }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [image],
+    },
+  };
+}
 
 function getCategoryIcon(categoryName: string) {
   const slug = normalizeCategorySlug(categoryName);
@@ -151,6 +237,7 @@ export default async function GameDetailPage({ params }: PageProps) {
       category,
       status,
       seller_id,
+      seller_name,
       created_at
     `)
     .or(`game_slug.eq.${game.slug},game.eq.${gameName},game_name.eq.${gameName}`)
@@ -189,19 +276,215 @@ export default async function GameDetailPage({ params }: PageProps) {
   const marketplaceCategoryRows =
     marketplaceCategories && marketplaceCategories.length > 0
       ? marketplaceCategories
-      : FALLBACK_MARKETPLACE_CATEGORIES;
+      : Array.from(
+          new Set(
+            (categoryProducts || [])
+              .map((item: any) => String(item.category || "").trim())
+              .filter(Boolean)
+          )
+        ).map((name, index) => ({
+          id: `product-category-${index}`,
+          name,
+          slug: normalizeCategorySlug(name),
+          icon: null,
+        }));
+
+  const sellerIds = Array.from(
+    new Set(
+      (products || [])
+        .map((product: any) => product.seller_id)
+        .filter((sellerId): sellerId is string => Boolean(sellerId))
+    )
+  );
+
+  const [{ data: sellerProfiles }, { data: sellerReviews }, { data: sellerOrders }] =
+    sellerIds.length > 0
+      ? await Promise.all([
+          supabase
+            .from("profiles")
+            .select("id,username,seller_name,avatar_url,seller_rating,seller_review_count")
+            .in("id", sellerIds),
+          supabase.from("reviews").select("seller_id,rating").in("seller_id", sellerIds),
+          supabase.from("orders").select("seller_id,status").in("seller_id", sellerIds),
+        ])
+      : [{ data: [] }, { data: [] }, { data: [] }];
+
+  const sellerStats = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      avatarUrl?: string | null;
+      ratingTotal: number;
+      reviewCount: number;
+      completedOrders: number;
+      activeOffers: number;
+    }
+  >();
+
+  for (const product of products || []) {
+    if (!product.seller_id) continue;
+
+    const current = sellerStats.get(product.seller_id) || {
+      id: product.seller_id,
+      name: product.seller_name || "ComePlayers Seller",
+      avatarUrl: null,
+      ratingTotal: 0,
+      reviewCount: 0,
+      completedOrders: 0,
+      activeOffers: 0,
+    };
+
+    current.activeOffers += 1;
+    sellerStats.set(product.seller_id, current);
+  }
+
+  for (const profile of sellerProfiles || []) {
+    if (!profile.id) continue;
+
+    const current = sellerStats.get(profile.id) || {
+      id: profile.id,
+      name: "ComePlayers Seller",
+      avatarUrl: null,
+      ratingTotal: 0,
+      reviewCount: 0,
+      completedOrders: 0,
+      activeOffers: 0,
+    };
+
+    current.name =
+      profile.seller_name || profile.username || current.name || "ComePlayers Seller";
+    current.avatarUrl = profile.avatar_url || current.avatarUrl;
+
+    if (profile.seller_rating && profile.seller_review_count) {
+      current.ratingTotal = Number(profile.seller_rating) * Number(profile.seller_review_count);
+      current.reviewCount = Number(profile.seller_review_count);
+    }
+
+    sellerStats.set(profile.id, current);
+  }
+
+  for (const review of sellerReviews || []) {
+    if (!review.seller_id) continue;
+
+    const current = sellerStats.get(review.seller_id);
+    if (!current) continue;
+
+    current.ratingTotal += Number(review.rating || 0);
+    current.reviewCount += 1;
+  }
+
+  for (const order of sellerOrders || []) {
+    if (!order.seller_id || order.status !== "completed") continue;
+
+    const current = sellerStats.get(order.seller_id);
+    if (!current) continue;
+
+    current.completedOrders += 1;
+  }
+
+  const topSellers = Array.from(sellerStats.values())
+    .map((seller) => ({
+      ...seller,
+      rating: seller.reviewCount
+        ? Number((seller.ratingTotal / seller.reviewCount).toFixed(1))
+        : null,
+    }))
+    .sort((a, b) => {
+      const completedDiff = b.completedOrders - a.completedOrders;
+      if (completedDiff !== 0) return completedDiff;
+
+      const ratingDiff = Number(b.rating || 0) - Number(a.rating || 0);
+      if (ratingDiff !== 0) return ratingDiff;
+
+      return b.activeOffers - a.activeOffers;
+    })
+    .slice(0, 4);
+
+  const faqs = buildGameFaqs(gameName);
 
   const categories = marketplaceCategoryRows.map((category: any) => ({
     title: category.name,
-    slug: category.slug,
+    slug: category.slug || normalizeCategorySlug(category.name),
     icon: getCategoryIcon(category.name),
-    count: categoryCounts[normalizeCategorySlug(category.slug)] ||
+    count:
+      categoryCounts[normalizeCategorySlug(category.slug)] ||
       categoryCounts[normalizeCategorySlug(category.name)] ||
       0,
   }));
 
+  const gameUrl = `/games/${game.slug}`;
+  const gameStructuredData = [
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Home",
+          item: absoluteUrl("/"),
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: "Games",
+          item: absoluteUrl("/games"),
+        },
+        {
+          "@type": "ListItem",
+          position: 3,
+          name: gameName,
+          item: absoluteUrl(gameUrl),
+        },
+      ],
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "CollectionPage",
+      name: `${gameName} Marketplace`,
+      description: `Buy and sell ${gameName} accounts, coins, items, boosting, top-up, and digital game services safely on ComePlayers.`,
+      url: absoluteUrl(gameUrl),
+      image: absoluteUrl(heroImage),
+      isPartOf: {
+        "@type": "WebSite",
+        name: "ComePlayers",
+        url: SITE_URL,
+      },
+      about: {
+        "@type": "VideoGame",
+        name: gameName,
+        image: absoluteUrl(heroImage),
+      },
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      name: `${gameName} Marketplace Categories`,
+      itemListElement: categories.map((category, index) => ({
+        "@type": "ListItem",
+        position: index + 1,
+        name: category.title,
+        url: absoluteUrl(offersUrl(game.slug, category.title)),
+      })),
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: faqs.map((faq) => ({
+        "@type": "Question",
+        name: faq.question,
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: faq.answer,
+        },
+      })),
+    },
+  ];
+
   return (
     <main className="min-h-screen bg-[#050816] text-white">
+      <JsonLd data={gameStructuredData} />
       <section
         className="relative border-b border-cyan-400/20 bg-cover bg-center"
         style={{
@@ -214,9 +497,13 @@ export default async function GameDetailPage({ params }: PageProps) {
         <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" />
 
         <div className="relative mx-auto max-w-7xl px-4 py-20">
-          <Link href="/games" className="text-sm font-black text-cyan-300">
-            ← Back to Browse Games
-          </Link>
+          <MarketplaceBreadcrumbs
+            items={[
+              { label: "Home", href: "/" },
+              { label: "Games", href: "/games" },
+              { label: gameName },
+            ]}
+          />
 
           <div className="mt-10 grid gap-10 lg:grid-cols-[1.1fr_.9fr] lg:items-end">
             <div>
@@ -385,6 +672,103 @@ export default async function GameDetailPage({ params }: PageProps) {
                   ))}
                 </div>
               )}
+            </div>
+
+
+
+            {topSellers.length > 0 && (
+              <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+                <h2 className="flex items-center gap-3 text-2xl font-black">
+                  <FaTrophy className="text-yellow-300" />
+                  Top {gameName} Sellers
+                </h2>
+
+                <p className="mt-2 text-sm text-slate-400">
+                  Trusted sellers with active {gameName} offers, completed orders, and buyer reviews.
+                </p>
+
+                <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {topSellers.map((seller) => (
+                    <div
+                      key={seller.id}
+                      className="rounded-2xl border border-white/10 bg-black/30 p-5"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400/10 bg-cover bg-center text-cyan-300"
+                          style={
+                            seller.avatarUrl
+                              ? { backgroundImage: `url(${seller.avatarUrl})` }
+                              : undefined
+                          }
+                        >
+                          {!seller.avatarUrl && <FaUserShield />}
+                        </div>
+
+                        <div className="min-w-0">
+                          <p className="truncate font-black">{seller.name}</p>
+                          <p className="text-xs text-slate-400">
+                            {seller.activeOffers} active offers
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-3">
+                          <p className="text-xs text-slate-400">Rating</p>
+                          <p className="mt-1 flex items-center gap-1 font-black text-yellow-300">
+                            <FaStar /> {seller.rating ? seller.rating.toFixed(1) : "New"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3">
+                          <p className="text-xs text-slate-400">Orders</p>
+                          <p className="mt-1 font-black text-emerald-300">
+                            {formatCount(seller.completedOrders)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+              <h2 className="flex items-center gap-3 text-2xl font-black">
+                <FaTags className="text-cyan-300" />
+                Popular {gameName} Searches
+              </h2>
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                {categories.map((category) => (
+                  <Link
+                    key={category.slug}
+                    href={offersUrl(game.slug, category.title)}
+                    className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-200 hover:border-cyan-300"
+                  >
+                    {gameName} {category.title}
+                  </Link>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+              <h2 className="text-2xl font-black">{gameName} Marketplace FAQ</h2>
+
+              <div className="mt-6 space-y-4">
+                {faqs.map((faq) => (
+                  <div
+                    key={faq.question}
+                    className="rounded-2xl border border-white/10 bg-black/30 p-5"
+                  >
+                    <h3 className="font-black text-white">{faq.question}</h3>
+                    <p className="mt-2 text-sm leading-6 text-slate-400">
+                      {faq.answer}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
