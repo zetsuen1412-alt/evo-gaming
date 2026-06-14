@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import RecentlyViewedGameTracker from "@/components/marketplace/RecentlyViewedGameTracker";
 import GameOffersClient from "./GameOffersClient";
 
 type PageProps = {
@@ -201,6 +202,12 @@ export default async function GameOffersPage({ params, searchParams }: PageProps
 
   return (
     <>
+      <RecentlyViewedGameTracker
+        gameId={game.id}
+        gameSlug={game.slug}
+        gameName={game.name}
+        imageUrl={getGameImage(game)}
+      />
       <JsonLd data={offersStructuredData} />
       <Suspense fallback={null}>
         <GameOffersClient game={game} />

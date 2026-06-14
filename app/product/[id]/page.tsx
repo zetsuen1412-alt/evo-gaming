@@ -21,6 +21,8 @@ import {
 } from "react-icons/fa";
 import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
 import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTracker";
+import RecentlyViewedTracker from "@/components/marketplace/RecentlyViewedTracker";
+import RecommendedProducts from "@/components/marketplace/RecommendedProducts";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -399,6 +401,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
         category_slug={categorySlug || null}
         category_name={product.category || null}
       />
+      <RecentlyViewedTracker productId={product.id} />
       <JsonLd data={productStructuredData} />
       <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_35%)]">
         <div className="mx-auto max-w-7xl px-4 py-10">
@@ -647,6 +650,13 @@ export default async function ProductDetailPage({ params }: PageProps) {
                 </div>
               </div>
             ) : null}
+
+            <RecommendedProducts
+              currentProductId={product.id}
+              title="Recommended For You"
+              subtitle="More offers matched from your recently viewed games and categories."
+              compact
+            />
 
             <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
               <h2 className="text-2xl font-black">How It Works</h2>

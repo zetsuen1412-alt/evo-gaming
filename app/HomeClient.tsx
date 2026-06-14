@@ -4,6 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import RecentlyViewed from "@/components/marketplace/RecentlyViewed";
+import RecentlyViewedGames from "@/components/marketplace/RecentlyViewedGames";
+import InterestRecommendations from "@/components/marketplace/InterestRecommendations";
+import RecommendedGames from "@/components/marketplace/RecommendedGames";
+import FollowedSellerFeed from "@/components/marketplace/FollowedSellerFeed";
 
 type Category = {
   id: number;
@@ -141,6 +146,12 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      <RecentlyViewed />
+      <RecentlyViewedGames />
+      <RecommendedGames />
+      <InterestRecommendations />
+      <FollowedSellerFeed />
     </main>
   );
 }

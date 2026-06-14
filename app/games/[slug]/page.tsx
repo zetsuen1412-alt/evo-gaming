@@ -17,6 +17,7 @@ import {
   FaWallet,
 } from "react-icons/fa";
 import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
+import RecentlyViewedGameTracker from "@/components/marketplace/RecentlyViewedGameTracker";
 import FeaturedSellers from "@/components/sellers/FeaturedSellers";
 import { supabase } from "@/lib/supabase";
 
@@ -485,6 +486,12 @@ export default async function GameDetailPage({ params }: PageProps) {
 
   return (
     <main className="min-h-screen bg-[#050816] text-white">
+      <RecentlyViewedGameTracker
+        gameId={game.id}
+        gameSlug={game.slug}
+        gameName={gameName}
+        imageUrl={heroImage}
+      />
       <JsonLd data={gameStructuredData} />
       <section
         className="relative border-b border-cyan-400/20 bg-cover bg-center"
