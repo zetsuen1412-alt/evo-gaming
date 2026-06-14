@@ -20,6 +20,7 @@ import {
   FaWallet,
 } from "react-icons/fa";
 import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
+import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTracker";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -389,6 +390,15 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
   return (
     <main className="min-h-screen bg-[#050816] text-white">
+      <MarketplaceEventTracker
+        event_type="product_view"
+        product_id={product.id}
+        seller_id={product.seller_id}
+        game_slug={gameSlug || null}
+        game_name={product.game_name || null}
+        category_slug={categorySlug || null}
+        category_name={product.category || null}
+      />
       <JsonLd data={productStructuredData} />
       <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_35%)]">
         <div className="mx-auto max-w-7xl px-4 py-10">

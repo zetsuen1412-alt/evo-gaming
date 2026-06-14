@@ -41,6 +41,19 @@ type Review = {
   created_at: string;
 };
 
+type MarketplaceEvent = {
+  id: number;
+  event_type: string;
+  product_id: number | null;
+  seller_id: string | null;
+  order_id: number | null;
+  game_slug: string | null;
+  game_name: string | null;
+  category_slug: string | null;
+  category_name: string | null;
+  created_at: string;
+};
+
 type Wallet = {
   id: number;
   user_id: string;
@@ -134,6 +147,7 @@ export default function SellerAnalyticsV2Page() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
+  const [marketplaceEvents, setMarketplaceEvents] = useState<MarketplaceEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
   const sellerDisplayName =
@@ -323,6 +337,73 @@ export default function SellerAnalyticsV2Page() {
     return orders.slice(0, 6);
   }, [orders]);
 
+  const productNameById = useMemo(() => {
+    return new Map(
+      products.map((product) => [Number(product.id), product.title || `Product #${product.id}`])
+    );
+  }, [products]);
+
+  const eventCounts = useMemo(() => {
+    return marketplaceEvents.reduce<Record<string, number>>((acc, event) => {
+      acc[event.event_type] = (acc[event.event_type] || 0) + 1;
+      return acc;
+    }, {});
+  }, [marketplaceEvents]);
+
+  const funnelOfferViews = eventCounts.offer_view || 0;
+  const funnelProductViews = eventCounts.product_view || 0;
+  const funnelCheckoutStarts = eventCounts.checkout_start || 0;
+  const funnelPaymentSuccess = eventCounts.payment_success || 0;
+  const funnelOrderComplete = eventCounts.order_complete || 0;
+
+  const funnelConversionRate = useMemo(() => {
+    if (funnelProductViews === 0) return 0;
+    return Math.round((funnelOrderComplete / funnelProductViews) * 1000) / 10;
+  }, [funnelProductViews, funnelOrderComplete]);
+
+  const topConvertingProducts = useMemo(() => {
+    const map = new Map<
+      number,
+      { productId: number; name: string; views: number; checkoutStarts: number; completed: number }
+    >();
+
+    marketplaceEvents.forEach((event) => {
+      if (!event.product_id) return;
+
+      const productId = Number(event.product_id);
+      const current = map.get(productId) || {
+        productId,
+        name: productNameById.get(productId) || `Product #${productId}`,
+        views: 0,
+        checkoutStarts: 0,
+        completed: 0,
+      };
+
+      if (event.event_type === "product_view") current.views += 1;
+      if (event.event_type === "checkout_start") current.checkoutStarts += 1;
+      if (event.event_type === "order_complete") current.completed += 1;
+
+      map.set(productId, current);
+    });
+
+    return Array.from(map.values())
+      .map((item) => ({
+        ...item,
+        conversionRate:
+          item.views > 0 ? Math.round((item.completed / item.views) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => {
+        const completedDiff = b.completed - a.completed;
+        if (completedDiff !== 0) return completedDiff;
+
+        const checkoutDiff = b.checkoutStarts - a.checkoutStarts;
+        if (checkoutDiff !== 0) return checkoutDiff;
+
+        return b.views - a.views;
+      })
+      .slice(0, 8);
+  }, [marketplaceEvents, productNameById]);
+
   async function loadSellerAnalytics(currentUser: User) {
     const { data: profileData, error: profileError } = await supabase
       .from("profiles")
@@ -341,7 +422,7 @@ export default function SellerAnalyticsV2Page() {
       return;
     }
 
-    const [ordersResult, productsResult, reviewsResult, walletResult] =
+    const [ordersResult, productsResult, reviewsResult, walletResult, eventsResult] =
       await Promise.all([
         supabase
           .from("orders")
@@ -365,6 +446,13 @@ export default function SellerAnalyticsV2Page() {
           .select("*")
           .eq("user_id", currentUser.id)
           .maybeSingle(),
+        supabase
+          .from("marketplace_events")
+          .select("id,event_type,product_id,seller_id,order_id,game_slug,game_name,category_slug,category_name,created_at")
+          .eq("seller_id", currentUser.id)
+          .gte("created_at", getDaysAgo(30).toISOString())
+          .order("id", { ascending: false })
+          .limit(1000),
       ]);
 
     if (ordersResult.error) {
@@ -385,6 +473,13 @@ export default function SellerAnalyticsV2Page() {
     if (walletResult.error) {
       alert(walletResult.error.message);
       return;
+    }
+
+    if (eventsResult.error) {
+      console.warn("Marketplace analytics events unavailable:", eventsResult.error.message);
+      setMarketplaceEvents([]);
+    } else {
+      setMarketplaceEvents(eventsResult.data || []);
     }
 
     setOrders(ordersResult.data || []);
@@ -636,6 +731,48 @@ export default function SellerAnalyticsV2Page() {
             <p className="mt-2 text-4xl font-black text-purple-300">
               {conversionRate}%
             </p>
+          </div>
+        </div>
+
+        <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-6">
+            <p className="text-sm text-gray-300">Offer Views</p>
+            <p className="mt-2 text-4xl font-black text-cyan-300">
+              {funnelOfferViews}
+            </p>
+            <p className="mt-2 text-xs text-gray-400">Last 30 days</p>
+          </div>
+
+          <div className="rounded-3xl border border-blue-400/20 bg-blue-400/10 p-6">
+            <p className="text-sm text-gray-300">Product Views</p>
+            <p className="mt-2 text-4xl font-black text-blue-300">
+              {funnelProductViews}
+            </p>
+            <p className="mt-2 text-xs text-gray-400">Detail page visits</p>
+          </div>
+
+          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-6">
+            <p className="text-sm text-gray-300">Checkout Starts</p>
+            <p className="mt-2 text-4xl font-black text-yellow-300">
+              {funnelCheckoutStarts}
+            </p>
+            <p className="mt-2 text-xs text-gray-400">Buyer intent signal</p>
+          </div>
+
+          <div className="rounded-3xl border border-green-400/20 bg-green-400/10 p-6">
+            <p className="text-sm text-gray-300">Payment Success</p>
+            <p className="mt-2 text-4xl font-black text-green-300">
+              {funnelPaymentSuccess}
+            </p>
+            <p className="mt-2 text-xs text-gray-400">Paid or submitted</p>
+          </div>
+
+          <div className="rounded-3xl border border-purple-400/20 bg-purple-400/10 p-6">
+            <p className="text-sm text-gray-300">Funnel Conversion</p>
+            <p className="mt-2 text-4xl font-black text-purple-300">
+              {funnelConversionRate}%
+            </p>
+            <p className="mt-2 text-xs text-gray-400">Orders / views</p>
           </div>
         </div>
 
@@ -901,6 +1038,57 @@ export default function SellerAnalyticsV2Page() {
             )}
           </aside>
         </div>
+
+        <section className="mt-8 rounded-3xl border border-cyan-400/20 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
+          <h2 className="text-3xl font-black text-cyan-300">
+            Top Converting Products
+          </h2>
+          <p className="mt-2 text-sm text-gray-400">
+            Based on marketplace funnel events from the last 30 days.
+          </p>
+
+          {topConvertingProducts.length === 0 ? (
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-6 text-center text-gray-400">
+              No funnel data yet. Product views and checkout starts will appear after buyers browse your offers.
+            </div>
+          ) : (
+            <div className="mt-6 space-y-4">
+              {topConvertingProducts.map((item, index) => (
+                <div
+                  key={item.productId}
+                  className="rounded-2xl border border-white/10 bg-black/30 p-5"
+                >
+                  <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+                    <div>
+                      <p className="text-sm font-black text-cyan-300">
+                        #{index + 1}
+                      </p>
+                      <h3 className="mt-1 text-xl font-black">{item.name}</h3>
+                      <p className="mt-1 text-sm text-gray-400">
+                        {item.views} views · {item.checkoutStarts} checkout starts · {item.completed} completed
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3 text-center text-sm md:min-w-[360px]">
+                      <div className="rounded-xl border border-blue-400/20 bg-blue-400/10 p-3">
+                        <p className="font-black text-blue-300">{item.views}</p>
+                        <p className="text-xs text-gray-400">Views</p>
+                      </div>
+                      <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-3">
+                        <p className="font-black text-yellow-300">{item.checkoutStarts}</p>
+                        <p className="text-xs text-gray-400">Checkout</p>
+                      </div>
+                      <div className="rounded-xl border border-purple-400/20 bg-purple-400/10 p-3">
+                        <p className="font-black text-purple-300">{item.conversionRate}%</p>
+                        <p className="text-xs text-gray-400">Conversion</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <div className="mt-8 rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-7">
           <h2 className="text-2xl font-black text-cyan-300">

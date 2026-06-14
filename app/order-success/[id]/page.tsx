@@ -8,6 +8,7 @@ import {
   FaShoppingBag,
   FaStore,
 } from "react-icons/fa";
+import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTracker";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -44,8 +45,10 @@ type Product = {
   image_url?: string | null;
   seller?: string | null;
   seller_name?: string | null;
+  seller_id?: string | null;
   game_name?: string | null;
   category?: string | null;
+  slug?: string | null;
 };
 
 function numberPrice(value: string | number | null | undefined) {
@@ -60,6 +63,14 @@ function formatPrice(value: string | number | null | undefined) {
     currency: "IDR",
     maximumFractionDigits: 0,
   }).format(numberPrice(value));
+}
+
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function getTotal(order: Order | null, product: Product | null) {
@@ -93,8 +104,10 @@ export default async function OrderSuccessPage({ params }: PageProps) {
         image_url,
         seller,
         seller_name,
+        seller_id,
         game_name,
-        category
+        category,
+        slug
       `)
       .eq("id", Number(order.product_id))
       .maybeSingle();
@@ -112,9 +125,21 @@ export default async function OrderSuccessPage({ params }: PageProps) {
   const total = getTotal(order, product);
   const paymentStatus = order?.payment_status || "-";
   const orderStatus = order?.status || "-";
+  const eventGameName = order?.game_name || product?.game_name || null;
+  const eventCategoryName = order?.category || product?.category || null;
 
   return (
     <main className="min-h-screen bg-[#050816] text-white">
+      <MarketplaceEventTracker
+        event_type="order_complete"
+        order_id={order?.id || orderId}
+        product_id={order?.product_id || product?.id || null}
+        seller_id={order?.seller_id || product?.seller_id || null}
+        game_slug={eventGameName ? slugify(eventGameName) : null}
+        game_name={eventGameName}
+        category_slug={eventCategoryName ? slugify(eventCategoryName) : null}
+        category_name={eventCategoryName}
+      />
       <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,.18),transparent_38%)]">
         <div className="mx-auto max-w-5xl px-4 py-14 text-center">
           <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-400/10">

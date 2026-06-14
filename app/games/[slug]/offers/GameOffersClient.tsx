@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
+import { trackMarketplaceEvent } from "@/lib/marketplace-events-client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -219,6 +220,16 @@ export default function GameOffersClient({ game }: { game: Game }) {
   useEffect(() => {
     setCategory(normalizeCategory(searchParams.get("category"), categories));
   }, [searchParams, categories]);
+
+  useEffect(() => {
+    trackMarketplaceEvent({
+      event_type: "offer_view",
+      game_slug: game.slug,
+      game_name: game.name,
+      category_slug: category !== "All" ? categorySlug(category, categories) : null,
+      category_name: category !== "All" ? category : null,
+    });
+  }, [game.slug, game.name, category, categories]);
 
   function handleCategoryChange(nextCategory: string) {
     setCategory(nextCategory);

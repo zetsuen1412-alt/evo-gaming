@@ -14,6 +14,7 @@ import {
   FaStore,
   FaWallet,
 } from "react-icons/fa";
+import { trackMarketplaceEvent } from "@/lib/marketplace-events-client";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
@@ -69,6 +70,13 @@ function fallbackImage(title: string) {
   return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
     title || "ComePlayers Order"
   )}`;
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function getOrderTotal(order: Order | null, product: Product | null) {
@@ -198,6 +206,19 @@ export default function PaymentPage() {
         return;
       }
     }
+
+    await trackMarketplaceEvent({
+      event_type: "payment_success",
+      user_id: order.buyer_id || null,
+      order_id: order.id,
+      product_id: order.product_id || null,
+      seller_id: order.seller_id || product?.seller_id || null,
+      game_slug: gameName !== "-" ? slugify(gameName) : null,
+      game_name: gameName !== "-" ? gameName : null,
+      category_slug: category !== "Game Product" ? slugify(category) : null,
+      category_name: category !== "Game Product" ? category : null,
+      metadata: { payment_method: method, payment_status: paidStatus },
+    });
 
     router.push(`/order-success/${order.id}`);
   }

@@ -14,6 +14,7 @@ import {
   FaStore,
   FaWallet,
 } from "react-icons/fa";
+import { trackMarketplaceEvent } from "@/lib/marketplace-events-client";
 import { supabase } from "@/lib/supabase";
 
 type Product = {
@@ -50,6 +51,13 @@ function fallbackImage(title: string) {
   return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
     title || "ComePlayers Product"
   )}`;
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 export default function CheckoutPage() {
@@ -113,6 +121,16 @@ export default function CheckoutPage() {
       }
 
       setProduct(data);
+      trackMarketplaceEvent({
+        event_type: "checkout_start",
+        user_id: authData.user?.id || null,
+        product_id: data.id,
+        seller_id: data.seller_id || null,
+        game_slug: data.game_name ? slugify(data.game_name) : null,
+        game_name: data.game_name || null,
+        category_slug: data.category ? slugify(data.category) : null,
+        category_name: data.category || null,
+      });
       setQuantity(1);
       setLoading(false);
     }
