@@ -1,40 +1,51 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
 type SellerProfile = {
   id: string;
   email: string | null;
-  seller_name: string | null;
   username: string | null;
+  seller_name: string | null;
+  seller_status: string | null;
 };
 
 type Product = {
   id: number;
-  title: string;
-  description: string | null;
+  title: string | null;
   price: string | number | null;
   stock: number | null;
-  image_url: string | null;
   status: string | null;
-  category_name: string | null;
-  category: string | null;
   created_at: string;
 };
 
-export default function SellerProductsPage() {
+type Order = {
+  id: number;
+  product_id: number | null;
+  product: string | null;
+  total_price: number | string | null;
+  price: string | null;
+  status: string | null;
+  created_at: string;
+};
+
+function money(value: string | number | null | undefined) {
+  const amount = Number(String(value ?? 0).replace(/[^\d]/g, "") || 0);
+  return `Rp ${amount.toLocaleString("id-ID")}`;
+}
+
+export default function SellerDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [seller, setSeller] = useState<SellerProfile | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
 
-  useEffect(() => {
-    loadProducts();
-  }, []);
-
-  async function loadProducts() {
+  const loadDashboard = useCallback(async () => {
     try {
+      setLoading(true);
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -46,8 +57,8 @@ export default function SellerProductsPage() {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("*")
-        .eq("email", user.email)
+        .select("id,email,username,seller_name,seller_status")
+        .eq("id", user.id)
         .maybeSingle();
 
       if (profileError) {
@@ -57,278 +68,311 @@ export default function SellerProductsPage() {
 
       if (!profile) {
         alert("Profile not found.");
+        window.location.href = "/";
+        return;
+      }
+
+      if (profile.seller_status !== "approved") {
+        window.location.href = "/seller/apply";
         return;
       }
 
       setSeller(profile);
 
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .eq("seller_id", profile.id)
-        .order("created_at", { ascending: false });
+      const [productsResult, ordersResult] = await Promise.all([
+        supabase
+          .from("products")
+          .select("id,title,price,stock,status,created_at")
+          .eq("seller_id", profile.id)
+          .order("created_at", { ascending: false }),
 
-      if (error) {
-        alert(error.message);
+        supabase
+          .from("orders")
+          .select("id,product_id,product,total_price,price,status,created_at")
+          .eq("seller_id", profile.id)
+          .order("created_at", { ascending: false }),
+      ]);
+
+      if (productsResult.error) {
+        alert(productsResult.error.message);
         return;
       }
 
-      setProducts(data || []);
+      if (ordersResult.error) {
+        alert(ordersResult.error.message);
+        return;
+      }
+
+      setProducts(productsResult.data || []);
+      setOrders(ordersResult.data || []);
     } catch (error) {
       console.error(error);
-      alert("Failed to load products.");
+      alert("Failed to load seller dashboard.");
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  async function deleteProduct(id: number) {
-    if (!confirm("Delete this product?")) return;
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
 
-    const { error } = await supabase.from("products").delete().eq("id", id);
+  const stats = useMemo(() => {
+    const activeProducts = products.filter(
+      (product) => product.status === "active" && Number(product.stock || 0) > 0
+    );
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
+    const outOfStock = products.filter(
+      (product) => Number(product.stock || 0) <= 0
+    );
 
-    await loadProducts();
-  }
+    const completedOrders = orders.filter(
+      (order) => order.status === "completed"
+    );
 
-  async function toggleStatus(product: Product) {
-    const nextStatus = product.status === "active" ? "inactive" : "active";
+    const pendingOrders = orders.filter(
+      (order) =>
+        order.status !== "completed" &&
+        order.status !== "cancelled" &&
+        order.status !== "refunded"
+    );
 
-    const { error } = await supabase
-      .from("products")
-      .update({
-        status: nextStatus,
-      })
-      .eq("id", product.id);
+    const revenue = completedOrders.reduce((sum, order) => {
+      return sum + Number(order.total_price || order.price || 0);
+    }, 0);
 
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    await loadProducts();
-  }
+    return {
+      totalProducts: products.length,
+      activeProducts: activeProducts.length,
+      outOfStock: outOfStock.length,
+      totalOrders: orders.length,
+      completedOrders: completedOrders.length,
+      pendingOrders: pendingOrders.length,
+      revenue,
+    };
+  }, [orders, products]);
 
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">
-          Loading products...
-        </p>
+        <div className="rounded-3xl border border-cyan-400/20 bg-white/[0.04] px-8 py-6 shadow-2xl shadow-cyan-500/10">
+          <p className="text-lg font-black text-cyan-300">
+            Loading seller dashboard...
+          </p>
+        </div>
       </main>
     );
   }
 
-  const activeProducts = products.filter(
-    (product) => product.status === "active"
-  ).length;
-
-  const inactiveProducts = products.filter(
-    (product) => product.status !== "active"
-  ).length;
-
-  const totalStock = products.reduce(
-    (sum, product) => sum + Number(product.stock || 0),
-    0
-  );
+  const displayName = seller?.seller_name || seller?.username || "Seller";
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
+      <section className="relative overflow-hidden border-b border-white/10 px-6 py-12 md:px-10">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_34%),radial-gradient(circle_at_top_right,rgba(59,130,246,.16),transparent_36%)]" />
 
-        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
-          <div>
-            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Seller Products
-            </p>
+        <div className="relative z-10 mx-auto max-w-7xl">
+          <div className="grid gap-8 lg:grid-cols-[1fr_580px] lg:items-center">
+            <div>
+              <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-5 py-2 text-sm font-black text-cyan-300 shadow-lg shadow-cyan-500/10">
+                <span>▥</span>
+                Seller Dashboard
+              </div>
 
-            <h1 className="text-5xl font-black md:text-7xl">My Products</h1>
+              <h1 className="text-5xl font-black tracking-tight md:text-7xl">
+                Welcome,{" "}
+                <span className="bg-gradient-to-r from-cyan-300 to-cyan-500 bg-clip-text text-transparent">
+                  {displayName}
+                </span>
+              </h1>
 
-            <p className="mt-5 max-w-2xl text-gray-300">
-              Manage your listings, update product status, and control your
-              seller inventory.
-            </p>
+              <p className="mt-5 max-w-2xl text-base leading-8 text-slate-300 md:text-lg">
+                Track your marketplace performance, orders, revenue, products,
+                and seller activity from one clean dashboard.
+              </p>
+            </div>
 
-            <p className="mt-3 text-sm text-gray-500">
-              Seller:{" "}
-              {seller?.seller_name || seller?.username || seller?.email || "-"}
-            </p>
-          </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Link
+                href="/seller/products"
+                className="group rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-2xl shadow-black/20 transition hover:-translate-y-1 hover:border-cyan-400/40 hover:bg-cyan-400/10"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="rounded-2xl bg-blue-500/15 p-4 text-3xl">
+                    📦
+                  </div>
+                  <span className="rounded-full bg-white/10 px-3 py-2 transition group-hover:bg-cyan-400 group-hover:text-black">
+                    →
+                  </span>
+                </div>
+                <h2 className="mt-6 text-xl font-black">My Products</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  Manage your listed products.
+                </p>
+              </Link>
 
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/seller"
-              className="rounded-full border border-white/10 px-5 py-2 font-bold text-gray-300 transition hover:bg-white hover:text-black"
-            >
-              Dashboard
-            </Link>
-
-            <Link
-              href="/seller/products/new"
-              className="rounded-full bg-cyan-400 px-5 py-2 font-black text-black transition hover:bg-cyan-300"
-            >
-              Add Product
-            </Link>
+              <Link
+                href="/seller/products/new"
+                className="group rounded-3xl border border-cyan-400/20 bg-cyan-400/15 p-6 shadow-2xl shadow-cyan-500/10 transition hover:-translate-y-1 hover:border-cyan-300 hover:bg-cyan-400/20"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="rounded-2xl bg-cyan-400/20 p-4 text-3xl">
+                    ＋
+                  </div>
+                  <span className="rounded-full bg-white/10 px-3 py-2 transition group-hover:bg-cyan-400 group-hover:text-black">
+                    →
+                  </span>
+                </div>
+                <h2 className="mt-6 text-xl font-black">Add Product</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  Create a new product listing.
+                </p>
+              </Link>
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="px-8 py-10">
-        <div className="mb-10 grid gap-5 md:grid-cols-4">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
-            <p className="text-sm font-bold text-gray-400">Total Products</p>
-            <h2 className="mt-3 text-4xl font-black text-cyan-300">
-              {products.length}
-            </h2>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
-            <p className="text-sm font-bold text-gray-400">Active</p>
-            <h2 className="mt-3 text-4xl font-black text-green-300">
-              {activeProducts}
-            </h2>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
-            <p className="text-sm font-bold text-gray-400">Inactive</p>
-            <h2 className="mt-3 text-4xl font-black text-yellow-300">
-              {inactiveProducts}
-            </h2>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
-            <p className="text-sm font-bold text-gray-400">Total Stock</p>
-            <h2 className="mt-3 text-4xl font-black text-cyan-300">
-              {totalStock}
-            </h2>
-          </div>
-        </div>
-
-        {products.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-12 text-center shadow-2xl shadow-black/30">
-            <h2 className="text-3xl font-black">No Products Yet</h2>
-
-            <p className="mt-3 text-gray-400">Create your first listing.</p>
-
-            <Link
-              href="/seller/products/new"
-              className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black transition hover:bg-cyan-300"
+      <section className="mx-auto max-w-7xl px-6 py-10 md:px-10">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["💰", "Revenue", money(stats.revenue), "Total earnings", "text-cyan-300"],
+            ["🛍️", "Orders", stats.totalOrders, "Total orders", "text-emerald-300"],
+            ["📦", "Active Products", stats.activeProducts, "Currently live", "text-cyan-300"],
+            ["⏱️", "Pending Orders", stats.pendingOrders, "Awaiting action", "text-yellow-300"],
+          ].map(([icon, label, value, desc, color]) => (
+            <div
+              key={label}
+              className="rounded-3xl border border-white/10 bg-white/[0.04] p-6 shadow-2xl shadow-black/20"
             >
-              Add Product
-            </Link>
-          </div>
-        ) : (
-          <div className="grid gap-6">
-            {products.map((product) => (
-              <div
-                key={product.id}
-                className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30"
-              >
-                <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
-                  <div className="flex h-64 items-center justify-center bg-black/50 lg:h-full">
-                    {product.image_url ? (
-                      <img
-                        src={product.image_url}
-                        alt={product.title}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-6xl">🎮</span>
-                    )}
-                  </div>
-
-                  <div className="p-6">
-                    <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-start">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <h2 className="text-2xl font-black">
-                            {product.title}
-                          </h2>
-
-                          {product.status === "active" ? (
-                            <span className="rounded-full bg-green-400/10 px-3 py-1 text-xs font-black text-green-300">
-                              Active
-                            </span>
-                          ) : (
-                            <span className="rounded-full bg-yellow-400/10 px-3 py-1 text-xs font-black text-yellow-300">
-                              Inactive
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="mt-2 text-sm font-bold text-cyan-300">
-                          {product.category_name ||
-                            product.category ||
-                            "Game Product"}
-                        </p>
-
-                        <p className="mt-4 line-clamp-3 max-w-3xl text-gray-400">
-                          {product.description || "No description provided."}
-                        </p>
-                      </div>
-
-                      <div className="grid min-w-[220px] gap-4 rounded-2xl border border-white/10 bg-black/30 p-5">
-                        <div>
-                          <p className="text-sm text-gray-400">Price</p>
-                          <h3 className="mt-1 text-2xl font-black text-cyan-300">
-                            Rp{" "}
-                            {Number(product.price || 0).toLocaleString(
-                              "id-ID"
-                            )}
-                          </h3>
-                        </div>
-
-                        <div>
-                          <p className="text-sm text-gray-400">Stock</p>
-                          <h3 className="mt-1 text-2xl font-black">
-                            {product.stock || 0}
-                          </h3>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-6 flex flex-wrap gap-3">
-                      <Link
-                        href={`/seller/products/${product.id}/edit`}
-                        className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-black transition hover:bg-cyan-300"
-                      >
-                        Edit
-                      </Link>
-
-                      <button
-                        onClick={() => toggleStatus(product)}
-                        className="rounded-xl bg-yellow-500 px-5 py-3 font-black text-black transition hover:bg-yellow-400"
-                      >
-                        {product.status === "active"
-                          ? "Deactivate"
-                          : "Activate"}
-                      </button>
-
-                      <button
-                        onClick={() => deleteProduct(product.id)}
-                        className="rounded-xl bg-red-500 px-5 py-3 font-black text-white transition hover:bg-red-400"
-                      >
-                        Delete
-                      </button>
-
-                      <Link
-                        href={`/product/${product.id}`}
-                        className="rounded-xl border border-white/10 px-5 py-3 font-black text-gray-300 transition hover:bg-white hover:text-black"
-                      >
-                        View Product
-                      </Link>
-                    </div>
-                  </div>
+              <div className="flex items-center gap-5">
+                <div className="rounded-2xl bg-white/10 p-4 text-3xl">
+                  {icon}
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-300">{label}</p>
+                  <h2 className={`mt-2 text-4xl font-black ${color}`}>
+                    {value}
+                  </h2>
+                  <p className="mt-2 text-sm text-slate-400">{desc}</p>
                 </div>
               </div>
-            ))}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/20">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-black">Recent Orders</h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Latest buyer activity for your products.
+              </p>
+            </div>
+
+            <Link
+              href="/seller/orders"
+              className="rounded-2xl border border-cyan-400/40 px-5 py-3 text-sm font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+            >
+              View All Orders →
+            </Link>
           </div>
-        )}
+
+          {orders.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center">
+              <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-3xl">
+                ▱
+              </div>
+              <p className="font-black text-white">No orders yet</p>
+              <p className="mt-2 text-sm text-slate-400">
+                Orders will appear here once you start getting sales.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {orders.slice(0, 5).map((order) => (
+                <Link
+                  key={order.id}
+                  href="/seller/orders"
+                  className="block rounded-2xl border border-white/10 bg-black/20 p-4 transition hover:border-cyan-400/50 hover:bg-cyan-400/5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <p className="font-black">
+                        {order.product || `Order #${order.id}`}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {new Date(order.created_at).toLocaleString("id-ID")}
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      <p className="font-black text-cyan-300">
+                        {money(order.total_price || order.price)}
+                      </p>
+                      <p
+                        className={`mt-1 text-xs font-black ${
+                          order.status === "completed"
+                            ? "text-emerald-300"
+                            : "text-yellow-300"
+                        }`}
+                      >
+                        {order.status || "pending"}
+                      </p>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 grid gap-6 lg:grid-cols-[420px_1fr]">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/20">
+            <h2 className="text-2xl font-black">Seller Snapshot</h2>
+
+            <div className="mt-6 overflow-hidden rounded-2xl border border-white/10">
+              {[
+                ["Total Products", stats.totalProducts, "text-white"],
+                ["Completed Orders", stats.completedOrders, "text-emerald-300"],
+                ["Out Of Stock", stats.outOfStock, "text-red-300"],
+                ["Seller Status", seller?.seller_status || "approved", "text-cyan-300"],
+              ].map(([label, value, color]) => (
+                <div
+                  key={label}
+                  className="flex items-center justify-between border-b border-white/10 px-5 py-4 last:border-b-0"
+                >
+                  <span className="text-sm text-slate-400">{label}</span>
+                  <span className={`font-black ${color}`}>{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/20">
+            <h2 className="text-2xl font-black">Tips to Grow Your Store</h2>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {[
+                ["👤", "Complete Your Profile", "Add store description and logo to build trust."],
+                ["🏷️", "List Quality Products", "Use clear titles, details, and images."],
+                ["💬", "Respond Quickly", "Fast responses improve buyer satisfaction."],
+                ["📣", "Promote Listings", "Share your products on social media."],
+              ].map(([icon, title, desc]) => (
+                <div
+                  key={title}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-5"
+                >
+                  <div className="mb-4 text-3xl">{icon}</div>
+                  <h3 className="font-black">{title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    {desc}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   );

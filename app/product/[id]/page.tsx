@@ -24,6 +24,7 @@ import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTr
 import RecentlyViewedTracker from "@/components/marketplace/RecentlyViewedTracker";
 import RecommendedProducts from "@/components/marketplace/RecommendedProducts";
 import { supabase } from "@/lib/supabase";
+import { calculateSellerReputation } from "@/lib/sellerReputation";
 
 type PageProps = {
   params: Promise<{
@@ -183,6 +184,54 @@ export default async function ProductDetailPage({ params }: PageProps) {
     notFound();
   }
 
+  const [
+    { data: sellerProfile },
+    { data: sellerCompletedOrdersData },
+    { data: sellerFollowerRows },
+    { data: sellerActiveProducts },
+  ] = product.seller_id
+    ? await Promise.all([
+        supabase
+          .from("profiles")
+          .select("id,username,seller_name,seller_rating,seller_review_count,seller_status")
+          .eq("id", product.seller_id)
+          .maybeSingle(),
+        supabase
+          .from("orders")
+          .select("id")
+          .eq("seller_id", product.seller_id)
+          .eq("status", "completed"),
+        supabase
+          .from("seller_followers")
+          .select("id")
+          .eq("seller_id", product.seller_id),
+        supabase
+          .from("products")
+          .select("id")
+          .eq("seller_id", product.seller_id)
+          .eq("status", "active"),
+      ])
+    : [
+        { data: null },
+        { data: [] },
+        { data: [] },
+        { data: [] },
+      ];
+
+  const sellerAverageRating = Number(sellerProfile?.seller_rating || 0);
+  const sellerReviewCount = Number(sellerProfile?.seller_review_count || 0);
+  const sellerCompletedOrdersCount = sellerCompletedOrdersData?.length || 0;
+  const sellerFollowersCount = sellerFollowerRows?.length || 0;
+  const sellerActiveProductsCount = sellerActiveProducts?.length || 0;
+  const sellerReputation = calculateSellerReputation({
+    averageRating: sellerAverageRating,
+    reviewCount: sellerReviewCount,
+    completedOrders: sellerCompletedOrdersCount,
+    followersCount: sellerFollowersCount,
+    activeProducts: sellerActiveProductsCount,
+    sellerStatus: sellerProfile?.seller_status || null,
+  });
+
   const gameSlug = product.game_name ? slugify(product.game_name) : "";
   const categorySlug = product.category ? slugify(product.category) : "";
   const gameOffersHref = gameSlug
@@ -321,7 +370,12 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
   const CategoryIcon = getCategoryIcon(product.category);
   const imageUrl = product.image_url || fallbackImage(product.title);
-  const sellerName = product.seller_name || product.seller || "Verified Seller";
+  const sellerName =
+    sellerProfile?.seller_name ||
+    sellerProfile?.username ||
+    product.seller_name ||
+    product.seller ||
+    "Verified Seller";
   const stock = Number(product.stock ?? 1);
   const productCanonicalPath = `/product/${product.slug || product.id}`;
   const productStructuredData = [
@@ -524,9 +578,38 @@ export default async function ProductDetailPage({ params }: PageProps) {
                   <div>
                     <p className="font-black">{sellerName}</p>
                     <p className="mt-1 flex items-center gap-2 text-sm text-yellow-300">
-                      <FaStar /> 4.9 Seller Rating
+                      <FaStar />
+                      {sellerAverageRating > 0
+                        ? `${sellerAverageRating.toFixed(1)} rating • ${sellerReviewCount} reviews`
+                        : "New seller"}
                     </p>
                   </div>
+                </div>
+
+                <div className={`mt-5 rounded-2xl border p-4 ${sellerReputation.colorClass}`}>
+                  <p className="text-xs font-black uppercase tracking-[0.2em] opacity-80">
+                    Seller Reputation
+                  </p>
+
+                  <div className="mt-2 flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-4xl font-black text-white">
+                        {sellerReputation.score}
+                      </p>
+                      <p className="mt-1 text-sm font-black">
+                        {sellerReputation.badge} {sellerReputation.tierLabel}
+                      </p>
+                    </div>
+
+                    <div className="text-right text-xs text-slate-300">
+                      <p>{sellerCompletedOrdersCount} completed</p>
+                      <p>{sellerFollowersCount} followers</p>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-xs leading-5 text-slate-300">
+                    {sellerReputation.description}
+                  </p>
                 </div>
 
                 <div className="mt-5 space-y-3 text-sm text-slate-300">

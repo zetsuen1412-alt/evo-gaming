@@ -6,6 +6,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { createNotification } from "@/lib/createNotification";
+import { calculateSellerReputation } from "@/lib/sellerReputation";
 
 type SellerProfile = {
   id: string;
@@ -103,7 +104,7 @@ export default function SellerProfileV3NotificationFollowerPage() {
 
     const total = reviews.reduce(
       (sum, review) => sum + Number(review.rating),
-      0
+      0,
     );
 
     return total / reviews.length;
@@ -111,13 +112,31 @@ export default function SellerProfileV3NotificationFollowerPage() {
 
   const completedOrders = useMemo(() => {
     return orders.filter(
-      (order) => normalizeStatus(order.status) === "Completed"
+      (order) => normalizeStatus(order.status) === "Completed",
     ).length;
   }, [orders]);
 
   const activeProducts = useMemo(() => {
     return products.filter((product) => product.status === "active");
   }, [products]);
+
+  const sellerReputation = useMemo(() => {
+    return calculateSellerReputation({
+      averageRating,
+      reviewCount: reviews.length,
+      completedOrders,
+      activeProducts: activeProducts.length,
+      followersCount,
+      sellerStatus: seller?.seller_status || null,
+    });
+  }, [
+    averageRating,
+    reviews.length,
+    completedOrders,
+    activeProducts.length,
+    followersCount,
+    seller?.seller_status,
+  ]);
 
   const isOwnProfile = currentUser?.id === sellerId;
   const isFollowing = Boolean(followRow);
@@ -296,9 +315,7 @@ export default function SellerProfileV3NotificationFollowerPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
-          <h1 className="text-3xl font-black text-red-300">
-            Seller Not Found
-          </h1>
+          <h1 className="text-3xl font-black text-red-300">Seller Not Found</h1>
 
           <Link
             href="/"
@@ -352,6 +369,12 @@ export default function SellerProfileV3NotificationFollowerPage() {
                       : "Seller"}
                   </span>
 
+                  <span
+                    className={`rounded-full border px-4 py-2 text-sm font-black ${sellerReputation.colorClass}`}
+                  >
+                    {sellerReputation.badge} {sellerReputation.tierLabel}
+                  </span>
+
                   <span className="rounded-full border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-sm font-black text-yellow-300">
                     ★ {roundedRating || "0.0"} / 5
                   </span>
@@ -391,8 +414,8 @@ export default function SellerProfileV3NotificationFollowerPage() {
                   {followLoading
                     ? "Updating..."
                     : isFollowing
-                    ? "✓ Following"
-                    : "+ Follow Seller"}
+                      ? "✓ Following"
+                      : "+ Follow Seller"}
                 </button>
               )}
 
@@ -409,6 +432,24 @@ export default function SellerProfileV3NotificationFollowerPage() {
             <h2 className="text-2xl font-black">Seller Stats</h2>
 
             <div className="mt-6 grid gap-4">
+              <div
+                className={`rounded-2xl border p-5 ${sellerReputation.colorClass}`}
+              >
+                <p className="text-sm opacity-80">Seller Reputation</p>
+                <div className="mt-2 flex items-end justify-between gap-3">
+                  <p className="text-4xl font-black text-white">
+                    {sellerReputation.score}
+                    <span className="text-base text-gray-300">/100</span>
+                  </p>
+                  <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-xs font-black">
+                    {sellerReputation.badge} {sellerReputation.tierLabel}
+                  </span>
+                </div>
+                <p className="mt-3 text-sm text-gray-300">
+                  {sellerReputation.description}
+                </p>
+              </div>
+
               <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
                 <p className="text-sm text-gray-400">Average Rating</p>
                 <p className="mt-1 text-4xl font-black text-yellow-300">

@@ -39,6 +39,9 @@ type Order = {
   seller_name?: string | null;
   game_name?: string | null;
   category?: string | null;
+  completed_at?: string | null;
+  escrow_status?: string | null;
+  escrow_released_at?: string | null;
 };
 
 type Product = {
@@ -89,7 +92,11 @@ function prettyStatus(value?: string | null) {
 function statusStyle(value?: string | null) {
   const status = normalizeStatus(value);
 
-  if (status.includes("complete")) {
+  if (status.includes("disputed")) {
+    return "border-red-400/40 bg-red-400/10 text-red-300";
+  }
+
+  if (status.includes("complete") || status.includes("released")) {
     return "border-emerald-400/40 bg-emerald-400/10 text-emerald-300";
   }
 
@@ -97,11 +104,11 @@ function statusStyle(value?: string | null) {
     return "border-blue-400/40 bg-blue-400/10 text-blue-300";
   }
 
-  if (status.includes("paid")) {
+  if (status.includes("paid") || status.includes("holding")) {
     return "border-cyan-400/40 bg-cyan-400/10 text-cyan-300";
   }
 
-  if (status.includes("waiting")) {
+  if (status.includes("waiting") || status.includes("ready")) {
     return "border-yellow-400/40 bg-yellow-400/10 text-yellow-300";
   }
 
@@ -144,7 +151,10 @@ export default function OrderDetailPage() {
   const productTitle =
     order?.product_title || order?.product || product?.title || "Product";
   const sellerName =
-    order?.seller_name || product?.seller_name || product?.seller || "Verified Seller";
+    order?.seller_name ||
+    product?.seller_name ||
+    product?.seller ||
+    "Verified Seller";
   const buyerName = order?.buyer || order?.buyer_id || "Buyer";
   const gameName = order?.game_name || product?.game_name || "-";
   const category = order?.category || product?.category || "Game Product";
@@ -215,11 +225,22 @@ export default function OrderDetailPage() {
     setUpdating(nextStatus);
     setError("");
 
+    const payload: Record<string, string> = {
+      status: nextStatus,
+    };
+
+    if (nextStatus === "delivered") {
+      payload.escrow_status = "holding";
+    }
+
+    if (nextStatus === "completed") {
+      payload.completed_at = new Date().toISOString();
+      payload.escrow_status = "ready_to_release";
+    }
+
     const { error: updateError } = await supabase
       .from("orders")
-      .update({
-        status: nextStatus,
-      })
+      .update(payload)
       .eq("id", order.id);
 
     if (updateError) {
@@ -230,6 +251,60 @@ export default function OrderDetailPage() {
 
     await loadOrder();
     setUpdating("");
+  }
+
+  async function openDispute() {
+    if (!order) return;
+
+    const reason = prompt(
+      "Describe the issue with this order:",
+      "Product was not delivered correctly."
+    );
+
+    if (reason === null) return;
+
+    setUpdating("disputed");
+    setError("");
+
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({
+        escrow_status: "disputed",
+        status: "disputed",
+      })
+      .eq("id", order.id);
+
+    if (updateError) {
+      setError(updateError.message);
+      setUpdating("");
+      return;
+    }
+
+    if (order.seller_id) {
+      await supabase.from("notifications").insert({
+        user_id: order.seller_id,
+        type: "dispute_opened",
+        title: "⚠️ Order Dispute Opened",
+        message: `Buyer opened a dispute for order #${order.id}. ${reason}`,
+        link_url: `/orders/${order.id}`,
+        is_read: false,
+      });
+    }
+
+    if (order.buyer_id) {
+      await supabase.from("notifications").insert({
+        user_id: order.buyer_id,
+        type: "dispute_opened",
+        title: "⚠️ Dispute Submitted",
+        message: `Your dispute for order #${order.id} has been submitted.`,
+        link_url: `/orders/${order.id}`,
+        is_read: false,
+      });
+    }
+
+    await loadOrder();
+    setUpdating("");
+    alert("Dispute opened. Seller/admin will review this order.");
   }
 
   if (loading) {
@@ -250,6 +325,8 @@ export default function OrderDetailPage() {
       </main>
     );
   }
+
+  const escrowStatus = order?.escrow_status || "pending";
 
   return (
     <main className="min-h-screen bg-[#050816] text-white">
@@ -272,8 +349,8 @@ export default function OrderDetailPage() {
               <h1 className="mt-5 text-5xl font-black">Order Detail</h1>
 
               <p className="mt-3 max-w-2xl text-slate-300">
-                Track payment, seller delivery, buyer confirmation, and order
-                status.
+                Track payment, seller delivery, buyer confirmation, escrow, and
+                dispute status.
               </p>
             </div>
 
@@ -292,6 +369,14 @@ export default function OrderDetailPage() {
                 )}`}
               >
                 Payment: {prettyStatus(order?.payment_status)}
+              </span>
+
+              <span
+                className={`rounded-full border px-4 py-2 text-sm font-black ${statusStyle(
+                  escrowStatus
+                )}`}
+              >
+                Escrow: {prettyStatus(escrowStatus)}
               </span>
             </div>
           </div>
@@ -428,6 +513,29 @@ export default function OrderDetailPage() {
               <div className="flex gap-4">
                 <div
                   className={`flex h-11 w-11 items-center justify-center rounded-full ${
+                    normalizeStatus(escrowStatus).includes("disputed")
+                      ? "bg-red-400 text-black"
+                      : normalizeStatus(escrowStatus).includes("ready") ||
+                        normalizeStatus(escrowStatus).includes("released")
+                      ? "bg-yellow-400 text-black"
+                      : normalizeStatus(escrowStatus).includes("holding")
+                      ? "bg-cyan-400 text-black"
+                      : "bg-white/10 text-slate-400"
+                  }`}
+                >
+                  <FaShieldAlt />
+                </div>
+                <div>
+                  <p className="font-black">Escrow Status</p>
+                  <p className="text-sm text-slate-400">
+                    {prettyStatus(escrowStatus)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-4">
+                <div
+                  className={`flex h-11 w-11 items-center justify-center rounded-full ${
                     normalizeStatus(order?.status).includes("completed")
                       ? "bg-emerald-400 text-black"
                       : "bg-white/10 text-slate-400"
@@ -439,7 +547,7 @@ export default function OrderDetailPage() {
                   <p className="font-black">Completed</p>
                   <p className="text-sm text-slate-400">
                     {normalizeStatus(order?.status).includes("completed")
-                      ? "Order completed successfully."
+                      ? `Order completed on ${formatDate(order?.completed_at)}.`
                       : "Buyer confirmation is still pending."}
                   </p>
                 </div>
@@ -472,7 +580,8 @@ export default function OrderDetailPage() {
 
               {isSeller &&
               !normalizeStatus(order?.status).includes("delivered") &&
-              !normalizeStatus(order?.status).includes("completed") ? (
+              !normalizeStatus(order?.status).includes("completed") &&
+              !normalizeStatus(order?.status).includes("disputed") ? (
                 <button
                   onClick={() => updateOrderStatus("delivered")}
                   disabled={updating === "delivered"}
@@ -485,7 +594,8 @@ export default function OrderDetailPage() {
 
               {isBuyer &&
               normalizeStatus(order?.status).includes("delivered") &&
-              !normalizeStatus(order?.status).includes("completed") ? (
+              !normalizeStatus(order?.status).includes("completed") &&
+              !normalizeStatus(order?.status).includes("disputed") ? (
                 <button
                   onClick={() => updateOrderStatus("completed")}
                   disabled={updating === "completed"}
@@ -495,6 +605,20 @@ export default function OrderDetailPage() {
                   {updating === "completed"
                     ? "Updating..."
                     : "Confirm Received"}
+                </button>
+              ) : null}
+
+              {isBuyer &&
+              normalizeStatus(order?.status).includes("delivered") &&
+              !normalizeStatus(order?.status).includes("completed") &&
+              !normalizeStatus(order?.status).includes("disputed") ? (
+                <button
+                  onClick={openDispute}
+                  disabled={updating === "disputed"}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-500 px-5 py-4 font-black text-white hover:bg-red-400 disabled:opacity-60"
+                >
+                  <FaExclamationTriangle />
+                  {updating === "disputed" ? "Opening..." : "Open Dispute"}
                 </button>
               ) : null}
 
@@ -518,6 +642,39 @@ export default function OrderDetailPage() {
                 </Link>
               ) : null}
             </div>
+          </div>
+
+          <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-6">
+            <h3 className="flex items-center gap-2 text-xl font-black text-yellow-200">
+              <FaShieldAlt />
+              Escrow Protection
+            </h3>
+
+            <div className="mt-5 space-y-4 text-sm">
+              <div className="flex justify-between border-b border-white/10 pb-3">
+                <span className="text-slate-300">Escrow Status</span>
+                <span className="font-bold text-yellow-200">
+                  {prettyStatus(escrowStatus)}
+                </span>
+              </div>
+
+              <div className="flex justify-between border-b border-white/10 pb-3">
+                <span className="text-slate-300">Completed At</span>
+                <span className="font-bold">{formatDate(order?.completed_at)}</span>
+              </div>
+
+              <div className="flex justify-between">
+                <span className="text-slate-300">Released At</span>
+                <span className="font-bold">
+                  {formatDate(order?.escrow_released_at)}
+                </span>
+              </div>
+            </div>
+
+            <p className="mt-5 text-sm leading-6 text-slate-300">
+              Payment is held until the order is delivered and confirmed. If the
+              buyer opens a dispute, escrow will stay on hold for review.
+            </p>
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
@@ -576,8 +733,9 @@ export default function OrderDetailPage() {
             </h3>
 
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              If something is wrong with the order, contact the seller first. A
-              dispute system can be added in the next version.
+              If something is wrong with the order, chat with the seller first.
+              If the problem is not resolved, open a dispute before confirming
+              the order.
             </p>
           </div>
         </aside>

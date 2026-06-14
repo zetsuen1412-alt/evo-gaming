@@ -33,6 +33,22 @@ type Product = {
   slug?: string | null;
 };
 
+type Coupon = {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  discount_type: "fixed" | "percent";
+  discount_value: string | number;
+  minimum_order_amount: string | number;
+  maximum_discount_amount: string | number | null;
+  usage_limit: number | null;
+  used_count: number;
+  start_at: string | null;
+  end_at: string | null;
+  status: "active" | "inactive";
+};
+
 function numberPrice(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
   if (typeof value === "number") return value;
@@ -60,6 +76,10 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
+function normalizeCouponCode(value: string) {
+  return value.trim().toUpperCase().replace(/\s+/g, "-");
+}
+
 export default function CheckoutPage() {
   const router = useRouter();
   const params = useParams<{ id?: string }>();
@@ -75,8 +95,24 @@ export default function CheckoutPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
+  const [couponCode, setCouponCode] = useState("");
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [couponError, setCouponError] = useState("");
+  const [couponData, setCouponData] = useState<Coupon | null>(null);
+  const [discountAmount, setDiscountAmount] = useState(0);
+
   const unitPrice = numberPrice(product?.price);
-  const total = useMemo(() => unitPrice * quantity, [unitPrice, quantity]);
+
+  const subtotal = useMemo(
+    () => unitPrice * quantity,
+    [unitPrice, quantity]
+  );
+
+  const total = useMemo(
+    () => Math.max(0, subtotal - discountAmount),
+    [discountAmount, subtotal]
+  );
+
   const stock = Number(product?.stock ?? 1);
   const sellerName = product?.seller_name || product?.seller || "Verified Seller";
 
@@ -121,6 +157,11 @@ export default function CheckoutPage() {
       }
 
       setProduct(data);
+      setCouponCode("");
+      setCouponError("");
+      setCouponData(null);
+      setDiscountAmount(0);
+
       trackMarketplaceEvent({
         event_type: "checkout_start",
         user_id: authData.user?.id || null,
@@ -131,12 +172,108 @@ export default function CheckoutPage() {
         category_slug: data.category ? slugify(data.category) : null,
         category_name: data.category || null,
       });
+
       setQuantity(1);
       setLoading(false);
     }
 
     loadCheckout();
   }, [productId]);
+
+  useEffect(() => {
+    if (!couponData) return;
+
+    calculateCouponDiscount(couponData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quantity, subtotal]);
+
+  function calculateCouponDiscount(coupon: Coupon) {
+    let discount = 0;
+
+    if (coupon.discount_type === "percent") {
+      discount = subtotal * (Number(coupon.discount_value || 0) / 100);
+
+      if (coupon.maximum_discount_amount) {
+        discount = Math.min(
+          discount,
+          Number(coupon.maximum_discount_amount)
+        );
+      }
+    } else {
+      discount = Number(coupon.discount_value || 0);
+    }
+
+    discount = Math.min(discount, subtotal);
+    setDiscountAmount(Math.max(0, discount));
+  }
+
+  function removeCoupon() {
+    setCouponData(null);
+    setCouponError("");
+    setDiscountAmount(0);
+  }
+
+  async function applyCoupon() {
+    const code = normalizeCouponCode(couponCode);
+
+    if (!code) {
+      setCouponError("Enter coupon code.");
+      return;
+    }
+
+    setCouponLoading(true);
+    setCouponError("");
+
+    const { data, error } = await supabase
+      .from("coupons")
+      .select("*")
+      .eq("code", code)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (error || !data) {
+      setCouponError("Coupon not found or inactive.");
+      setCouponLoading(false);
+      return;
+    }
+
+    const coupon = data as Coupon;
+    const now = new Date();
+
+    if (coupon.start_at && now < new Date(coupon.start_at)) {
+      setCouponError("Coupon is not active yet.");
+      setCouponLoading(false);
+      return;
+    }
+
+    if (coupon.end_at && now > new Date(coupon.end_at)) {
+      setCouponError("Coupon has expired.");
+      setCouponLoading(false);
+      return;
+    }
+
+    if (
+      coupon.usage_limit !== null &&
+      Number(coupon.used_count || 0) >= Number(coupon.usage_limit)
+    ) {
+      setCouponError("Coupon usage limit has been reached.");
+      setCouponLoading(false);
+      return;
+    }
+
+    if (subtotal < Number(coupon.minimum_order_amount || 0)) {
+      setCouponError(
+        `Minimum purchase is ${formatPrice(coupon.minimum_order_amount)}.`
+      );
+      setCouponLoading(false);
+      return;
+    }
+
+    setCouponData(coupon);
+    setCouponCode(coupon.code);
+    calculateCouponDiscount(coupon);
+    setCouponLoading(false);
+  }
 
   async function createOrder() {
     if (!product || !userId) {
@@ -152,9 +289,15 @@ export default function CheckoutPage() {
       seller_id: product.seller_id,
       product_id: product.id,
       quantity,
+
+      subtotal_amount: subtotal,
+      discount_amount: discountAmount,
+      coupon_code: couponData?.code || null,
+
       total_amount: total,
       total_price: total,
       price: total,
+
       status: "pending",
       payment_status: "unpaid",
       product_title: product.title,
@@ -198,6 +341,15 @@ export default function CheckoutPage() {
       orderId = data?.id || null;
     }
 
+    if (couponData) {
+      await supabase
+        .from("coupons")
+        .update({
+          used_count: Number(couponData.used_count || 0) + 1,
+        })
+        .eq("id", couponData.id);
+    }
+
     router.push(`/payment/${orderId}`);
   }
 
@@ -233,6 +385,7 @@ export default function CheckoutPage() {
           </Link>
 
           <h1 className="mt-8 text-5xl font-black">Checkout</h1>
+
           <p className="mt-3 text-slate-300">
             Review your order before continuing to payment.
           </p>
@@ -281,6 +434,7 @@ export default function CheckoutPage() {
                   <button
                     onClick={() => setQuantity((q) => Math.max(1, q - 1))}
                     className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-black/30"
+                    type="button"
                   >
                     <FaMinus />
                   </button>
@@ -292,6 +446,7 @@ export default function CheckoutPage() {
                   <button
                     onClick={() => setQuantity((q) => Math.min(stock, q + 1))}
                     className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-black/30"
+                    type="button"
                   >
                     <FaPlus />
                   </button>
@@ -360,6 +515,20 @@ export default function CheckoutPage() {
               </div>
 
               <div className="flex justify-between border-b border-white/10 pb-3">
+                <span className="text-slate-300">Subtotal</span>
+                <span className="font-bold">{formatPrice(subtotal)}</span>
+              </div>
+
+              {discountAmount > 0 ? (
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-green-300">Coupon Discount</span>
+                  <span className="font-bold text-green-300">
+                    -{formatPrice(discountAmount)}
+                  </span>
+                </div>
+              ) : null}
+
+              <div className="flex justify-between border-b border-white/10 pb-3">
                 <span className="text-slate-300">Platform Fee</span>
                 <span className="font-bold">Rp 0</span>
               </div>
@@ -370,6 +539,62 @@ export default function CheckoutPage() {
                   {formatPrice(total)}
                 </span>
               </div>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-4">
+              <label className="mb-2 block text-sm font-black text-slate-200">
+                Coupon Code
+              </label>
+
+              <div className="flex gap-2">
+                <input
+                  value={couponCode}
+                  onChange={(event) => {
+                    setCouponCode(event.target.value);
+                    setCouponError("");
+                  }}
+                  disabled={Boolean(couponData)}
+                  placeholder="WELCOME10"
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-yellow-400 disabled:opacity-60"
+                />
+
+                {couponData ? (
+                  <button
+                    type="button"
+                    onClick={removeCoupon}
+                    className="rounded-xl border border-red-400/40 px-4 py-3 font-black text-red-300 hover:bg-red-500 hover:text-white"
+                  >
+                    Remove
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={applyCoupon}
+                    disabled={couponLoading}
+                    className="rounded-xl bg-yellow-400 px-4 py-3 font-black text-black hover:bg-yellow-300 disabled:opacity-60"
+                  >
+                    {couponLoading ? "Checking..." : "Apply"}
+                  </button>
+                )}
+              </div>
+
+              {couponError ? (
+                <p className="mt-2 text-sm font-bold text-red-300">
+                  {couponError}
+                </p>
+              ) : null}
+
+              {couponData ? (
+                <div className="mt-3 rounded-xl border border-green-400/20 bg-green-400/10 p-3">
+                  <p className="font-black text-green-300">
+                    Coupon Applied: {couponData.code}
+                  </p>
+
+                  <p className="mt-1 text-sm text-slate-300">
+                    {couponData.name}
+                  </p>
+                </div>
+              ) : null}
             </div>
 
             {error ? (
@@ -405,6 +630,7 @@ export default function CheckoutPage() {
 
             <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-black/30 p-4">
               <p className="font-black">ComePlayers Wallet / Payment</p>
+
               <p className="mt-2 text-sm text-slate-400">
                 You will choose the final payment method on the payment page.
               </p>

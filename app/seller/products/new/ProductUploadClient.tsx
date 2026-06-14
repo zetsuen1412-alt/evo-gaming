@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
@@ -31,6 +31,26 @@ type GameMaster = {
   image_url: string | null;
 };
 
+type ExistingProduct = {
+  id: number;
+  title: string | null;
+  description: string | null;
+  price: string | number | null;
+  stock: number | null;
+  category: string | null;
+  category_id: number | null;
+  game_name: string | null;
+  game_category_id: number | null;
+  seller_id: string | null;
+  image_url: string | null;
+  slug: string | null;
+  status: string | null;
+};
+
+type WishlistUser = {
+  user_id: string;
+};
+
 function createSlug(value: string) {
   return value
     .toLowerCase()
@@ -40,12 +60,36 @@ function createSlug(value: string) {
     .replace(/-+/g, "-");
 }
 
+function numberPrice(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  return Number(String(value).replace(/[^\d]/g, "") || 0);
+}
+
+function formatRupiah(value: string | number | null | undefined) {
+  const amount = numberPrice(value);
+
+  return `Rp ${amount.toLocaleString("id-ID")}`;
+}
+
 export default function ProductUploadClient() {
   const searchParams = useSearchParams();
+  const params = useParams();
+
   const requestedGameSlug = searchParams.get("game") || "";
   const requestedCategoryValue = searchParams.get("category") || "";
+
+  const rawEditingId = Array.isArray(params?.id) ? params.id[0] : params?.id;
+  const editingId = rawEditingId ? Number(rawEditingId) : null;
+  const isEditMode =
+    Number.isFinite(editingId) &&
+    Number(editingId) > 0;
+
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [existingProduct, setExistingProduct] = useState<ExistingProduct | null>(
+    null
+  );
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [games, setGames] = useState<GameMaster[]>([]);
@@ -69,16 +113,21 @@ export default function ProductUploadClient() {
   const selectedGame = games.find((game) => String(game.id) === selectedGameId);
 
   const productSlug = useMemo(() => {
+    if (isEditMode && existingProduct?.slug) {
+      return existingProduct.slug;
+    }
+
     const baseSlug = createSlug(title);
     const gameSlug = selectedGame?.slug || "game";
 
     if (!baseSlug) return "";
 
     return `${gameSlug}-${baseSlug}`;
-  }, [title, selectedGame]);
+  }, [existingProduct?.slug, isEditMode, selectedGame, title]);
 
   useEffect(() => {
     initializePage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function initializePage() {
@@ -121,7 +170,7 @@ export default function ProductUploadClient() {
       }
 
       if (profileData.seller_status !== "approved") {
-        alert("Seller approval is required to create products.");
+        alert("Seller approval is required to manage products.");
         window.location.href = "/seller/apply";
         return;
       }
@@ -155,6 +204,70 @@ export default function ProductUploadClient() {
       setCategories(activeCategories);
       setGames(activeGames);
 
+      if (isEditMode && editingId) {
+        const { data: productData, error: productError } = await supabase
+          .from("products")
+          .select("*")
+          .eq("id", editingId)
+          .maybeSingle();
+
+        if (productError) {
+          alert(productError.message);
+          window.location.href = "/seller/products";
+          return;
+        }
+
+        if (!productData) {
+          alert("Product not found.");
+          window.location.href = "/seller/products";
+          return;
+        }
+
+        if (productData.seller_id !== profileData.id) {
+          alert("You can only edit your own products.");
+          window.location.href = "/seller/products";
+          return;
+        }
+
+        const product = productData as ExistingProduct;
+
+        setExistingProduct(product);
+        setTitle(product.title || "");
+        setPrice(String(product.price || ""));
+        setStock(String(product.stock ?? 0));
+        setDescription(product.description || "");
+        setImageUrl(product.image_url || "");
+
+        if (product.category_id) {
+          setSelectedCategoryId(String(product.category_id));
+        } else if (activeCategories.length > 0) {
+          const matchedCategory = activeCategories.find(
+            (category) =>
+              category.name.toLowerCase() ===
+              String(product.category || "").toLowerCase()
+          );
+
+          setSelectedCategoryId(
+            String((matchedCategory || activeCategories[0]).id)
+          );
+        }
+
+        if (product.game_category_id) {
+          setSelectedGameId(String(product.game_category_id));
+        } else if (activeGames.length > 0) {
+          const matchedGame = activeGames.find(
+            (game) =>
+              game.name.toLowerCase() ===
+              String(product.game_name || "").toLowerCase()
+          );
+
+          setSelectedGameId(String((matchedGame || activeGames[0]).id));
+        }
+
+        setLoading(false);
+        return;
+      }
+
       if (activeCategories.length > 0) {
         const normalizedRequest = requestedCategoryValue.toLowerCase();
         const requestedCategory = activeCategories.find((category) => {
@@ -178,8 +291,87 @@ export default function ProductUploadClient() {
       setLoading(false);
     } catch (error) {
       console.error("Product upload page error:", error);
-      alert("Failed to load product upload page.");
+      alert("Failed to load product page.");
       setLoading(false);
+    }
+  }
+
+  async function notifyWishlistUsersAfterEdit(
+    productId: number,
+    oldProduct: ExistingProduct,
+    nextPrice: number,
+    nextStock: number,
+    nextTitle: string
+  ) {
+    const oldPrice = numberPrice(oldProduct.price);
+    const oldStock = Number(oldProduct.stock ?? 0);
+    const productPath = `/product/${oldProduct.slug || productId}`;
+
+    const shouldNotifyPriceDrop = oldPrice > 0 && nextPrice < oldPrice;
+    const shouldNotifyBackInStock = oldStock <= 0 && nextStock > 0;
+
+    if (!shouldNotifyPriceDrop && !shouldNotifyBackInStock) {
+      return;
+    }
+
+    const { data: wishlistUsers, error } = await supabase
+      .from("wishlists")
+      .select("user_id")
+      .eq("product_id", productId);
+
+    if (error) {
+      console.warn("Wishlist alert lookup failed:", error.message);
+      return;
+    }
+
+    const userIds = Array.from(
+      new Set(
+        ((wishlistUsers || []) as WishlistUser[])
+          .map((row) => row.user_id)
+          .filter(Boolean)
+      )
+    );
+
+    if (userIds.length === 0) return;
+
+    const notifications = [];
+
+    if (shouldNotifyPriceDrop) {
+      notifications.push(
+        ...userIds.map((userId) => ({
+          user_id: userId,
+          type: "wishlist_price_drop",
+          title: "🔥 Wishlist Price Drop",
+          message: `${nextTitle} turun dari ${formatRupiah(
+            oldPrice
+          )} menjadi ${formatRupiah(nextPrice)}.`,
+          link_url: productPath,
+          is_read: false,
+        }))
+      );
+    }
+
+    if (shouldNotifyBackInStock) {
+      notifications.push(
+        ...userIds.map((userId) => ({
+          user_id: userId,
+          type: "wishlist_back_in_stock",
+          title: "📦 Back In Stock",
+          message: `${nextTitle} tersedia kembali. Stok sekarang ${nextStock}.`,
+          link_url: productPath,
+          is_read: false,
+        }))
+      );
+    }
+
+    if (notifications.length > 0) {
+      const { error: notificationError } = await supabase
+        .from("notifications")
+        .insert(notifications);
+
+      if (notificationError) {
+        console.warn("Wishlist notification insert failed:", notificationError.message);
+      }
     }
   }
 
@@ -218,7 +410,12 @@ export default function ProductUploadClient() {
 
     const parsedStock = Number(stock);
 
-    if (!Number.isFinite(parsedStock) || parsedStock < 1) {
+    if (!Number.isFinite(parsedStock) || parsedStock < 0) {
+      alert("Stock cannot be negative.");
+      return;
+    }
+
+    if (!isEditMode && parsedStock < 1) {
       alert("Stock must be at least 1.");
       return;
     }
@@ -234,6 +431,54 @@ export default function ProductUploadClient() {
 
     const sellerDisplayName =
       profile.seller_name || profile.username || user.email || "Seller";
+
+    if (isEditMode && editingId) {
+      if (!existingProduct) {
+        alert("Existing product data not found.");
+        setSubmitting(false);
+        return;
+      }
+
+      const { data: updatedProduct, error } = await supabase
+        .from("products")
+        .update({
+          title: title.trim(),
+          description: description.trim(),
+          price: parsedPrice,
+          stock: parsedStock,
+          category: selectedCategory.name,
+          category_id: selectedCategory.id,
+          game_name: selectedGame.name,
+          game_category_id: selectedGame.id,
+          seller_name: sellerDisplayName,
+          image_url: imageUrl.trim() || selectedGame.image_url || null,
+          status: parsedStock > 0 ? "active" : existingProduct.status || "active",
+        })
+        .eq("id", editingId)
+        .eq("seller_id", profile.id)
+        .select("id")
+        .single();
+
+      if (error) {
+        alert(`Database Error: ${error.message}`);
+        setSubmitting(false);
+        return;
+      }
+
+      if (updatedProduct?.id) {
+        await notifyWishlistUsersAfterEdit(
+          updatedProduct.id,
+          existingProduct,
+          parsedPrice,
+          parsedStock,
+          title.trim()
+        );
+      }
+
+      alert("Product updated successfully.");
+      window.location.href = "/seller/products";
+      return;
+    }
 
     const { data: createdProduct, error } = await supabase
       .from("products")
@@ -293,7 +538,7 @@ export default function ProductUploadClient() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
         <p className="text-xl font-black text-cyan-300">
-          Loading product creator...
+          {isEditMode ? "Loading product editor..." : "Loading product creator..."}
         </p>
       </main>
     );
@@ -307,15 +552,17 @@ export default function ProductUploadClient() {
         <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Product Upload V3
+              {isEditMode ? "Product Edit V1" : "Product Upload V3"}
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">
-              Create Product Listing
+              {isEditMode ? "Edit Product Listing" : "Create Product Listing"}
             </h1>
 
             <p className="mt-5 max-w-2xl text-gray-300">
-              Select a marketplace category and any active game from the unified ComePlayers Game Master catalog.
+              {isEditMode
+                ? "Update product details, stock, price, and marketplace placement."
+                : "Select a marketplace category and any active game from the unified ComePlayers Game Master catalog."}
             </p>
           </div>
 
@@ -334,6 +581,16 @@ export default function ProductUploadClient() {
           className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30"
         >
           <h2 className="text-3xl font-black">Product Information</h2>
+
+          {isEditMode ? (
+            <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
+              <h3 className="font-black text-cyan-300">Wishlist Alerts Active</h3>
+              <p className="mt-2 text-sm text-gray-300">
+                If you lower the price or restock this product, buyers who saved it
+                to their wishlist will receive a notification automatically.
+              </p>
+            </div>
+          ) : null}
 
           <div className="mt-7 grid gap-5 md:grid-cols-2">
             <div>
@@ -415,7 +672,7 @@ export default function ProductUploadClient() {
 
               <input
                 type="number"
-                min="1"
+                min="0"
                 value={stock}
                 onChange={(event) => setStock(event.target.value)}
                 className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400"
@@ -471,7 +728,13 @@ export default function ProductUploadClient() {
             disabled={submitting || games.length === 0}
             className="mt-8 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {submitting ? "Creating Product..." : "Create Product"}
+            {submitting
+              ? isEditMode
+                ? "Saving Product..."
+                : "Creating Product..."
+              : isEditMode
+              ? "Save Product"
+              : "Create Product"}
           </button>
         </form>
 
@@ -514,7 +777,7 @@ export default function ProductUploadClient() {
               </p>
 
               <p className="mt-2 text-sm text-gray-400">
-                Stock: {stock || "1"}
+                Stock: {stock || "0"}
               </p>
 
               <p className="mt-4 line-clamp-4 text-sm text-gray-300">

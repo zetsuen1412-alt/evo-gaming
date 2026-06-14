@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { FaBell, FaShoppingCart, FaStar, FaStore } from "react-icons/fa";
 import { supabase } from "@/lib/supabase";
+import { calculateSellerReputation } from "@/lib/sellerReputation";
 
 type FollowRow = {
   seller_id: string;
@@ -32,12 +33,16 @@ type SellerProfile = {
   seller_name: string | null;
   seller_rating: number | string | null;
   seller_review_count: number | string | null;
+  seller_status: string | null;
 };
 
 type FeedProduct = Product & {
   seller_display_name: string;
   seller_rating: number | null;
   seller_review_count: number;
+  seller_reputation_score: number;
+  seller_reputation_tier: string;
+  seller_reputation_badge: string;
 };
 
 function numberPrice(value: string | number | null | undefined) {
@@ -149,7 +154,7 @@ export default function FollowedSellerFeed() {
             .limit(8),
           supabase
             .from("profiles")
-            .select("id,username,seller_name,seller_rating,seller_review_count")
+            .select("id,username,seller_name,seller_rating,seller_review_count,seller_status")
             .in("id", sellerIds),
         ]);
 
@@ -176,11 +181,20 @@ export default function FollowedSellerFeed() {
           product.seller ||
           "Verified Seller";
 
+        const reputation = calculateSellerReputation({
+          averageRating: Number(profile?.seller_rating || 0),
+          reviewCount: Number(profile?.seller_review_count || 0),
+          sellerStatus: profile?.seller_status || null,
+        });
+
         return {
           ...product,
           seller_display_name: sellerName,
           seller_rating: parseRating(profile?.seller_rating),
           seller_review_count: Number(profile?.seller_review_count || 0),
+          seller_reputation_score: reputation.score,
+          seller_reputation_tier: reputation.tierLabel,
+          seller_reputation_badge: reputation.badge,
         };
       });
 
@@ -302,6 +316,12 @@ export default function FollowedSellerFeed() {
                 <span className="absolute left-4 top-4 rounded-full bg-emerald-400 px-3 py-1 text-xs font-black text-black">
                   Followed Seller
                 </span>
+
+                {product.seller_reputation_score >= 70 ? (
+                  <span className="absolute right-4 top-4 rounded-full bg-yellow-400 px-3 py-1 text-xs font-black text-black">
+                    {product.seller_reputation_badge} {product.seller_reputation_tier}
+                  </span>
+                ) : null}
               </div>
 
               <div className="p-5">
@@ -337,6 +357,10 @@ export default function FollowedSellerFeed() {
                     {product.seller_review_count > 0
                       ? ` • ${product.seller_review_count} reviews`
                       : ""}
+                  </span>
+
+                  <span className="inline-flex items-center gap-2 text-yellow-300">
+                    {product.seller_reputation_badge} Seller Score {product.seller_reputation_score} • {product.seller_reputation_tier}
                   </span>
                 </div>
               </div>

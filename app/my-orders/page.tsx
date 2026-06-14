@@ -19,13 +19,10 @@ type Order = {
   id: number;
   created_at?: string | null;
   product?: string | null;
-  buyer?: string | null;
   price?: string | number | null;
   status?: string | null;
-  payment_proof?: string | null;
   product_id?: number | null;
   buyer_id?: string | null;
-  seller_id?: string | null;
   quantity?: number | null;
   total_amount?: string | number | null;
   total_price?: string | number | null;
@@ -34,6 +31,7 @@ type Order = {
   seller_name?: string | null;
   game_name?: string | null;
   category?: string | null;
+  escrow_status?: string | null;
 };
 
 type Product = {
@@ -53,7 +51,9 @@ const FILTERS = [
   { label: "Pending", value: "pending" },
   { label: "Waiting Payment", value: "waiting_payment" },
   { label: "Paid", value: "paid" },
+  { label: "Delivered", value: "delivered" },
   { label: "Completed", value: "completed" },
+  { label: "Disputed", value: "disputed" },
   { label: "Cancelled", value: "cancelled" },
 ];
 
@@ -90,18 +90,32 @@ function normalizeStatus(value?: string | null) {
   return String(value || "pending").toLowerCase();
 }
 
+function prettyStatus(status?: string | null) {
+  return String(status || "pending")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function statusStyle(status?: string | null) {
   const value = normalizeStatus(status);
 
-  if (value.includes("complete")) {
+  if (value.includes("disputed")) {
+    return "border-red-400/40 bg-red-400/10 text-red-300";
+  }
+
+  if (value.includes("complete") || value.includes("released")) {
     return "border-emerald-400/40 bg-emerald-400/10 text-emerald-300";
   }
 
-  if (value.includes("paid")) {
+  if (value.includes("delivered")) {
+    return "border-blue-400/40 bg-blue-400/10 text-blue-300";
+  }
+
+  if (value.includes("paid") || value.includes("holding")) {
     return "border-cyan-400/40 bg-cyan-400/10 text-cyan-300";
   }
 
-  if (value.includes("waiting")) {
+  if (value.includes("waiting") || value.includes("pending")) {
     return "border-yellow-400/40 bg-yellow-400/10 text-yellow-300";
   }
 
@@ -110,12 +124,6 @@ function statusStyle(status?: string | null) {
   }
 
   return "border-slate-400/30 bg-slate-400/10 text-slate-300";
-}
-
-function prettyStatus(status?: string | null) {
-  return String(status || "pending")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function formatDate(value?: string | null) {
@@ -168,7 +176,7 @@ export default function MyOrdersPage() {
         return;
       }
 
-      const safeOrders = orderData || [];
+      const safeOrders = (orderData || []) as Order[];
       setOrders(safeOrders);
 
       const productIds = Array.from(
@@ -195,7 +203,7 @@ export default function MyOrdersPage() {
 
         const map: ProductMap = {};
 
-        (productData || []).forEach((product) => {
+        ((productData || []) as Product[]).forEach((product) => {
           map[product.id] = product;
         });
 
@@ -210,6 +218,47 @@ export default function MyOrdersPage() {
     loadOrders();
   }, []);
 
+  const stats = useMemo(() => {
+    const pending = orders.filter(
+      (order) => normalizeStatus(order.status) === "pending"
+    ).length;
+
+    const paid = orders.filter(
+      (order) => normalizeStatus(order.payment_status) === "paid"
+    ).length;
+
+    const delivered = orders.filter((order) =>
+      normalizeStatus(order.status).includes("delivered")
+    ).length;
+
+    const completed = orders.filter((order) =>
+      normalizeStatus(order.status).includes("completed")
+    ).length;
+
+    const disputed = orders.filter(
+      (order) =>
+        normalizeStatus(order.status).includes("disputed") ||
+        normalizeStatus(order.escrow_status).includes("disputed")
+    ).length;
+
+    const totalSpent = orders
+      .filter((order) => normalizeStatus(order.status).includes("completed"))
+      .reduce((sum, order) => {
+        const product = order.product_id ? products[order.product_id] : null;
+        return sum + getOrderTotal(order, product);
+      }, 0);
+
+    return {
+      total: orders.length,
+      pending,
+      paid,
+      delivered,
+      completed,
+      disputed,
+      totalSpent,
+    };
+  }, [orders, products]);
+
   const filteredOrders = useMemo(() => {
     let list = [...orders];
 
@@ -217,8 +266,13 @@ export default function MyOrdersPage() {
       list = list.filter((order) => {
         const orderStatus = normalizeStatus(order.status);
         const paymentStatus = normalizeStatus(order.payment_status);
+        const escrowStatus = normalizeStatus(order.escrow_status);
 
-        return orderStatus === filter || paymentStatus === filter;
+        return (
+          orderStatus === filter ||
+          paymentStatus === filter ||
+          escrowStatus === filter
+        );
       });
     }
 
@@ -228,11 +282,11 @@ export default function MyOrdersPage() {
       list = list.filter((order) => {
         const product = order.product_id ? products[order.product_id] : null;
 
-        return `${order.id} ${order.product || ""} ${order.product_title || ""} ${
-          product?.title || ""
-        } ${order.game_name || ""} ${product?.game_name || ""} ${
-          order.seller_name || ""
-        } ${product?.seller_name || ""}`
+        return `${order.id} ${order.product || ""} ${
+          order.product_title || ""
+        } ${product?.title || ""} ${order.game_name || ""} ${
+          product?.game_name || ""
+        } ${order.seller_name || ""} ${product?.seller_name || ""}`
           .toLowerCase()
           .includes(q);
       });
@@ -279,19 +333,93 @@ export default function MyOrdersPage() {
       <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.16),transparent_35%)]">
         <div className="mx-auto max-w-7xl px-4 py-10">
           <div className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-5 py-2 text-sm font-black text-cyan-200">
-            Purchase Center
+            Purchase Center Pro
           </div>
 
           <h1 className="mt-8 text-5xl font-black">My Orders</h1>
 
           <p className="mt-3 max-w-2xl text-slate-300">
-            Track your purchases, payment status, seller delivery, and order
-            history inside ComePlayers.
+            Track purchases, payment status, seller delivery, escrow protection,
+            disputes, and completed order history.
           </p>
         </div>
       </section>
 
       <section className="mx-auto max-w-7xl px-4 py-10">
+        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+          <button
+            onClick={() => setFilter("all")}
+            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-cyan-400"
+          >
+            <p className="text-sm text-slate-400">Total Orders</p>
+            <h2 className="mt-2 text-4xl font-black text-cyan-300">
+              {stats.total}
+            </h2>
+          </button>
+
+          <button
+            onClick={() => setFilter("pending")}
+            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-yellow-400"
+          >
+            <p className="text-sm text-slate-400">Pending</p>
+            <h2 className="mt-2 text-4xl font-black text-yellow-300">
+              {stats.pending}
+            </h2>
+          </button>
+
+          <button
+            onClick={() => setFilter("paid")}
+            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-cyan-400"
+          >
+            <p className="text-sm text-slate-400">Paid</p>
+            <h2 className="mt-2 text-4xl font-black text-cyan-300">
+              {stats.paid}
+            </h2>
+          </button>
+
+          <button
+            onClick={() => setFilter("delivered")}
+            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-blue-400"
+          >
+            <p className="text-sm text-slate-400">Delivered</p>
+            <h2 className="mt-2 text-4xl font-black text-blue-300">
+              {stats.delivered}
+            </h2>
+          </button>
+
+          <button
+            onClick={() => setFilter("completed")}
+            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-emerald-400"
+          >
+            <p className="text-sm text-slate-400">Completed</p>
+            <h2 className="mt-2 text-4xl font-black text-emerald-300">
+              {stats.completed}
+            </h2>
+          </button>
+
+          <button
+            onClick={() => setFilter("disputed")}
+            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-red-400"
+          >
+            <p className="text-sm text-slate-400">Disputed</p>
+            <h2 className="mt-2 text-4xl font-black text-red-300">
+              {stats.disputed}
+            </h2>
+          </button>
+        </div>
+
+        <div className="mb-8 rounded-3xl border border-emerald-400/20 bg-emerald-400/10 p-6">
+          <p className="text-sm font-bold text-emerald-200">
+            Completed Purchase Value
+          </p>
+          <h2 className="mt-2 text-4xl font-black text-emerald-300">
+            {formatPrice(stats.totalSpent)}
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Total value from completed orders.
+          </p>
+        </div>
+
         <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
           <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
             <div className="relative">
@@ -311,7 +439,11 @@ export default function MyOrdersPage() {
               className="rounded-xl border border-white/10 bg-black/40 px-4 py-4 text-white outline-none focus:border-cyan-400"
             >
               {FILTERS.map((item) => (
-                <option key={item.value} value={item.value} className="bg-[#050816]">
+                <option
+                  key={item.value}
+                  value={item.value}
+                  className="bg-[#050816]"
+                >
                   {item.label}
                 </option>
               ))}
@@ -357,9 +489,11 @@ export default function MyOrdersPage() {
               const seller =
                 order.seller_name || product?.seller_name || "Verified Seller";
               const game = order.game_name || product?.game_name || "-";
-              const category = order.category || product?.category || "Game Product";
+              const category =
+                order.category || product?.category || "Game Product";
               const total = getOrderTotal(order, product);
               const image = product?.image_url || fallbackImage(title);
+              const escrowStatus = order.escrow_status || "pending";
 
               return (
                 <div
@@ -388,6 +522,14 @@ export default function MyOrdersPage() {
                           )}`}
                         >
                           Payment: {prettyStatus(order.payment_status)}
+                        </span>
+
+                        <span
+                          className={`rounded-full border px-4 py-1 text-xs font-black ${statusStyle(
+                            escrowStatus
+                          )}`}
+                        >
+                          Escrow: {prettyStatus(escrowStatus)}
                         </span>
                       </div>
 
@@ -425,20 +567,21 @@ export default function MyOrdersPage() {
 
                         <p className="flex items-center gap-2">
                           <FaShieldAlt className="text-emerald-300" />
-                          Protected transaction
+                          {prettyStatus(escrowStatus)}
                         </p>
                       </div>
                     </div>
 
                     <div className="border-t border-white/10 p-6 lg:border-l lg:border-t-0">
                       <p className="text-sm text-slate-400">Total</p>
+
                       <p className="mt-2 text-3xl font-black text-cyan-300">
                         {formatPrice(total)}
                       </p>
 
                       <div className="mt-6 space-y-3">
                         <Link
-                          href={`/order-success/${order.id}`}
+                          href={`/orders/${order.id}`}
                           className="flex items-center justify-center gap-2 rounded-xl bg-cyan-400 px-5 py-3 font-black text-black hover:bg-cyan-300"
                         >
                           <FaReceipt />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
@@ -24,10 +24,44 @@ type Product = {
   created_at: string;
 };
 
+type FilterMode = "all" | "active" | "inactive" | "out-of-stock";
+
+function formatPrice(value: string | number | null) {
+  const amount = Number(String(value ?? 0).replace(/[^\d]/g, "") || 0);
+
+  return `Rp ${amount.toLocaleString("id-ID")}`;
+}
+
+function getProductStatus(product: Product) {
+  const stock = Number(product.stock || 0);
+
+  if (stock <= 0) {
+    return {
+      label: "Out Of Stock",
+      className: "bg-red-500/10 text-red-300",
+    };
+  }
+
+  if (product.status === "active") {
+    return {
+      label: "Active",
+      className: "bg-green-400/10 text-green-300",
+    };
+  }
+
+  return {
+    label: "Inactive",
+    className: "bg-yellow-400/10 text-yellow-300",
+  };
+}
+
 export default function SellerProductsPage() {
   const [loading, setLoading] = useState(true);
   const [seller, setSeller] = useState<SellerProfile | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<FilterMode>("all");
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
 
   useEffect(() => {
     loadProducts();
@@ -35,6 +69,8 @@ export default function SellerProductsPage() {
 
   async function loadProducts() {
     try {
+      setLoading(true);
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -85,17 +121,23 @@ export default function SellerProductsPage() {
   async function deleteProduct(id: number) {
     if (!confirm("Delete this product?")) return;
 
+    setUpdatingId(id);
+
     const { error } = await supabase.from("products").delete().eq("id", id);
 
     if (error) {
       alert(error.message);
+      setUpdatingId(null);
       return;
     }
 
     await loadProducts();
+    setUpdatingId(null);
   }
 
   async function toggleStatus(product: Product) {
+    setUpdatingId(product.id);
+
     const nextStatus = product.status === "active" ? "inactive" : "active";
 
     const { error } = await supabase
@@ -107,11 +149,59 @@ export default function SellerProductsPage() {
 
     if (error) {
       alert(error.message);
+      setUpdatingId(null);
       return;
     }
 
     await loadProducts();
+    setUpdatingId(null);
   }
+
+  const activeProducts = products.filter(
+    (product) => product.status === "active" && Number(product.stock || 0) > 0
+  ).length;
+
+  const inactiveProducts = products.filter(
+    (product) => product.status !== "active"
+  ).length;
+
+  const outOfStockProducts = products.filter(
+    (product) => Number(product.stock || 0) <= 0
+  ).length;
+
+  const totalStock = products.reduce(
+    (sum, product) => sum + Number(product.stock || 0),
+    0
+  );
+
+  const filteredProducts = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+
+    return products.filter((product) => {
+      const matchesSearch =
+        !keyword ||
+        product.title.toLowerCase().includes(keyword) ||
+        (product.description || "").toLowerCase().includes(keyword) ||
+        (product.category_name || "").toLowerCase().includes(keyword) ||
+        (product.category || "").toLowerCase().includes(keyword);
+
+      if (!matchesSearch) return false;
+
+      if (filter === "active") {
+        return product.status === "active" && Number(product.stock || 0) > 0;
+      }
+
+      if (filter === "inactive") {
+        return product.status !== "active";
+      }
+
+      if (filter === "out-of-stock") {
+        return Number(product.stock || 0) <= 0;
+      }
+
+      return true;
+    });
+  }, [filter, products, search]);
 
   if (loading) {
     return (
@@ -123,19 +213,6 @@ export default function SellerProductsPage() {
     );
   }
 
-  const activeProducts = products.filter(
-    (product) => product.status === "active"
-  ).length;
-
-  const inactiveProducts = products.filter(
-    (product) => product.status !== "active"
-  ).length;
-
-  const totalStock = products.reduce(
-    (sum, product) => sum + Number(product.stock || 0),
-    0
-  );
-
   return (
     <main className="min-h-screen bg-[#020617] text-white">
       <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
@@ -144,14 +221,14 @@ export default function SellerProductsPage() {
         <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Seller Products
+              Seller Products V2
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">My Products</h1>
 
             <p className="mt-5 max-w-2xl text-gray-300">
-              Manage your listings, update product status, and control your
-              seller inventory.
+              Search, filter, edit, publish, pause, and manage your marketplace
+              listings from one seller inventory dashboard.
             </p>
 
             <p className="mt-3 text-sm text-gray-500">
@@ -179,27 +256,62 @@ export default function SellerProductsPage() {
       </section>
 
       <section className="px-8 py-10">
-        <div className="mb-10 grid gap-5 md:grid-cols-4">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
+        <div className="mb-10 grid gap-5 md:grid-cols-5">
+          <button
+            onClick={() => setFilter("all")}
+            className={`rounded-3xl border p-6 text-left shadow-2xl shadow-black/30 transition ${
+              filter === "all"
+                ? "border-cyan-400 bg-cyan-400/10"
+                : "border-white/10 bg-white/[0.035] hover:border-cyan-400/50"
+            }`}
+          >
             <p className="text-sm font-bold text-gray-400">Total Products</p>
             <h2 className="mt-3 text-4xl font-black text-cyan-300">
               {products.length}
             </h2>
-          </div>
+          </button>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
+          <button
+            onClick={() => setFilter("active")}
+            className={`rounded-3xl border p-6 text-left shadow-2xl shadow-black/30 transition ${
+              filter === "active"
+                ? "border-green-400 bg-green-400/10"
+                : "border-white/10 bg-white/[0.035] hover:border-green-400/50"
+            }`}
+          >
             <p className="text-sm font-bold text-gray-400">Active</p>
             <h2 className="mt-3 text-4xl font-black text-green-300">
               {activeProducts}
             </h2>
-          </div>
+          </button>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
+          <button
+            onClick={() => setFilter("inactive")}
+            className={`rounded-3xl border p-6 text-left shadow-2xl shadow-black/30 transition ${
+              filter === "inactive"
+                ? "border-yellow-400 bg-yellow-400/10"
+                : "border-white/10 bg-white/[0.035] hover:border-yellow-400/50"
+            }`}
+          >
             <p className="text-sm font-bold text-gray-400">Inactive</p>
             <h2 className="mt-3 text-4xl font-black text-yellow-300">
               {inactiveProducts}
             </h2>
-          </div>
+          </button>
+
+          <button
+            onClick={() => setFilter("out-of-stock")}
+            className={`rounded-3xl border p-6 text-left shadow-2xl shadow-black/30 transition ${
+              filter === "out-of-stock"
+                ? "border-red-400 bg-red-400/10"
+                : "border-white/10 bg-white/[0.035] hover:border-red-400/50"
+            }`}
+          >
+            <p className="text-sm font-bold text-gray-400">Out Of Stock</p>
+            <h2 className="mt-3 text-4xl font-black text-red-300">
+              {outOfStockProducts}
+            </h2>
+          </button>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
             <p className="text-sm font-bold text-gray-400">Total Stock</p>
@@ -207,6 +319,26 @@ export default function SellerProductsPage() {
               {totalStock}
             </h2>
           </div>
+        </div>
+
+        <div className="mb-8 grid gap-4 lg:grid-cols-[1fr_240px]">
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search by title, description, or category..."
+            className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+          />
+
+          <select
+            value={filter}
+            onChange={(event) => setFilter(event.target.value as FilterMode)}
+            className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400"
+          >
+            <option value="all">All Products</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="out-of-stock">Out Of Stock</option>
+          </select>
         </div>
 
         {products.length === 0 ? (
@@ -222,111 +354,146 @@ export default function SellerProductsPage() {
               Add Product
             </Link>
           </div>
+        ) : filteredProducts.length === 0 ? (
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-12 text-center shadow-2xl shadow-black/30">
+            <h2 className="text-3xl font-black">No Products Found</h2>
+
+            <p className="mt-3 text-gray-400">
+              Try another keyword or change the filter.
+            </p>
+
+            <button
+              onClick={() => {
+                setSearch("");
+                setFilter("all");
+              }}
+              className="mt-6 inline-block rounded-full border border-cyan-400 px-6 py-3 font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+            >
+              Reset Filter
+            </button>
+          </div>
         ) : (
           <div className="grid gap-6">
-            {products.map((product) => (
-              <div
-                key={product.id}
-                className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30"
-              >
-                <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
-                  <div className="flex h-64 items-center justify-center bg-black/50 lg:h-full">
-                    {product.image_url ? (
-                      <img
-                        src={product.image_url}
-                        alt={product.title}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-6xl">🎮</span>
-                    )}
-                  </div>
+            {filteredProducts.map((product) => {
+              const status = getProductStatus(product);
+              const isUpdating = updatingId === product.id;
 
-                  <div className="p-6">
-                    <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-start">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <h2 className="text-2xl font-black">
-                            {product.title}
-                          </h2>
-
-                          {product.status === "active" ? (
-                            <span className="rounded-full bg-green-400/10 px-3 py-1 text-xs font-black text-green-300">
-                              Active
-                            </span>
-                          ) : (
-                            <span className="rounded-full bg-yellow-400/10 px-3 py-1 text-xs font-black text-yellow-300">
-                              Inactive
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="mt-2 text-sm font-bold text-cyan-300">
-                          {product.category_name ||
-                            product.category ||
-                            "Game Product"}
-                        </p>
-
-                        <p className="mt-4 line-clamp-3 max-w-3xl text-gray-400">
-                          {product.description || "No description provided."}
-                        </p>
-                      </div>
-
-                      <div className="grid min-w-[220px] gap-4 rounded-2xl border border-white/10 bg-black/30 p-5">
-                        <div>
-                          <p className="text-sm text-gray-400">Price</p>
-                          <h3 className="mt-1 text-2xl font-black text-cyan-300">
-                            Rp{" "}
-                            {Number(product.price || 0).toLocaleString(
-                              "id-ID"
-                            )}
-                          </h3>
-                        </div>
-
-                        <div>
-                          <p className="text-sm text-gray-400">Stock</p>
-                          <h3 className="mt-1 text-2xl font-black">
-                            {product.stock || 0}
-                          </h3>
-                        </div>
-                      </div>
+              return (
+                <div
+                  key={product.id}
+                  className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30"
+                >
+                  <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
+                    <div className="flex h-64 items-center justify-center bg-black/50 lg:h-full">
+                      {product.image_url ? (
+                        <img
+                          src={product.image_url}
+                          alt={product.title}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-6xl">🎮</span>
+                      )}
                     </div>
 
-                    <div className="mt-6 flex flex-wrap gap-3">
-                      <Link
-                        href={`/seller/products/${product.id}/edit`}
-                        className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-black transition hover:bg-cyan-300"
-                      >
-                        Edit
-                      </Link>
+                    <div className="p-6">
+                      <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-start">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <h2 className="text-2xl font-black">
+                              {product.title}
+                            </h2>
 
-                      <button
-                        onClick={() => toggleStatus(product)}
-                        className="rounded-xl bg-yellow-500 px-5 py-3 font-black text-black transition hover:bg-yellow-400"
-                      >
-                        {product.status === "active"
-                          ? "Deactivate"
-                          : "Activate"}
-                      </button>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-black ${status.className}`}
+                            >
+                              {status.label}
+                            </span>
+                          </div>
 
-                      <button
-                        onClick={() => deleteProduct(product.id)}
-                        className="rounded-xl bg-red-500 px-5 py-3 font-black text-white transition hover:bg-red-400"
-                      >
-                        Delete
-                      </button>
+                          <p className="mt-2 text-sm font-bold text-cyan-300">
+                            {product.category_name ||
+                              product.category ||
+                              "Game Product"}
+                          </p>
 
-                      <Link
-                        href={`/product/${product.id}`}
-                        className="rounded-xl border border-white/10 px-5 py-3 font-black text-gray-300 transition hover:bg-white hover:text-black"
-                      >
-                        View Product
-                      </Link>
+                          <p className="mt-4 line-clamp-3 max-w-3xl text-gray-400">
+                            {product.description || "No description provided."}
+                          </p>
+
+                          <p className="mt-4 text-xs text-gray-600">
+                            Created:{" "}
+                            {product.created_at
+                              ? new Date(product.created_at).toLocaleString(
+                                  "id-ID"
+                                )
+                              : "-"}
+                          </p>
+                        </div>
+
+                        <div className="grid min-w-[220px] gap-4 rounded-2xl border border-white/10 bg-black/30 p-5">
+                          <div>
+                            <p className="text-sm text-gray-400">Price</p>
+                            <h3 className="mt-1 text-2xl font-black text-cyan-300">
+                              {formatPrice(product.price)}
+                            </h3>
+                          </div>
+
+                          <div>
+                            <p className="text-sm text-gray-400">Stock</p>
+                            <h3
+                              className={`mt-1 text-2xl font-black ${
+                                Number(product.stock || 0) <= 0
+                                  ? "text-red-300"
+                                  : "text-white"
+                              }`}
+                            >
+                              {product.stock || 0}
+                            </h3>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 flex flex-wrap gap-3">
+                        <Link
+                          href={`/seller/products/${product.id}/edit`}
+                          className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-black transition hover:bg-cyan-300"
+                        >
+                          Edit
+                        </Link>
+
+                        <Link
+                          href={`/product/${product.id}`}
+                          className="rounded-xl border border-white/10 px-5 py-3 font-black text-gray-300 transition hover:bg-white hover:text-black"
+                        >
+                          View Product
+                        </Link>
+
+                        <button
+                          onClick={() => toggleStatus(product)}
+                          disabled={isUpdating}
+                          className="rounded-xl bg-yellow-500 px-5 py-3 font-black text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isUpdating
+                            ? "Updating..."
+                            : product.status === "active"
+                            ? "Deactivate"
+                            : "Activate"}
+                        </button>
+
+                        <button
+                          onClick={() => deleteProduct(product.id)}
+                          disabled={isUpdating}
+                          className="rounded-xl bg-red-500 px-5 py-3 font-black text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isUpdating ? "Processing..." : "Delete"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { calculateSellerReputation } from "@/lib/sellerReputation";
 
 type SellerProfile = {
   id: string;
@@ -44,7 +45,7 @@ type LeaderboardSeller = {
   score: number;
 };
 
-type SortMode = "rating" | "reviews" | "orders" | "revenue";
+type SortMode = "reputation" | "rating" | "reviews" | "orders" | "revenue";
 
 function normalizeStatus(status: string | null) {
   if (status === "pending") return "Pending Payment";
@@ -73,7 +74,9 @@ function renderStars(rating: number) {
 }
 
 function getSellerName(profile: SellerProfile) {
-  return profile.seller_name || profile.username || profile.email || "Unknown Seller";
+  return (
+    profile.seller_name || profile.username || profile.email || "Unknown Seller"
+  );
 }
 
 function getRankBadge(index: number) {
@@ -84,16 +87,18 @@ function getRankBadge(index: number) {
 }
 
 function getRankClass(index: number) {
-  if (index === 0) return "border-yellow-400/30 bg-yellow-400/10 text-yellow-300";
+  if (index === 0)
+    return "border-yellow-400/30 bg-yellow-400/10 text-yellow-300";
   if (index === 1) return "border-gray-300/30 bg-gray-300/10 text-gray-200";
-  if (index === 2) return "border-orange-400/30 bg-orange-400/10 text-orange-300";
+  if (index === 2)
+    return "border-orange-400/30 bg-orange-400/10 text-orange-300";
   return "border-cyan-400/20 bg-cyan-400/10 text-cyan-300";
 }
 
 export default function SellerLeaderboardPage() {
   const [sellers, setSellers] = useState<LeaderboardSeller[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortMode, setSortMode] = useState<SortMode>("rating");
+  const [sortMode, setSortMode] = useState<SortMode>("reputation");
   const [search, setSearch] = useState("");
 
   const filteredSellers = useMemo(() => {
@@ -104,10 +109,24 @@ export default function SellerLeaderboardPage() {
       const email = (item.profile.email || "").toLowerCase();
       const bio = (item.profile.bio || "").toLowerCase();
 
-      return !query || name.includes(query) || email.includes(query) || bio.includes(query);
+      return (
+        !query ||
+        name.includes(query) ||
+        email.includes(query) ||
+        bio.includes(query)
+      );
     });
 
     return [...filtered].sort((a, b) => {
+      if (sortMode === "reputation") {
+        return (
+          b.score - a.score ||
+          b.averageRating - a.averageRating ||
+          b.completedOrders - a.completedOrders ||
+          b.reviewCount - a.reviewCount
+        );
+      }
+
       if (sortMode === "rating") {
         return (
           b.averageRating - a.averageRating ||
@@ -163,7 +182,7 @@ export default function SellerLeaderboardPage() {
         supabase
           .from("profiles")
           .select(
-            "id,email,username,seller_name,seller_status,avatar_url,bio,seller_rating,seller_review_count,created_at"
+            "id,email,username,seller_name,seller_status,avatar_url,bio,seller_rating,seller_review_count,created_at",
           )
           .eq("seller_status", "approved"),
         supabase
@@ -197,31 +216,42 @@ export default function SellerLeaderboardPage() {
       const orders = (ordersResult.data || []) as Order[];
 
       const leaderboard = profiles.map((profile) => {
-        const sellerReviews = reviews.filter((review) => review.seller_id === profile.id);
+        const sellerReviews = reviews.filter(
+          (review) => review.seller_id === profile.id,
+        );
 
-        const reviewCount = sellerReviews.length || Number(profile.seller_review_count || 0);
+        const reviewCount =
+          sellerReviews.length || Number(profile.seller_review_count || 0);
 
         const averageRating =
           sellerReviews.length > 0
-            ? sellerReviews.reduce((sum, review) => sum + Number(review.rating || 0), 0) /
-              sellerReviews.length
+            ? sellerReviews.reduce(
+                (sum, review) => sum + Number(review.rating || 0),
+                0,
+              ) / sellerReviews.length
             : Number(profile.seller_rating || 0);
 
         const completedOrders = orders.filter(
           (order) =>
-            order.seller_id === profile.id && normalizeStatus(order.status) === "Completed"
+            order.seller_id === profile.id &&
+            normalizeStatus(order.status) === "Completed",
         );
 
         const totalRevenue = completedOrders.reduce(
           (sum, order) => sum + Number(order.total_price || order.price || 0),
-          0
+          0,
         );
 
-        const score =
-          averageRating * 40 +
-          Math.min(reviewCount, 100) * 1.5 +
-          Math.min(completedOrders.length, 200) * 1.2 +
-          Math.min(totalRevenue / 100000, 200);
+        const reputation = calculateSellerReputation({
+          averageRating,
+          reviewCount,
+          completedOrders: completedOrders.length,
+          activeProducts: 0,
+          followersCount: 0,
+          sellerStatus: profile.seller_status,
+        });
+
+        const score = reputation.score;
 
         return {
           profile,
@@ -236,11 +266,11 @@ export default function SellerLeaderboardPage() {
       setSellers(
         leaderboard.sort(
           (a, b) =>
+            b.score - a.score ||
             b.averageRating - a.averageRating ||
-            b.reviewCount - a.reviewCount ||
             b.completedOrders - a.completedOrders ||
-            b.totalRevenue - a.totalRevenue
-        )
+            b.reviewCount - a.reviewCount,
+        ),
       );
 
       setLoading(false);
@@ -252,7 +282,9 @@ export default function SellerLeaderboardPage() {
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">Loading seller leaderboard...</p>
+        <p className="text-xl font-black text-cyan-300">
+          Loading seller leaderboard...
+        </p>
       </main>
     );
   }
@@ -271,8 +303,8 @@ export default function SellerLeaderboardPage() {
             <h1 className="text-5xl font-black md:text-7xl">Top Sellers</h1>
 
             <p className="mt-5 max-w-3xl text-gray-300">
-              Discover the best ComePlayers sellers based on rating, reviews, completed
-              orders, and marketplace revenue.
+              Discover the best ComePlayers sellers based on rating, reviews,
+              completed orders, and marketplace revenue.
             </p>
           </div>
 
@@ -305,7 +337,9 @@ export default function SellerLeaderboardPage() {
 
           <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-6">
             <p className="text-sm text-gray-300">Total Reviews</p>
-            <p className="mt-2 text-4xl font-black text-cyan-300">{totalReviews}</p>
+            <p className="mt-2 text-4xl font-black text-cyan-300">
+              {totalReviews}
+            </p>
           </div>
 
           <div className="rounded-3xl border border-green-400/20 bg-green-400/10 p-6">
@@ -357,7 +391,14 @@ export default function SellerLeaderboardPage() {
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-4 lg:w-[520px]">
+              <div className="grid gap-3 sm:grid-cols-5 lg:w-[640px]">
+                <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-center">
+                  <p className="text-xl font-black text-yellow-300">
+                    {Math.round(topSeller.score)}
+                  </p>
+                  <p className="text-xs text-gray-400">Score</p>
+                </div>
+
                 <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-center">
                   <p className="text-xl font-black text-yellow-300">
                     {topSeller.averageRating.toFixed(1)}
@@ -400,6 +441,7 @@ export default function SellerLeaderboardPage() {
 
           <div className="flex flex-wrap gap-3">
             {[
+              { value: "reputation", label: "Best Reputation" },
               { value: "rating", label: "Top Rated" },
               { value: "reviews", label: "Most Reviews" },
               { value: "orders", label: "Most Orders" },
@@ -447,14 +489,16 @@ export default function SellerLeaderboardPage() {
                           />
                         ) : (
                           <span className="text-3xl font-black text-cyan-300">
-                            {getSellerName(item.profile).charAt(0).toUpperCase()}
+                            {getSellerName(item.profile)
+                              .charAt(0)
+                              .toUpperCase()}
                           </span>
                         )}
                       </div>
 
                       <span
                         className={`absolute -bottom-2 -right-3 rounded-full border px-3 py-1 text-xs font-black ${getRankClass(
-                          index
+                          index,
                         )}`}
                       >
                         {getRankBadge(index)}
@@ -480,7 +524,14 @@ export default function SellerLeaderboardPage() {
                     </div>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-4">
+                  <div className="grid gap-3 sm:grid-cols-5">
+                    <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-center">
+                      <p className="text-2xl font-black text-yellow-300">
+                        {Math.round(item.score)}
+                      </p>
+                      <p className="text-xs text-gray-400">Score</p>
+                    </div>
+
                     <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-center">
                       <p className="text-2xl font-black text-yellow-300">
                         {item.averageRating.toFixed(1)}

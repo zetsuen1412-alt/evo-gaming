@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { FaMagic, FaShoppingCart, FaStar } from "react-icons/fa";
 import { supabase } from "@/lib/supabase";
+import { calculateSellerReputation } from "@/lib/sellerReputation";
 
 type Product = {
   id: number;
@@ -16,6 +17,7 @@ type Product = {
   game_name: string | null;
   stock: number | null;
   status: string | null;
+  seller_id: string | null;
   seller_name: string | null;
   seller: string | null;
   created_at: string | null;
@@ -27,9 +29,21 @@ type RecentlyViewedRow = {
   products: Product | null;
 };
 
+type SellerProfile = {
+  id: string;
+  username: string | null;
+  seller_name: string | null;
+  seller_rating: number | string | null;
+  seller_review_count: number | string | null;
+  seller_status: string | null;
+};
+
 type RecommendedProduct = Product & {
   recommendation_score: number;
   recommendation_reason: string;
+  seller_reputation_score: number;
+  seller_reputation_tier: string;
+  seller_reputation_badge: string;
 };
 
 type RecommendedProductsProps = {
@@ -76,6 +90,7 @@ export default function RecommendedProducts({
 }: RecommendedProductsProps) {
   const [recentRows, setRecentRows] = useState<RecentlyViewedRow[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [sellerProfiles, setSellerProfiles] = useState<Record<string, SellerProfile>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -112,6 +127,7 @@ export default function RecommendedProducts({
             game_name,
             stock,
             status,
+            seller_id,
             seller_name,
             seller,
             created_at
@@ -157,6 +173,7 @@ export default function RecommendedProducts({
           game_name,
           stock,
           status,
+          seller_id,
           seller_name,
           seller,
           created_at
@@ -187,8 +204,33 @@ export default function RecommendedProducts({
         return;
       }
 
+      const loadedProducts = (productData || []) as Product[];
+      const sellerIds = Array.from(
+        new Set(
+          loadedProducts
+            .map((product) => product.seller_id)
+            .filter((sellerId): sellerId is string => Boolean(sellerId))
+        )
+      );
+
+      let profilesById: Record<string, SellerProfile> = {};
+
+      if (sellerIds.length > 0) {
+        const { data: profileData, error: profileError } = await supabase
+          .from("profiles")
+          .select("id,username,seller_name,seller_rating,seller_review_count,seller_status")
+          .in("id", sellerIds);
+
+        if (!profileError) {
+          profilesById = Object.fromEntries(
+            ((profileData || []) as SellerProfile[]).map((profile) => [profile.id, profile])
+          );
+        }
+      }
+
       setRecentRows(viewedRows);
-      setProducts((productData || []) as Product[]);
+      setProducts(loadedProducts);
+      setSellerProfiles(profilesById);
       setLoading(false);
     }
 
@@ -228,8 +270,15 @@ export default function RecommendedProducts({
         const categoryScore = categoryCounter.get(normalize(product.category)) || 0;
         const sellerScore = sellerCounter.get(normalize(product.seller_name || product.seller)) || 0;
         const inStock = Number(product.stock ?? 1) > 0;
+        const sellerProfile = product.seller_id ? sellerProfiles[product.seller_id] : null;
+        const sellerReputation = calculateSellerReputation({
+          averageRating: Number(sellerProfile?.seller_rating || 0),
+          reviewCount: Number(sellerProfile?.seller_review_count || 0),
+          sellerStatus: sellerProfile?.seller_status || null,
+        });
+        const reputationBonus = sellerReputation.score >= 85 ? 32 : sellerReputation.score >= 70 ? 22 : sellerReputation.score >= 45 ? 10 : 0;
 
-        const score = gameScore * 40 + categoryScore * 28 + sellerScore * 14 + (inStock ? 8 : -12);
+        const score = gameScore * 40 + categoryScore * 28 + sellerScore * 14 + reputationBonus + (inStock ? 8 : -12);
 
         let reason = "Popular marketplace product";
         if (gameScore > 0 && product.game_name) {
@@ -244,6 +293,9 @@ export default function RecommendedProducts({
           ...product,
           recommendation_score: score,
           recommendation_reason: reason,
+          seller_reputation_score: sellerReputation.score,
+          seller_reputation_tier: sellerReputation.tierLabel,
+          seller_reputation_badge: sellerReputation.badge,
         };
       })
       .filter((product) => product.recommendation_score > 0)
@@ -251,7 +303,7 @@ export default function RecommendedProducts({
       .slice(0, compact ? 4 : 8);
 
     return scoredProducts;
-  }, [compact, currentProductId, products, recentRows]);
+  }, [compact, currentProductId, products, recentRows, sellerProfiles]);
 
   if (loading) return null;
   if (recommendations.length === 0) return null;
@@ -307,6 +359,12 @@ export default function RecommendedProducts({
                 <span className="absolute left-4 top-4 rounded-full bg-fuchsia-400 px-3 py-1 text-xs font-black text-black">
                   Recommended
                 </span>
+
+                {product.seller_reputation_score >= 70 ? (
+                  <span className="absolute right-4 top-4 rounded-full bg-yellow-400 px-3 py-1 text-xs font-black text-black">
+                    {product.seller_reputation_badge} {product.seller_reputation_tier}
+                  </span>
+                ) : null}
               </div>
 
               <div className="p-5">

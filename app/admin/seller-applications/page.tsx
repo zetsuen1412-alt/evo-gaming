@@ -47,6 +47,11 @@ function getStatusClass(status: string | null) {
   return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
 }
 
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("id-ID");
+}
+
 export default function SellerApplicationsAdminPage() {
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
@@ -54,7 +59,9 @@ export default function SellerApplicationsAdminPage() {
   const [loading, setLoading] = useState(true);
   const [activeStatus, setActiveStatus] = useState("all");
   const [search, setSearch] = useState("");
-  const [updatingApplicationId, setUpdatingApplicationId] = useState<number | null>(null);
+  const [updatingApplicationId, setUpdatingApplicationId] = useState<
+    number | null
+  >(null);
 
   const isAdmin = adminProfile?.role?.trim().toLowerCase() === "admin";
 
@@ -76,7 +83,8 @@ export default function SellerApplicationsAdminPage() {
     async function initializePage() {
       setLoading(true);
 
-      const { data: userData, error: userError } = await supabase.auth.getUser();
+      const { data: userData, error: userError } =
+        await supabase.auth.getUser();
 
       if (userError) {
         alert(userError.message);
@@ -137,6 +145,27 @@ export default function SellerApplicationsAdminPage() {
     initializePage();
   }, []);
 
+  async function notifySeller(
+    userId: string,
+    type: string,
+    title: string,
+    message: string,
+    linkUrl: string
+  ) {
+    const { error } = await supabase.from("notifications").insert({
+      user_id: userId,
+      type,
+      title,
+      message,
+      link_url: linkUrl,
+      is_read: false,
+    });
+
+    if (error) {
+      console.warn("Failed to notify seller:", error.message);
+    }
+  }
+
   async function approveApplication(application: SellerApplication) {
     if (!confirm(`Approve ${application.seller_name} as a seller?`)) return;
 
@@ -172,6 +201,14 @@ export default function SellerApplicationsAdminPage() {
       return;
     }
 
+    await notifySeller(
+      application.user_id,
+      "seller_approved",
+      "🎉 Seller Application Approved",
+      "Congratulations! Your seller application has been approved. You can now access the Seller Dashboard.",
+      "/seller"
+    );
+
     await loadApplications();
     setUpdatingApplicationId(null);
     alert("Seller application approved successfully.");
@@ -185,13 +222,15 @@ export default function SellerApplicationsAdminPage() {
 
     if (rejectionNote === null) return;
 
+    const finalNote = rejectionNote || "Seller application rejected.";
+
     setUpdatingApplicationId(application.id);
 
     const { error: applicationError } = await supabase
       .from("seller_applications")
       .update({
         status: "rejected",
-        notes: rejectionNote || "Seller application rejected.",
+        notes: finalNote,
       })
       .eq("id", application.id);
 
@@ -207,13 +246,21 @@ export default function SellerApplicationsAdminPage() {
         seller_status: "rejected",
         bio: "Seller application rejected. Please contact support for more information.",
       })
-      .eq("email", application.email);
+      .eq("id", application.user_id);
 
     if (profileError) {
       alert(profileError.message);
       setUpdatingApplicationId(null);
       return;
     }
+
+    await notifySeller(
+      application.user_id,
+      "seller_rejected",
+      "⚠️ Seller Application Rejected",
+      finalNote,
+      "/seller/apply"
+    );
 
     await loadApplications();
     setUpdatingApplicationId(null);
@@ -256,6 +303,14 @@ export default function SellerApplicationsAdminPage() {
       setUpdatingApplicationId(null);
       return;
     }
+
+    await notifySeller(
+      application.user_id,
+      "seller_pending",
+      "🟡 Seller Application Reset",
+      "Your seller application has been reset to pending review.",
+      "/seller/verification"
+    );
 
     await loadApplications();
     setUpdatingApplicationId(null);
@@ -305,9 +360,11 @@ export default function SellerApplicationsAdminPage() {
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
           <h1 className="text-3xl font-black text-cyan-300">Login Required</h1>
+
           <p className="mt-4 text-gray-400">
             Please login first to access the admin dashboard.
           </p>
+
           <Link
             href="/"
             className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black hover:bg-cyan-300"
@@ -324,13 +381,16 @@ export default function SellerApplicationsAdminPage() {
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
           <h1 className="text-3xl font-black text-red-300">Access Denied</h1>
+
           <p className="mt-4 text-gray-300">
             Only administrator accounts can access seller applications.
           </p>
+
           <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4 text-left text-sm text-gray-300">
             <p>Current user: {user.email}</p>
             <p>Detected role: {adminProfile?.role || "No profile found"}</p>
           </div>
+
           <Link
             href="/"
             className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black hover:bg-cyan-300"
@@ -378,33 +438,45 @@ export default function SellerApplicationsAdminPage() {
 
       <section className="px-8 py-10">
         <div className="mb-8 grid gap-5 md:grid-cols-4">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+          <button
+            onClick={() => setActiveStatus("all")}
+            className="rounded-3xl border border-white/10 bg-white/[0.035] p-5 text-left transition hover:border-cyan-400"
+          >
             <p className="text-sm text-gray-400">Total Applications</p>
             <p className="mt-2 text-3xl font-black text-cyan-300">
               {applications.length}
             </p>
-          </div>
+          </button>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+          <button
+            onClick={() => setActiveStatus("pending")}
+            className="rounded-3xl border border-white/10 bg-white/[0.035] p-5 text-left transition hover:border-yellow-400"
+          >
             <p className="text-sm text-gray-400">Pending</p>
             <p className="mt-2 text-3xl font-black text-yellow-300">
               {pendingCount}
             </p>
-          </div>
+          </button>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+          <button
+            onClick={() => setActiveStatus("approved")}
+            className="rounded-3xl border border-white/10 bg-white/[0.035] p-5 text-left transition hover:border-green-400"
+          >
             <p className="text-sm text-gray-400">Approved</p>
             <p className="mt-2 text-3xl font-black text-green-300">
               {approvedCount}
             </p>
-          </div>
+          </button>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+          <button
+            onClick={() => setActiveStatus("rejected")}
+            className="rounded-3xl border border-white/10 bg-white/[0.035] p-5 text-left transition hover:border-red-400"
+          >
             <p className="text-sm text-gray-400">Rejected</p>
             <p className="mt-2 text-3xl font-black text-red-300">
               {rejectedCount}
             </p>
-          </div>
+          </button>
         </div>
 
         <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
@@ -508,36 +580,40 @@ export default function SellerApplicationsAdminPage() {
                       <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
                         <p className="text-xs text-gray-500">Submitted At</p>
                         <p className="mt-1 font-bold">
-                          {application.created_at
-                            ? new Date(application.created_at).toLocaleString()
-                            : "-"}
+                          {formatDate(application.created_at)}
                         </p>
                       </div>
                     </div>
 
-                    {application.identity_image && (
+                    {application.identity_image ? (
                       <div className="mt-5 rounded-2xl border border-white/10 bg-black/30 p-4">
                         <p className="text-xs text-gray-500">Identity Image</p>
+
+                        <img
+                          src={application.identity_image}
+                          alt="Seller identity preview"
+                          className="mt-3 max-h-72 w-full rounded-2xl border border-white/10 object-cover"
+                        />
 
                         <a
                           href={application.identity_image}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="mt-2 inline-block font-bold text-cyan-300 hover:text-cyan-200"
+                          className="mt-3 inline-block font-bold text-cyan-300 hover:text-cyan-200"
                         >
-                          Open Identity Image
+                          Open Full Identity Image
                         </a>
                       </div>
-                    )}
+                    ) : null}
 
-                    {application.notes && (
+                    {application.notes ? (
                       <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
                         <p className="text-xs text-cyan-300">Admin Notes</p>
                         <p className="mt-2 text-sm text-gray-300">
                           {application.notes}
                         </p>
                       </div>
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="flex flex-col gap-3">
@@ -572,11 +648,11 @@ export default function SellerApplicationsAdminPage() {
                       View Seller Profile
                     </Link>
 
-                    {updatingApplicationId === application.id && (
+                    {updatingApplicationId === application.id ? (
                       <p className="text-center text-sm text-gray-400">
                         Updating application...
                       </p>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
