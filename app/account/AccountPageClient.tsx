@@ -1,8 +1,12 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AccountShell from "@/components/account/AccountShell";
+import InterestRecommendations from "@/components/marketplace/InterestRecommendations";
+import RecentlyViewed from "@/components/marketplace/RecentlyViewed";
+import RecommendedGames from "@/components/marketplace/RecommendedGames";
 import { supabase } from "@/lib/supabase";
 
 type AccountSettings = {
@@ -25,6 +29,32 @@ type BillingProfile = {
   country_code: string;
   tax_country_code: string;
   tax_identification_number: string;
+};
+
+type QuickStats = {
+  orders: number;
+  wishlist: number;
+  following: number;
+  unreadNotifications: number;
+};
+
+type RecentOrder = {
+  id: number | string;
+  status?: string | null;
+  total_amount?: string | number | null;
+  total_price?: string | number | null;
+  product_title?: string | null;
+  product_id?: number | null;
+  created_at?: string | null;
+};
+
+type NotificationPreview = {
+  id: number;
+  title: string;
+  message: string | null;
+  link_url: string | null;
+  is_read: boolean;
+  created_at: string;
 };
 
 const emptyAccount: AccountSettings = {
@@ -68,6 +98,29 @@ function sanitizeUsername(value: string) {
     .replace(/^_+|_+$/g, "");
 }
 
+function numberPrice(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return value;
+  return Number(String(value).replace(/[^\d]/g, "") || 0);
+}
+
+function formatPrice(value: string | number | null | undefined) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(numberPrice(value));
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "-";
+  return new Date(value).toLocaleDateString("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 export default function AccountPageClient() {
   const router = useRouter();
   const [userId, setUserId] = useState("");
@@ -77,6 +130,66 @@ export default function AccountPageClient() {
   const [billing, setBilling] = useState<BillingProfile>(emptyBilling);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [quickStats, setQuickStats] = useState<QuickStats>({
+    orders: 0,
+    wishlist: 0,
+    following: 0,
+    unreadNotifications: 0,
+  });
+  const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [recentNotifications, setRecentNotifications] = useState<NotificationPreview[]>([]);
+
+
+  const loadBuyerDashboard = async (currentUserId: string, currentEmail: string) => {
+    setDashboardLoading(true);
+
+    const [ordersResult, wishlistResult, followingResult, notificationsCountResult, notificationsResult] =
+      await Promise.all([
+        supabase
+          .from("orders")
+          .select("*", { count: "exact" })
+          .or(`buyer_id.eq.${currentUserId},buyer.eq.${currentEmail}`)
+          .order("created_at", { ascending: false })
+          .limit(4),
+        supabase
+          .from("wishlists")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", currentUserId),
+        supabase
+          .from("seller_followers")
+          .select("id", { count: "exact", head: true })
+          .eq("follower_id", currentUserId),
+        supabase
+          .from("notifications")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", currentUserId)
+          .eq("is_read", false),
+        supabase
+          .from("notifications")
+          .select("id,title,message,link_url,is_read,created_at")
+          .eq("user_id", currentUserId)
+          .order("created_at", { ascending: false })
+          .limit(4),
+      ]);
+
+    if (!ordersResult.error) {
+      setRecentOrders((ordersResult.data || []) as RecentOrder[]);
+    }
+
+    if (!notificationsResult.error) {
+      setRecentNotifications((notificationsResult.data || []) as NotificationPreview[]);
+    }
+
+    setQuickStats({
+      orders: ordersResult.count || 0,
+      wishlist: wishlistResult.count || 0,
+      following: followingResult.count || 0,
+      unreadNotifications: notificationsCountResult.count || 0,
+    });
+
+    setDashboardLoading(false);
+  };
 
   useEffect(() => {
     const loadAccount = async () => {
@@ -126,6 +239,8 @@ export default function AccountPageClient() {
           tax_identification_number: billingData.tax_identification_number || "",
         });
       }
+
+      await loadBuyerDashboard(currentUserId, currentEmail);
 
       setLoading(false);
     };
@@ -221,6 +336,61 @@ export default function AccountPageClient() {
   return (
     <AccountShell>
       <form onSubmit={handleSave}>
+
+        <section className="border-b border-white/10 p-6 md:p-8">
+          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+            <div>
+              <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-black text-cyan-300">
+                Buyer Dashboard
+              </p>
+              <h1 className="mt-4 text-3xl font-black md:text-4xl">Welcome back, {username || "player"}</h1>
+              <p className="mt-2 max-w-2xl text-sm text-slate-400">
+                Track your orders, wishlist, followed sellers, notifications, and personalized marketplace picks from one place.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <Link
+                href="/my-orders"
+                className="rounded-xl border border-cyan-400/40 px-4 py-3 text-sm font-black text-cyan-300 hover:bg-cyan-400 hover:text-black"
+              >
+                My Orders
+              </Link>
+              <Link
+                href="/notifications"
+                className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm font-black text-white hover:border-cyan-400"
+              >
+                Notifications
+              </Link>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Orders" value={quickStats.orders} href="/my-orders" loading={dashboardLoading} />
+            <StatCard label="Wishlist" value={quickStats.wishlist} href="/wishlist" loading={dashboardLoading} />
+            <StatCard label="Following Sellers" value={quickStats.following} href="/following" loading={dashboardLoading} />
+            <StatCard label="Unread Notifications" value={quickStats.unreadNotifications} href="/notifications" loading={dashboardLoading} highlight />
+          </div>
+
+          <div className="mt-6 grid gap-4 xl:grid-cols-2">
+            <RecentOrdersPreview orders={recentOrders} loading={dashboardLoading} />
+            <NotificationPreviewList notifications={recentNotifications} loading={dashboardLoading} />
+          </div>
+        </section>
+
+        <section className="border-b border-white/10 p-6 md:p-8">
+          <h2 className="text-2xl font-black">Your Marketplace Activity</h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Continue from your recent views and discover personalized recommendations.
+          </p>
+
+          <div className="mt-6 space-y-8">
+            <RecentlyViewed />
+            <RecommendedGames />
+            <InterestRecommendations />
+          </div>
+        </section>
+
         <section className="border-b border-white/10 p-6 md:p-8">
           <h1 className="text-2xl font-black">Personal</h1>
 
@@ -332,6 +502,129 @@ export default function AccountPageClient() {
         </section>
       </form>
     </AccountShell>
+  );
+}
+
+
+function StatCard({
+  label,
+  value,
+  href,
+  loading,
+  highlight = false,
+}: {
+  label: string;
+  value: number;
+  href: string;
+  loading: boolean;
+  highlight?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`rounded-2xl border p-5 transition hover:-translate-y-0.5 ${
+        highlight
+          ? "border-cyan-400/30 bg-cyan-400/10 hover:border-cyan-300"
+          : "border-white/10 bg-black/30 hover:border-cyan-400"
+      }`}
+    >
+      <p className="text-sm text-slate-400">{label}</p>
+      <p className="mt-2 text-3xl font-black text-cyan-300">
+        {loading ? "..." : value.toLocaleString("id-ID")}
+      </p>
+    </Link>
+  );
+}
+
+function RecentOrdersPreview({ orders, loading }: { orders: RecentOrder[]; loading: boolean }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-black">Recent Orders</h3>
+        <Link href="/my-orders" className="text-sm font-bold text-cyan-300 hover:text-cyan-200">
+          View all
+        </Link>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {loading ? (
+          <p className="text-sm text-slate-400">Loading orders...</p>
+        ) : orders.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
+            No orders yet. Start exploring marketplace offers.
+          </div>
+        ) : (
+          orders.map((order) => (
+            <Link
+              key={String(order.id)}
+              href={`/order/${order.id}`}
+              className="block rounded-xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-cyan-400"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-bold">{order.product_title || `Order #${order.id}`}</p>
+                  <p className="mt-1 text-xs text-slate-500">{formatDate(order.created_at)}</p>
+                </div>
+                <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300">
+                  {order.status || "pending"}
+                </span>
+              </div>
+              <p className="mt-3 font-black text-cyan-300">
+                {formatPrice(order.total_amount ?? order.total_price)}
+              </p>
+            </Link>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NotificationPreviewList({
+  notifications,
+  loading,
+}: {
+  notifications: NotificationPreview[];
+  loading: boolean;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-black">Recent Notifications</h3>
+        <Link href="/notifications" className="text-sm font-bold text-cyan-300 hover:text-cyan-200">
+          View all
+        </Link>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {loading ? (
+          <p className="text-sm text-slate-400">Loading notifications...</p>
+        ) : notifications.length === 0 ? (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
+            No notifications yet.
+          </div>
+        ) : (
+          notifications.map((item) => (
+            <Link
+              key={item.id}
+              href={item.link_url || "/notifications"}
+              className={`block rounded-xl border p-4 transition hover:border-cyan-400 ${
+                item.is_read ? "border-white/10 bg-white/[0.03]" : "border-cyan-400/30 bg-cyan-400/10"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-bold">{item.title}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-slate-400">{item.message || "Marketplace notification"}</p>
+                </div>
+                {!item.is_read ? <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-cyan-300" /> : null}
+              </div>
+              <p className="mt-2 text-xs text-slate-500">{formatDate(item.created_at)}</p>
+            </Link>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 

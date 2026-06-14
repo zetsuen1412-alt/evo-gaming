@@ -235,32 +235,54 @@ export default function ProductUploadClient() {
     const sellerDisplayName =
       profile.seller_name || profile.username || user.email || "Seller";
 
-    const { error } = await supabase.from("products").insert({
-      title: title.trim(),
-      description: description.trim(),
-      price: parsedPrice,
-      stock: parsedStock,
+    const { data: createdProduct, error } = await supabase
+      .from("products")
+      .insert({
+        title: title.trim(),
+        description: description.trim(),
+        price: parsedPrice,
+        stock: parsedStock,
 
-      category: selectedCategory.name,
-      category_id: selectedCategory.id,
+        category: selectedCategory.name,
+        category_id: selectedCategory.id,
 
-      game_name: selectedGame.name,
-      game_category_id: selectedGame.id,
+        game_name: selectedGame.name,
+        game_category_id: selectedGame.id,
 
-      seller: sellerDisplayName,
-      seller_id: profile.id,
-      seller_name: sellerDisplayName,
+        seller: sellerDisplayName,
+        seller_id: profile.id,
+        seller_name: sellerDisplayName,
 
-      image_url: imageUrl.trim() || selectedGame.image_url || null,
-      slug: productSlug || createSlug(title),
+        image_url: imageUrl.trim() || selectedGame.image_url || null,
+        slug: productSlug || createSlug(title),
 
-      status: "active",
-    });
+        status: "active",
+      })
+      .select("id")
+      .single();
 
     if (error) {
       alert(`Database Error: ${error.message}`);
       setSubmitting(false);
       return;
+    }
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+
+      if (createdProduct?.id && accessToken) {
+        await fetch("/api/sellers/followers/notify-new-product", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ productId: createdProduct.id }),
+        });
+      }
+    } catch (notificationError) {
+      console.error("Followed seller notification error:", notificationError);
     }
 
     alert("Product created successfully.");
