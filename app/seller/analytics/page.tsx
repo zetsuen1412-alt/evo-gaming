@@ -148,6 +148,7 @@ export default function SellerAnalyticsV2Page() {
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [marketplaceEvents, setMarketplaceEvents] = useState<MarketplaceEvent[]>([]);
+  const [eventRangeDays, setEventRangeDays] = useState(30);
   const [loading, setLoading] = useState(true);
 
   const sellerDisplayName =
@@ -343,12 +344,21 @@ export default function SellerAnalyticsV2Page() {
     );
   }, [products]);
 
+  const filteredMarketplaceEvents = useMemo(() => {
+    const since = getDaysAgo(eventRangeDays).getTime();
+
+    return marketplaceEvents.filter((event) => {
+      if (!event.created_at) return false;
+      return new Date(event.created_at).getTime() >= since;
+    });
+  }, [marketplaceEvents, eventRangeDays]);
+
   const eventCounts = useMemo(() => {
-    return marketplaceEvents.reduce<Record<string, number>>((acc, event) => {
+    return filteredMarketplaceEvents.reduce<Record<string, number>>((acc, event) => {
       acc[event.event_type] = (acc[event.event_type] || 0) + 1;
       return acc;
     }, {});
-  }, [marketplaceEvents]);
+  }, [filteredMarketplaceEvents]);
 
   const funnelOfferViews = eventCounts.offer_view || 0;
   const funnelProductViews = eventCounts.product_view || 0;
@@ -367,7 +377,7 @@ export default function SellerAnalyticsV2Page() {
       { productId: number; name: string; views: number; checkoutStarts: number; completed: number }
     >();
 
-    marketplaceEvents.forEach((event) => {
+    filteredMarketplaceEvents.forEach((event) => {
       if (!event.product_id) return;
 
       const productId = Number(event.product_id);
@@ -402,7 +412,7 @@ export default function SellerAnalyticsV2Page() {
         return b.views - a.views;
       })
       .slice(0, 8);
-  }, [marketplaceEvents, productNameById]);
+  }, [filteredMarketplaceEvents, productNameById]);
 
   async function loadSellerAnalytics(currentUser: User) {
     const { data: profileData, error: profileError } = await supabase
@@ -450,7 +460,7 @@ export default function SellerAnalyticsV2Page() {
           .from("marketplace_events")
           .select("id,event_type,product_id,seller_id,order_id,game_slug,game_name,category_slug,category_name,created_at")
           .eq("seller_id", currentUser.id)
-          .gte("created_at", getDaysAgo(30).toISOString())
+          .gte("created_at", getDaysAgo(90).toISOString())
           .order("id", { ascending: false })
           .limit(1000),
       ]);
@@ -734,13 +744,39 @@ export default function SellerAnalyticsV2Page() {
           </div>
         </div>
 
+        <div className="mb-5 flex flex-col justify-between gap-4 rounded-3xl border border-white/10 bg-white/[0.035] p-5 md:flex-row md:items-center">
+          <div>
+            <h2 className="text-2xl font-black text-cyan-300">Marketplace Funnel</h2>
+            <p className="mt-1 text-sm text-gray-400">
+              Showing buyer activity from the last {eventRangeDays} days.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {[7, 30, 90].map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setEventRangeDays(days)}
+                className={`rounded-full border px-4 py-2 text-sm font-black transition ${
+                  eventRangeDays === days
+                    ? "border-cyan-400 bg-cyan-400 text-black"
+                    : "border-white/10 bg-black/30 text-gray-300 hover:border-cyan-400 hover:text-cyan-300"
+                }`}
+              >
+                {days}D
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-6">
             <p className="text-sm text-gray-300">Offer Views</p>
             <p className="mt-2 text-4xl font-black text-cyan-300">
               {funnelOfferViews}
             </p>
-            <p className="mt-2 text-xs text-gray-400">Last 30 days</p>
+            <p className="mt-2 text-xs text-gray-400">Last {eventRangeDays} days</p>
           </div>
 
           <div className="rounded-3xl border border-blue-400/20 bg-blue-400/10 p-6">
@@ -1044,7 +1080,7 @@ export default function SellerAnalyticsV2Page() {
             Top Converting Products
           </h2>
           <p className="mt-2 text-sm text-gray-400">
-            Based on marketplace funnel events from the last 30 days.
+            Based on marketplace funnel events from the selected time range.
           </p>
 
           {topConvertingProducts.length === 0 ? (
