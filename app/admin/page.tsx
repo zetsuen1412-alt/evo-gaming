@@ -10,48 +10,35 @@ type Profile = {
   email: string | null;
   username: string | null;
   role: string | null;
-};
-
-type Order = {
-  id: number;
-  product: string | null;
-  buyer: string | null;
-  price: string | number | null;
-  total_price: string | number | null;
-  status: string | null;
-  created_at: string;
-};
-
-type SellerApplication = {
-  id: number;
+  avatar_url: string | null;
   seller_name: string | null;
-  email: string | null;
-  status: string | null;
+};
+
+type Wallet = {
+  id: number;
+  user_id: string;
+  balance: string | number;
+  total_withdrawn: string | number;
+};
+
+type Withdrawal = {
+  id: number;
+  user_id: string;
+  wallet_id: number;
+  amount: string | number;
+  payout_method: string;
+  payout_account_name: string;
+  payout_account_number: string;
+  payout_note: string | null;
+  status: string;
+  admin_note: string | null;
+  processed_at: string | null;
   created_at: string;
+  profiles: Profile | null;
+  wallets: Wallet | null;
 };
 
-type Stats = {
-  users: number;
-  sellers: number;
-  pendingSellers: number;
-  products: number;
-  games: number;
-  categories: number;
-  orders: number;
-  disputes: number;
-  revenue: number;
-};
-
-function normalizeStatus(status: string | null) {
-  if (status === "pending") return "Pending Payment";
-  if (status === "pending_payment") return "Pending Payment";
-  if (status === "Menunggu Pembayaran") return "Pending Payment";
-  if (status === "Menunggu Cek Pembayaran") return "Payment Verification";
-  if (status === "Diproses") return "Processing";
-  if (status === "Selesai") return "Completed";
-  if (status === "Dibatalkan") return "Cancelled";
-  return status || "Pending Payment";
-}
+const statusFilters = ["all", "pending", "approved", "rejected", "cancelled"];
 
 function formatPrice(value: string | number | null) {
   const price = Number(value || 0);
@@ -59,234 +46,93 @@ function formatPrice(value: string | number | null) {
   return `Rp ${price.toLocaleString("id-ID")}`;
 }
 
-export default function AdminDashboardV4Page() {
+function formatDate(value: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("id-ID");
+}
+
+function statusClass(status: string) {
+  if (status === "approved") return "border-green-400/20 bg-green-400/10 text-green-300";
+  if (status === "pending") return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
+  if (status === "rejected" || status === "cancelled") return "border-red-400/20 bg-red-400/10 text-red-300";
+  return "border-white/10 bg-white/[0.04] text-gray-300";
+}
+
+export default function AdminWithdrawalManagementV1Page() {
   const [user, setUser] = useState<User | null>(null);
-  const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
-
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<Stats>({
-    users: 0,
-    sellers: 0,
-    pendingSellers: 0,
-    products: 0,
-    games: 0,
-    categories: 0,
-    orders: 0,
-    disputes: 0,
-    revenue: 0,
-  });
+  const [activeStatus, setActiveStatus] = useState("all");
+  const [search, setSearch] = useState("");
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
 
-  const [latestOrders, setLatestOrders] = useState<Order[]>([]);
-  const [latestApplications, setLatestApplications] = useState<
-    SellerApplication[]
-  >([]);
+  const isAdmin = profile?.role?.trim().toLowerCase() === "admin";
 
-  const isAdmin = adminProfile?.role?.trim().toLowerCase() === "admin";
+  const filteredWithdrawals = useMemo(() => {
+    const query = search.trim().toLowerCase();
 
-  const adminCards = useMemo(
-    () => [
-      {
-        title: "Order Management",
-        description: "Verify payments, monitor orders, refunds, disputes.",
-        href: "/admin/orders",
-        value: stats.orders,
-        label: "orders",
-        accent: "text-cyan-300",
-        border: "border-cyan-400/20",
-        bg: "bg-cyan-400/10",
-      },
-      {
-        title: "Seller Applications",
-        description: "Approve or reject seller verification requests.",
-        href: "/admin/seller-applications",
-        value: stats.pendingSellers,
-        label: "pending",
-        accent: "text-yellow-300",
-        border: "border-yellow-400/20",
-        bg: "bg-yellow-400/10",
-      },
-      {
-        title: "Product Management",
-        description: "Review, hide, approve, reject, or delete products.",
-        href: "/admin/products",
-        value: stats.products,
-        label: "products",
-        accent: "text-purple-300",
-        border: "border-purple-400/20",
-        bg: "bg-purple-400/10",
-      },
-      {
-        title: "User Management",
-        description: "Manage roles, admin access, and seller status.",
-        href: "/admin/users",
-        value: stats.users,
-        label: "users",
-        accent: "text-green-300",
-        border: "border-green-400/20",
-        bg: "bg-green-400/10",
-      },
-      {
-        title: "Dispute Center",
-        description: "Resolve disputed orders and marketplace cases.",
-        href: "/admin/disputes",
-        value: stats.disputes,
-        label: "open disputes",
-        accent: "text-orange-300",
-        border: "border-orange-400/20",
-        bg: "bg-orange-400/10",
-      },
-      {
-        title: "Game Master",
-        description: "Manage A-Z game catalog and game assets.",
-        href: "/admin/games",
-        value: stats.games,
-        label: "games",
-        accent: "text-blue-300",
-        border: "border-blue-400/20",
-        bg: "bg-blue-400/10",
-      },
-      {
-        title: "Marketplace Categories",
-        description: "Unified category filters now use all active Game Master entries.",
-        href: "/admin/category-mapping",
-        value: stats.categories,
-        label: "categories",
-        accent: "text-pink-300",
-        border: "border-pink-400/20",
-        bg: "bg-pink-400/10",
-      },
-      {
-        title: "Support Tickets",
-        description: "Manage user support requests and disputes.",
-        href: "/admin/support",
-        value: "Open",
-        label: "support",
-        accent: "text-cyan-300",
-        border: "border-cyan-400/20",
-        bg: "bg-cyan-400/10",
-      },
-      {
-        title: "Announcement Manager",
-        description: "Create maintenance, promo, and security announcements.",
-        href: "/admin/announcements",
-        value: "Open",
-        label: "announcements",
-        accent: "text-yellow-300",
-        border: "border-yellow-400/20",
-        bg: "bg-yellow-400/10",
-      },
-      {
-        title: "Public Announcements",
-        description: "Preview announcements shown to marketplace users.",
-        href: "/announcements",
-        value: "View",
-        label: "public",
-        accent: "text-purple-300",
-        border: "border-purple-400/20",
-        bg: "bg-purple-400/10",
-      },
-      {
-        title: "Support Center",
-        description: "Open the public support ticket center.",
-        href: "/support",
-        value: "View",
-        label: "support",
-        accent: "text-green-300",
-        border: "border-green-400/20",
-        bg: "bg-green-400/10",
-      },
-      {
-        title: "Browse Site",
-        description: "Return to marketplace homepage.",
-        href: "/",
-        value: "Open",
-        label: "site",
-        accent: "text-white",
-        border: "border-white/10",
-        bg: "bg-white/[0.04]",
-      },
-    ],
-    [stats]
-  );
+    return withdrawals.filter((item) => {
+      const p = item.profiles;
+      const matchesStatus = activeStatus === "all" || item.status === activeStatus;
+      const matchesSearch =
+        !query ||
+        String(item.id).includes(query) ||
+        item.user_id.toLowerCase().includes(query) ||
+        item.payout_method.toLowerCase().includes(query) ||
+        item.payout_account_name.toLowerCase().includes(query) ||
+        item.payout_account_number.toLowerCase().includes(query) ||
+        (p?.email || "").toLowerCase().includes(query) ||
+        (p?.username || "").toLowerCase().includes(query) ||
+        (p?.seller_name || "").toLowerCase().includes(query);
 
-  async function loadDashboard() {
-    const [
-      profilesResult,
-      productsResult,
-      ordersResult,
-      applicationsResult,
-      gamesResult,
-      categoriesResult,
-      disputesResult,
-    ] = await Promise.all([
-      supabase.from("profiles").select("*"),
-      supabase.from("products").select("*"),
-      supabase.from("orders").select("*").order("id", { ascending: false }),
-      supabase
-        .from("seller_applications")
-        .select("*")
-        .order("id", { ascending: false }),
-      supabase.from("game_master").select("*"),
-      supabase.from("categories").select("*"),
-      supabase
-        .from("disputes")
-        .select("*")
-        .in("status", ["open", "investigating"]),
-    ]);
-
-    if (profilesResult.error) alert(profilesResult.error.message);
-    if (productsResult.error) alert(productsResult.error.message);
-    if (ordersResult.error) alert(ordersResult.error.message);
-    if (applicationsResult.error) alert(applicationsResult.error.message);
-    if (gamesResult.error) alert(gamesResult.error.message);
-    if (categoriesResult.error) alert(categoriesResult.error.message);
-    if (disputesResult.error) alert(disputesResult.error.message);
-
-    const profiles = profilesResult.data || [];
-    const products = productsResult.data || [];
-    const orders = ordersResult.data || [];
-    const applications = applicationsResult.data || [];
-    const games = gamesResult.data || [];
-    const categories = categoriesResult.data || [];
-    const disputes = disputesResult.data || [];
-
-    const sellers = profiles.filter(
-      (profile: any) =>
-        profile.seller_status === "approved" || profile.role === "seller"
-    );
-
-    const pendingSellers = applications.filter(
-      (application: any) => application.status === "pending"
-    );
-
-    const completedOrders = orders.filter(
-      (order: any) => normalizeStatus(order.status) === "Completed"
-    );
-
-    const revenue = completedOrders.reduce(
-      (sum: number, order: any) =>
-        sum + Number(order.total_price || order.price || 0),
-      0
-    );
-
-    setStats({
-      users: profiles.length,
-      sellers: sellers.length,
-      pendingSellers: pendingSellers.length,
-      products: products.length,
-      games: games.length,
-      categories: categories.length,
-      orders: orders.length,
-      disputes: disputes.length,
-      revenue,
+      return matchesStatus && matchesSearch;
     });
+  }, [withdrawals, activeStatus, search]);
 
-    setLatestOrders((orders || []).slice(0, 8) as Order[]);
-    setLatestApplications((applications || []).slice(0, 6) as SellerApplication[]);
+  const pendingCount = withdrawals.filter((w) => w.status === "pending").length;
+  const approvedCount = withdrawals.filter((w) => w.status === "approved").length;
+  const rejectedCount = withdrawals.filter((w) => w.status === "rejected").length;
+  const totalAmount = withdrawals.reduce((sum, w) => sum + Number(w.amount || 0), 0);
+  const pendingAmount = withdrawals
+    .filter((w) => w.status === "pending")
+    .reduce((sum, w) => sum + Number(w.amount || 0), 0);
+
+  async function loadWithdrawals() {
+    const { data, error } = await supabase
+      .from("withdrawal_requests")
+      .select(
+        `
+        *,
+        profiles:user_id (
+          id,
+          email,
+          username,
+          role,
+          avatar_url,
+          seller_name
+        ),
+        wallets:wallet_id (
+          id,
+          user_id,
+          balance,
+          total_withdrawn
+        )
+      `
+      )
+      .order("id", { ascending: false });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setWithdrawals((data || []) as unknown as Withdrawal[]);
   }
 
   useEffect(() => {
-    async function initializePage() {
+    async function init() {
       setLoading(true);
 
       const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -298,7 +144,6 @@ export default function AdminDashboardV4Page() {
       }
 
       if (!userData.user) {
-        setUser(null);
         setLoading(false);
         return;
       }
@@ -307,7 +152,7 @@ export default function AdminDashboardV4Page() {
 
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
-        .select("id,email,username,role")
+        .select("id,email,username,role,avatar_url,seller_name")
         .eq("id", userData.user.id)
         .maybeSingle();
 
@@ -317,24 +162,145 @@ export default function AdminDashboardV4Page() {
         return;
       }
 
-      setAdminProfile(profileData || null);
+      setProfile(profileData || null);
 
       if (profileData?.role?.trim().toLowerCase() === "admin") {
-        await loadDashboard();
+        await loadWithdrawals();
       }
 
       setLoading(false);
     }
 
-    initializePage();
+    init();
   }, []);
+
+  async function approveWithdrawal(item: Withdrawal) {
+    if (item.status !== "pending") {
+      alert("Only pending withdrawal can be approved.");
+      return;
+    }
+
+    if (!confirm(`Approve withdrawal ${formatPrice(item.amount)}?`)) return;
+
+    setUpdatingId(item.id);
+
+    const note = adminNotes[item.id]?.trim() || "Withdrawal approved by admin.";
+
+    const { error: requestError } = await supabase
+      .from("withdrawal_requests")
+      .update({
+        status: "approved",
+        admin_note: note,
+        processed_at: new Date().toISOString(),
+      })
+      .eq("id", item.id);
+
+    if (requestError) {
+      alert(requestError.message);
+      setUpdatingId(null);
+      return;
+    }
+
+    await supabase
+      .from("wallet_transactions")
+      .update({
+        type: "withdraw_approved",
+        status: "completed",
+        description: note,
+      })
+      .eq("wallet_id", item.wallet_id)
+      .eq("user_id", item.user_id)
+      .eq("type", "withdraw_request")
+      .eq("amount", Number(item.amount))
+      .eq("status", "pending");
+
+    await loadWithdrawals();
+    setUpdatingId(null);
+  }
+
+  async function rejectWithdrawal(item: Withdrawal) {
+    if (item.status !== "pending") {
+      alert("Only pending withdrawal can be rejected.");
+      return;
+    }
+
+    const note = adminNotes[item.id]?.trim();
+
+    if (!note) {
+      alert("Admin note is required when rejecting withdrawal.");
+      return;
+    }
+
+    if (!confirm(`Reject and refund ${formatPrice(item.amount)}?`)) return;
+
+    setUpdatingId(item.id);
+
+    const currentBalance = Number(item.wallets?.balance || 0);
+    const amount = Number(item.amount || 0);
+    const balanceAfter = currentBalance + amount;
+
+    const { error: walletError } = await supabase
+      .from("wallets")
+      .update({
+        balance: balanceAfter,
+        total_withdrawn: Math.max(Number(item.wallets?.total_withdrawn || 0) - amount, 0),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", item.wallet_id);
+
+    if (walletError) {
+      alert(walletError.message);
+      setUpdatingId(null);
+      return;
+    }
+
+    const { error: requestError } = await supabase
+      .from("withdrawal_requests")
+      .update({
+        status: "rejected",
+        admin_note: note,
+        processed_at: new Date().toISOString(),
+      })
+      .eq("id", item.id);
+
+    if (requestError) {
+      alert(requestError.message);
+      setUpdatingId(null);
+      return;
+    }
+
+    await supabase.from("wallet_transactions").insert({
+      wallet_id: item.wallet_id,
+      user_id: item.user_id,
+      type: "withdraw_rejected",
+      amount,
+      balance_before: currentBalance,
+      balance_after: balanceAfter,
+      order_id: null,
+      description: `Withdrawal rejected and refunded. ${note}`,
+      status: "rejected",
+    });
+
+    await supabase
+      .from("wallet_transactions")
+      .update({
+        status: "rejected",
+        description: `Withdrawal request rejected. ${note}`,
+      })
+      .eq("wallet_id", item.wallet_id)
+      .eq("user_id", item.user_id)
+      .eq("type", "withdraw_request")
+      .eq("amount", amount)
+      .eq("status", "pending");
+
+    await loadWithdrawals();
+    setUpdatingId(null);
+  }
 
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">
-          Loading admin dashboard...
-        </p>
+        <p className="text-xl font-black text-cyan-300">Loading withdrawals...</p>
       </main>
     );
   }
@@ -344,15 +310,8 @@ export default function AdminDashboardV4Page() {
       <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
         <div className="max-w-md rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
           <h1 className="text-3xl font-black text-red-300">Access Denied</h1>
-
-          <p className="mt-4 text-gray-300">
-            Only admin accounts can access admin dashboard.
-          </p>
-
-          <Link
-            href="/"
-            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
-          >
+          <p className="mt-4 text-gray-300">Only admin can access withdrawal management.</p>
+          <Link href="/" className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black">
             Back to Home
           </Link>
         </div>
@@ -363,213 +322,212 @@ export default function AdminDashboardV4Page() {
   return (
     <main className="min-h-screen bg-[#020617] text-white">
       <section className="relative overflow-hidden border-b border-white/10 px-8 py-14">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.20),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.20),transparent_32%),radial-gradient(circle_at_top_right,rgba(34,197,94,.16),transparent_34%)]" />
 
         <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
-            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Admin Dashboard V4
+            <p className="mb-4 inline-flex rounded-full border border-green-400/30 bg-green-400/10 px-4 py-2 text-sm font-black text-green-300">
+              Admin Withdrawal Management
             </p>
-
-            <h1 className="text-5xl font-black md:text-7xl">
-              ComePlayers Control Center
-            </h1>
-
+            <h1 className="text-5xl font-black md:text-7xl">Withdrawals</h1>
             <p className="mt-5 max-w-3xl text-gray-300">
-              Manage sellers, orders, products, users, disputes, support,
-              announcements, game master, and category mapping from one dashboard.
-            </p>
-
-            <p className="mt-3 text-sm text-gray-500">
-              Logged in as {user.email}
+              Review seller withdrawal requests, approve payouts, reject requests, and refund wallet balance.
             </p>
           </div>
 
           <Link
-            href="/"
-            className="inline-flex h-12 shrink-0 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+            href="/admin"
+            className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
           >
-            Open Marketplace
+            Admin Home
           </Link>
         </div>
       </section>
 
       <section className="mx-auto max-w-7xl px-8 py-10">
-        <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-            <p className="text-sm text-gray-400">Total Users</p>
-            <p className="mt-2 text-4xl font-black text-cyan-300">
-              {stats.users}
-            </p>
+        <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+            <p className="text-sm text-gray-400">Total Requests</p>
+            <p className="mt-2 text-3xl font-black text-cyan-300">{withdrawals.length}</p>
           </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-            <p className="text-sm text-gray-400">Sellers</p>
-            <p className="mt-2 text-4xl font-black text-green-300">
-              {stats.sellers}
-            </p>
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+            <p className="text-sm text-gray-400">Pending</p>
+            <p className="mt-2 text-3xl font-black text-yellow-300">{pendingCount}</p>
           </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-            <p className="text-sm text-gray-400">Orders</p>
-            <p className="mt-2 text-4xl font-black text-blue-300">
-              {stats.orders}
-            </p>
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+            <p className="text-sm text-gray-400">Approved</p>
+            <p className="mt-2 text-3xl font-black text-green-300">{approvedCount}</p>
           </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-            <p className="text-sm text-gray-400">Revenue</p>
-            <p className="mt-2 text-3xl font-black text-green-300">
-              {formatPrice(stats.revenue)}
-            </p>
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+            <p className="text-sm text-gray-400">Rejected</p>
+            <p className="mt-2 text-3xl font-black text-red-300">{rejectedCount}</p>
+          </div>
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
+            <p className="text-sm text-gray-400">Pending Amount</p>
+            <p className="mt-2 text-2xl font-black text-green-300">{formatPrice(pendingAmount)}</p>
           </div>
         </div>
 
-        <div className="mb-10 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-          {adminCards.map((card) => (
-            <Link
-              key={card.href}
-              href={card.href}
-              className={`group rounded-3xl border ${card.border} ${card.bg} p-6 shadow-2xl shadow-black/20 transition hover:-translate-y-1 hover:border-cyan-400`}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className={`text-2xl font-black ${card.accent}`}>
-                    {card.title}
-                  </h2>
+        <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search user, email, username, payout method, account number, or request ID..."
+            className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+          />
 
-                  <p className="mt-3 text-sm leading-6 text-gray-300">
-                    {card.description}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-right">
-                  <p className={`text-2xl font-black ${card.accent}`}>
-                    {card.value}
-                  </p>
-
-                  <p className="text-xs text-gray-500">{card.label}</p>
-                </div>
-              </div>
-
-              <p className="mt-6 text-sm font-black text-cyan-300 opacity-80 group-hover:opacity-100">
-                Open →
-              </p>
-            </Link>
-          ))}
-        </div>
-
-        <div className="grid gap-8 lg:grid-cols-[1fr_420px]">
-          <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-            <div className="mb-6 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-3xl font-black">Latest Orders</h2>
-                <p className="mt-2 text-sm text-gray-400">
-                  Newest marketplace transactions.
-                </p>
-              </div>
-
-              <Link
-                href="/admin/orders"
-                className="rounded-full border border-cyan-400 px-5 py-2 font-bold text-cyan-300 hover:bg-cyan-400 hover:text-black"
+          <div className="flex flex-wrap gap-3">
+            {statusFilters.map((item) => (
+              <button
+                key={item}
+                onClick={() => setActiveStatus(item)}
+                className={`rounded-full px-5 py-3 text-sm font-bold transition ${
+                  activeStatus === item
+                    ? "bg-cyan-400 text-black"
+                    : "border border-white/10 bg-white/[0.04] text-gray-300 hover:border-cyan-400 hover:text-white"
+                }`}
               >
-                View All
-              </Link>
-            </div>
+                {item === "all" ? "All" : item}
+              </button>
+            ))}
+          </div>
+        </div>
 
-            {latestOrders.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-6 text-center text-gray-400">
-                No orders yet.
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {latestOrders.map((order) => (
-                  <Link
-                    key={order.id}
-                    href={`/order/${order.id}`}
-                    className="block rounded-2xl border border-white/10 bg-black/30 p-5 transition hover:border-cyan-400"
-                  >
-                    <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-                      <div>
-                        <p className="text-sm font-black text-cyan-300">
-                          Order #{order.id}
-                        </p>
+        <div className="mb-8 rounded-3xl border border-white/10 bg-white/[0.035] p-6">
+          <p className="text-sm text-gray-400">Total Requested Amount</p>
+          <p className="mt-2 text-3xl font-black text-purple-300">{formatPrice(totalAmount)}</p>
+        </div>
 
-                        <h3 className="mt-1 text-lg font-black">
-                          {order.product || "Unknown Product"}
-                        </h3>
+        {filteredWithdrawals.length === 0 ? (
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-12 text-center">
+            <h2 className="text-3xl font-black">No withdrawal requests found.</h2>
+            <p className="mt-3 text-gray-400">Withdrawal requests from users will appear here.</p>
+          </div>
+        ) : (
+          <div className="grid gap-6">
+            {filteredWithdrawals.map((item) => {
+              const displayName =
+                item.profiles?.seller_name ||
+                item.profiles?.username ||
+                item.profiles?.email ||
+                "User";
 
-                        <p className="mt-1 text-sm text-gray-400">
-                          Buyer: {order.buyer || "-"}
-                        </p>
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30"
+                >
+                  <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <h2 className="text-2xl font-black">Withdrawal #{item.id}</h2>
+                        <span className={`rounded-full border px-3 py-1 text-xs font-black ${statusClass(item.status)}`}>
+                          {item.status}
+                        </span>
                       </div>
 
-                      <div className="md:text-right">
-                        <p className="font-black text-green-300">
-                          {formatPrice(order.total_price || order.price)}
-                        </p>
+                      <p className="mt-4 text-4xl font-black text-green-300">
+                        {formatPrice(item.amount)}
+                      </p>
 
-                        <p className="mt-1 text-sm text-gray-400">
-                          {normalizeStatus(order.status)}
-                        </p>
+                      <div className="mt-6 grid gap-4 md:grid-cols-2">
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">User</p>
+                          <p className="mt-1 font-black">{displayName}</p>
+                          <p className="mt-1 break-words text-sm text-gray-400">{item.profiles?.email || item.user_id}</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Payout Method</p>
+                          <p className="mt-1 font-black">{item.payout_method}</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Account Name</p>
+                          <p className="mt-1 font-black">{item.payout_account_name}</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Account Number</p>
+                          <p className="mt-1 break-words font-black">{item.payout_account_number}</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Requested At</p>
+                          <p className="mt-1 font-black">{formatDate(item.created_at)}</p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                          <p className="text-xs text-gray-500">Processed At</p>
+                          <p className="mt-1 font-black">{formatDate(item.processed_at)}</p>
+                        </div>
                       </div>
+
+                      {item.payout_note && (
+                        <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+                          <p className="text-sm font-black text-cyan-300">User Note</p>
+                          <p className="mt-2 text-sm text-gray-300">{item.payout_note}</p>
+                        </div>
+                      )}
+
+                      {item.admin_note && (
+                        <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
+                          <p className="text-sm font-black text-yellow-300">Admin Note</p>
+                          <p className="mt-2 text-sm text-gray-300">{item.admin_note}</p>
+                        </div>
+                      )}
                     </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </section>
 
-          <aside className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-            <div className="mb-6 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-3xl font-black">Seller Requests</h2>
-                <p className="mt-2 text-sm text-gray-400">
-                  Latest seller applications.
-                </p>
-              </div>
+                    <div className="flex flex-col gap-3">
+                      <label className="text-sm font-bold text-gray-400">Admin Note</label>
 
-              <Link
-                href="/admin/seller-applications"
-                className="rounded-full border border-yellow-400 px-5 py-2 font-bold text-yellow-300 hover:bg-yellow-400 hover:text-black"
-              >
-                View
-              </Link>
-            </div>
+                      <textarea
+                        value={adminNotes[item.id] || ""}
+                        onChange={(event) =>
+                          setAdminNotes((prev) => ({
+                            ...prev,
+                            [item.id]: event.target.value,
+                          }))
+                        }
+                        placeholder="Write admin note..."
+                        rows={5}
+                        disabled={item.status !== "pending"}
+                        className="w-full resize-none rounded-2xl border border-white/10 bg-black px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400 disabled:opacity-60"
+                      />
 
-            {latestApplications.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-6 text-center text-gray-400">
-                No seller applications yet.
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {latestApplications.map((application) => (
-                  <Link
-                    key={application.id}
-                    href="/admin/seller-applications"
-                    className="block rounded-2xl border border-white/10 bg-black/30 p-5 transition hover:border-yellow-400"
-                  >
-                    <p className="text-sm font-black text-yellow-300">
-                      Application #{application.id}
-                    </p>
+                      <button
+                        onClick={() => approveWithdrawal(item)}
+                        disabled={updatingId === item.id || item.status !== "pending"}
+                        className="rounded-2xl bg-green-500 px-5 py-3 font-black text-white hover:bg-green-400 disabled:opacity-60"
+                      >
+                        Approve Withdrawal
+                      </button>
 
-                    <h3 className="mt-1 text-lg font-black">
-                      {application.seller_name || "Unknown Seller"}
-                    </h3>
+                      <button
+                        onClick={() => rejectWithdrawal(item)}
+                        disabled={updatingId === item.id || item.status !== "pending"}
+                        className="rounded-2xl bg-red-500 px-5 py-3 font-black text-white hover:bg-red-400 disabled:opacity-60"
+                      >
+                        Reject & Refund
+                      </button>
 
-                    <p className="mt-1 text-sm text-gray-400">
-                      {application.email || "-"}
-                    </p>
+                      <Link
+                        href={`/seller-profile/${item.user_id}`}
+                        className="rounded-2xl border border-cyan-400 px-5 py-3 text-center font-black text-cyan-300 hover:bg-cyan-400 hover:text-black"
+                      >
+                        View User Profile
+                      </Link>
 
-                    <p className="mt-2 text-xs text-gray-500">
-                      Status: {application.status || "pending"}
-                    </p>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </aside>
-        </div>
+                      {updatingId === item.id && (
+                        <p className="text-center text-sm text-gray-400">Updating withdrawal...</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
     </main>
   );

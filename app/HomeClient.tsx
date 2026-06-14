@@ -14,7 +14,6 @@ type Category = {
 
 export default function Home() {
   const searchParams = useSearchParams();
-
   const [categories, setCategories] = useState<Category[]>([]);
 
   const search = searchParams.get("q") || "";
@@ -55,12 +54,12 @@ export default function Home() {
           </p>
 
           <h1 className="text-5xl font-black leading-[1.05] md:text-6xl lg:text-7xl">
-  All Your Gaming
-  <br />
-  Needs in One
-  <br />
-  Secure <span className="text-yellow-400">Marketplace</span>
-</h1>
+            All Your Gaming
+            <br />
+            Needs in One
+            <br />
+            Secure <span className="text-yellow-400">Marketplace</span>
+          </h1>
 
           <p className="mt-7 max-w-2xl text-lg leading-relaxed text-gray-200">
             Buy and sell game accounts, top-ups, gift cards, coins, boosting,

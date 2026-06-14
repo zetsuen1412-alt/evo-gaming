@@ -14,6 +14,7 @@ import {
   FaShoppingCart,
   FaStar,
   FaStore,
+  FaTrophy,
 } from "react-icons/fa";
 
 type Game = {
@@ -149,6 +150,13 @@ function formatSellerRating(value: number | null | undefined) {
 
 function formatCount(value: number | null | undefined) {
   return new Intl.NumberFormat("id-ID").format(Number(value || 0));
+}
+
+function isFeaturedSeller(product: Product) {
+  return (
+    Number(product.seller_completed_orders || 0) >= 5 ||
+    (Number(product.seller_rating || 0) >= 4.5 && Number(product.seller_review_count || 0) >= 3)
+  );
 }
 
 function gameImage(game: Game) {
@@ -492,9 +500,17 @@ export default function GameOffersClient({ game }: { game: Game }) {
                       {product.title}
                     </p>
 
-                    <div className="mt-3 flex items-center gap-2 text-xs text-slate-400">
-                      <FaStore className="text-cyan-300" />
-                      <span>{product.seller_name || "Verified Seller"}</span>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span className="inline-flex items-center gap-2">
+                        <FaStore className="text-cyan-300" />
+                        {product.seller_name || "Verified Seller"}
+                      </span>
+
+                      {isFeaturedSeller(product) && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-yellow-400/30 bg-yellow-400/10 px-2 py-1 font-black text-yellow-300">
+                          <FaTrophy /> Featured Seller
+                        </span>
+                      )}
                     </div>
 
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">

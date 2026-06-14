@@ -17,6 +17,7 @@ import {
   FaWallet,
 } from "react-icons/fa";
 import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
+import FeaturedSellers from "@/components/sellers/FeaturedSellers";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -733,6 +734,16 @@ export default async function GameDetailPage({ params }: PageProps) {
                 </div>
               </div>
             )}
+
+            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+              <FeaturedSellers
+                compact
+                gameSlug={game.slug}
+                limit={4}
+                title={`Featured ${gameName} Sellers`}
+                subtitle={`Top ${gameName} sellers ranked by orders, reviews, active offers, and conversion.`}
+              />
+            </div>
 
             <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
               <h2 className="flex items-center gap-3 text-2xl font-black">

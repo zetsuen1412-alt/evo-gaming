@@ -1,5 +1,5 @@
-import AccountPageClient from "./AccountPageClient";
+import VerificationPageClient from "./VerificationPageClient";
 
-export default function AccountPage() {
-  return <AccountPageClient />;
+export default function VerificationPage() {
+  return <VerificationPageClient />;
 }
