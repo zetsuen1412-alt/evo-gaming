@@ -49,11 +49,54 @@ function productHref(product: ProductRow) {
   return `/product/${product.slug || product.id}`;
 }
 
+function scoreProduct(product: ProductRow, rawQuery: string, rawCategory: string) {
+  const query = rawQuery.trim().toLowerCase();
+  const categoryQuery = rawCategory.trim().toLowerCase();
+
+  const title = (product.title || "").toLowerCase();
+  const game = (product.game_name || "").toLowerCase();
+  const category = (product.category || "").toLowerCase();
+  const seller = (product.seller_name || "").toLowerCase();
+
+  let score = 0;
+
+  if (query) {
+    if (title === query) score += 100;
+    if (title.startsWith(query)) score += 70;
+    if (title.includes(query)) score += 45;
+
+    if (game === query) score += 55;
+    if (game.includes(query)) score += 35;
+
+    if (category === query) score += 35;
+    if (category.includes(query)) score += 25;
+
+    if (seller.includes(query)) score += 10;
+  }
+
+  if (categoryQuery) {
+    const normalizedCategoryQuery = normalizeSearch(categoryQuery);
+    const normalizedProductCategory = normalizeSearch(category);
+
+    if (normalizedProductCategory === normalizedCategoryQuery) score += 45;
+    if (normalizedProductCategory.includes(normalizedCategoryQuery)) score += 25;
+  }
+
+  const createdAt = new Date(product.created_at).getTime();
+  if (Number.isFinite(createdAt)) {
+    const ageDays = Math.max(0, (Date.now() - createdAt) / 86_400_000);
+    score += Math.max(0, 15 - ageDays * 0.5);
+  }
+
+  return Math.round(score);
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const rawQuery = searchParams.get("q")?.trim() || "";
   const rawCategory = searchParams.get("category")?.trim() || "";
   const limit = Math.min(Math.max(Number(searchParams.get("limit") || 8), 1), 20);
+  const productFetchLimit = Math.min(limit * 4, 60);
 
   if (rawQuery.length < 2 && rawCategory.length < 2) {
     return NextResponse.json({
@@ -75,7 +118,7 @@ export async function GET(request: NextRequest) {
     const { data: categoryData, error: categoryError } = await supabase
       .from("categories")
       .select("id,name,slug,icon")
-      .or(`slug.eq.${normalizedCategory},name.ilike.${categoryNameCandidate}`)
+      .or(`slug.eq.${normalizedCategory},name.ilike.%${categoryNameCandidate}%`)
       .maybeSingle();
 
     if (categoryError) {
@@ -105,7 +148,9 @@ export async function GET(request: NextRequest) {
     )
     .eq("status", "active")
     .eq("is_active", true)
-    .or(`normalized_name.ilike.%${searchText}%,name.ilike.%${searchText}%,slug.ilike.%${normalizedQuery}%`)
+    .or(
+      `normalized_name.ilike.%${searchText}%,name.ilike.%${searchText}%,slug.ilike.%${normalizedQuery}%`
+    )
     .order("is_trending", { ascending: false })
     .order("offer_count", { ascending: false })
     .limit(limit);
@@ -116,9 +161,11 @@ export async function GET(request: NextRequest) {
       "id,title,slug,price,image_url,category,game_name,seller_name,created_at,category_id"
     )
     .eq("status", "active")
-    .or(`title.ilike.%${searchText}%,description.ilike.%${searchText}%,game_name.ilike.%${searchText}%,category.ilike.%${searchText}%`)
+    .or(
+      `title.ilike.%${searchText}%,description.ilike.%${searchText}%,game_name.ilike.%${searchText}%,category.ilike.%${searchText}%`
+    )
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(productFetchLimit);
 
   if (categoryFilter) {
     const productCategoryList = productCategoryValues
@@ -162,14 +209,26 @@ export async function GET(request: NextRequest) {
       : `/games/${game.slug}`,
   }));
 
-  const products = ((productsResult.data || []) as ProductRow[]).map((product) => ({
-    ...product,
-    href: productHref(product),
-  }));
+  const products = ((productsResult.data || []) as ProductRow[])
+    .map((product) => ({
+      ...product,
+      href: productHref(product),
+      relevance_score: scoreProduct(product, rawQuery, rawCategory),
+    }))
+    .sort((a, b) => {
+      if (b.relevance_score !== a.relevance_score) {
+        return b.relevance_score - a.relevance_score;
+      }
+
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    })
+    .slice(0, limit);
 
   const categories = ((categoriesResult.data || []) as CategoryRow[]).map((category) => ({
     ...category,
-    href: `/games?category=${encodeURIComponent(category.slug)}${rawQuery ? `&q=${encodeURIComponent(rawQuery)}` : ""}`,
+    href: `/games?category=${encodeURIComponent(category.slug)}${
+      rawQuery ? `&q=${encodeURIComponent(rawQuery)}` : ""
+    }`,
   }));
 
   return NextResponse.json({

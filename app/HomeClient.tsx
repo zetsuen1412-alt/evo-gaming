@@ -102,6 +102,22 @@ export default function Home() {
               🎧 24/7 Support
             </span>
           </div>
+
+          <div className="mt-8 flex flex-wrap gap-4">
+            <Link
+              href="/discover"
+              className="inline-flex items-center justify-center rounded-full bg-yellow-400 px-6 py-4 text-sm font-black text-black shadow-2xl shadow-yellow-400/20 transition hover:bg-yellow-300"
+            >
+              Explore Marketplace Discovery →
+            </Link>
+
+            <Link
+              href="/games"
+              className="inline-flex items-center justify-center rounded-full border border-cyan-400 px-6 py-4 text-sm font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+            >
+              Browse Games
+            </Link>
+          </div>
         </div>
       </section>
 

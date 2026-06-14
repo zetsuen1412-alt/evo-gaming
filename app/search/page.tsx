@@ -19,6 +19,7 @@ type SearchProduct = {
   price: number | string | null;
   category: string | null;
   game_name: string | null;
+  relevance_score?: number;
 };
 
 type SearchCategory = {
@@ -36,7 +37,6 @@ type PageProps = {
   }>;
 };
 
-
 export async function generateMetadata({ searchParams }: PageProps): Promise<Metadata> {
   const params = await searchParams;
   const query = params.q?.trim() || "";
@@ -52,7 +52,9 @@ export async function generateMetadata({ searchParams }: PageProps): Promise<Met
   if (query) canonicalParams.set("q", query);
   if (category) canonicalParams.set("category", category);
 
-  const canonical = `/search${canonicalParams.toString() ? `?${canonicalParams.toString()}` : ""}`;
+  const canonical = `/search${
+    canonicalParams.toString() ? `?${canonicalParams.toString()}` : ""
+  }`;
 
   return {
     title,
@@ -78,18 +80,32 @@ function formatPrice(value: string | number | null | undefined) {
   }).format(amount);
 }
 
+function getSearchBadge(product: SearchProduct) {
+  const score = Number(product.relevance_score || 0);
+
+  if (score >= 80) return "🔥 Best Match";
+  if (score >= 45) return "⭐ Recommended";
+  if (score >= 25) return "🎮 Related";
+  return null;
+}
+
 export default async function MarketplaceSearchPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const query = params.q?.trim() || "";
   const category = params.category?.trim() || "";
 
   const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") || requestHeaders.get("host") || "localhost:3000";
+  const host =
+    requestHeaders.get("x-forwarded-host") ||
+    requestHeaders.get("host") ||
+    "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") || "http";
   const origin = `${protocol}://${host}`;
 
   const [{ data: categories }, searchResponse] = await Promise.all([
-    supabase.from("categories").select("id,name,slug,icon").order("id", { ascending: true }),
+    supabase.from("categories").select("id,name,slug,icon").order("id", {
+      ascending: true,
+    }),
     query.length >= 2 || category.length >= 2
       ? fetch(
           `${origin}/api/marketplace/search?q=${encodeURIComponent(
@@ -100,7 +116,9 @@ export default async function MarketplaceSearchPage({ searchParams }: PageProps)
       : Promise.resolve(null),
   ]);
 
-  const searchJson = searchResponse ? await searchResponse.json().catch(() => null) : null;
+  const searchJson = searchResponse
+    ? await searchResponse.json().catch(() => null)
+    : null;
   const games = (searchJson?.games || []) as SearchGame[];
   const products = (searchJson?.products || []) as SearchProduct[];
   const resultCategories = (searchJson?.categories || []) as SearchCategory[];
@@ -113,10 +131,15 @@ export default async function MarketplaceSearchPage({ searchParams }: PageProps)
           <p className="w-fit rounded-full border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
             🔎 Unified Marketplace Search
           </p>
-          <h1 className="mt-5 text-4xl font-black md:text-6xl">Search ComePlayers</h1>
+
+          <h1 className="mt-5 text-4xl font-black md:text-6xl">
+            Search ComePlayers
+          </h1>
+
           <p className="mt-4 max-w-2xl text-slate-300">
             Find games, products, and marketplace categories from one search page.
           </p>
+
           <div className="mt-8 max-w-3xl">
             <MarketplaceSearch
               categories={categories || []}
@@ -134,9 +157,14 @@ export default async function MarketplaceSearchPage({ searchParams }: PageProps)
             <h2 className="text-3xl font-black">
               {query ? `Results for “${query}”` : "Marketplace Results"}
             </h2>
+
             <p className="mt-1 text-slate-400">{totalResults} results found</p>
           </div>
-          <Link href="/games" className="rounded-xl border border-white/10 px-4 py-3 font-bold text-slate-200 hover:border-cyan-400">
+
+          <Link
+            href="/games"
+            className="rounded-xl border border-white/10 px-4 py-3 font-bold text-slate-200 hover:border-cyan-400"
+          >
             Browse Games
           </Link>
         </div>
@@ -150,61 +178,123 @@ export default async function MarketplaceSearchPage({ searchParams }: PageProps)
             <section>
               <div className="mb-4 flex items-center justify-between">
                 <h3 className="text-2xl font-black text-cyan-300">Games</h3>
-                <span className="text-sm text-slate-400">{games.length} results</span>
+                <span className="text-sm text-slate-400">
+                  {games.length} results
+                </span>
               </div>
+
               {games.length > 0 ? (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {games.map((game) => (
-                    <Link key={game.id} href={game.href} className="rounded-2xl border border-white/10 bg-[#0b1220] p-5 transition hover:border-cyan-400">
+                    <Link
+                      key={game.id}
+                      href={game.href}
+                      className="rounded-2xl border border-white/10 bg-[#0b1220] p-5 transition hover:border-cyan-400"
+                    >
                       <p className="text-xl font-black text-white">{game.name}</p>
+
                       <p className="mt-2 text-sm text-slate-400">
-                        {game.offer_count || 0} offers{game.rating ? ` • ★ ${Number(game.rating).toFixed(1)}` : ""}
+                        {game.offer_count || 0} offers
+                        {game.rating
+                          ? ` • ★ ${Number(game.rating).toFixed(1)}`
+                          : ""}
                       </p>
                     </Link>
                   ))}
                 </div>
               ) : (
-                <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-slate-400">No games found.</p>
+                <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-slate-400">
+                  No games found.
+                </p>
               )}
             </section>
 
             <section>
               <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-2xl font-black text-emerald-300">Products</h3>
-                <span className="text-sm text-slate-400">{products.length} results</span>
+                <h3 className="text-2xl font-black text-emerald-300">
+                  Products
+                </h3>
+                <span className="text-sm text-slate-400">
+                  {products.length} results
+                </span>
               </div>
+
               {products.length > 0 ? (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {products.map((product) => (
-                    <Link key={product.id} href={product.href} className="rounded-2xl border border-white/10 bg-[#0b1220] p-5 transition hover:border-cyan-400">
-                      <p className="line-clamp-2 text-lg font-black text-white">{product.title}</p>
-                      <p className="mt-2 text-sm text-slate-400">
-                        {product.game_name || "Game"}{product.category ? ` • ${product.category}` : ""}
-                      </p>
-                      <p className="mt-4 text-xl font-black text-cyan-300">{formatPrice(product.price)}</p>
-                    </Link>
-                  ))}
+                  {products.map((product) => {
+                    const badge = getSearchBadge(product);
+
+                    return (
+                      <Link
+                        key={product.id}
+                        href={product.href}
+                        className="rounded-2xl border border-white/10 bg-[#0b1220] p-5 transition hover:border-cyan-400"
+                      >
+                        <div className="flex flex-wrap gap-2">
+                          {badge ? (
+                            <span className="rounded-full bg-cyan-400/10 px-3 py-1 text-xs font-black text-cyan-300">
+                              {badge}
+                            </span>
+                          ) : null}
+
+                          {product.category ? (
+                            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-bold text-slate-300">
+                              {product.category}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <p className="mt-4 line-clamp-2 text-lg font-black text-white">
+                          {product.title}
+                        </p>
+
+                        <p className="mt-2 text-sm text-slate-400">
+                          {product.game_name || "Game"}
+                          {product.category ? ` • ${product.category}` : ""}
+                        </p>
+
+                        <p className="mt-4 text-xl font-black text-cyan-300">
+                          {formatPrice(product.price)}
+                        </p>
+                      </Link>
+                    );
+                  })}
                 </div>
               ) : (
-                <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-slate-400">No products found.</p>
+                <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-slate-400">
+                  No products found.
+                </p>
               )}
             </section>
 
             <section>
               <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-2xl font-black text-purple-300">Categories</h3>
-                <span className="text-sm text-slate-400">{resultCategories.length} results</span>
+                <h3 className="text-2xl font-black text-purple-300">
+                  Categories
+                </h3>
+
+                <span className="text-sm text-slate-400">
+                  {resultCategories.length} results
+                </span>
               </div>
+
               {resultCategories.length > 0 ? (
                 <div className="flex flex-wrap gap-3">
                   {resultCategories.map((item) => (
-                    <Link key={item.id} href={item.href} className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-3 font-bold text-slate-200 transition hover:border-cyan-400">
-                      {item.icon ? `${item.icon} ` : ""}{item.name}
+                    <Link
+                      key={item.id}
+                      href={item.href}
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-3 font-bold text-slate-200 transition hover:border-cyan-400"
+                    >
+                      {item.icon ? `${item.icon} ` : ""}
+                      {item.name}
                     </Link>
                   ))}
                 </div>
               ) : (
-                <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-slate-400">No categories found.</p>
+                <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-slate-400">
+                  No categories found.
+                </p>
               )}
             </section>
           </div>
