@@ -9,7 +9,6 @@ import {
   FaStore,
 } from "react-icons/fa";
 import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTracker";
-import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -58,7 +57,15 @@ function numberPrice(value: string | number | null | undefined) {
   return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
+function formatPrice(value: string | number | null | undefined) {
+  const amount = numberPrice(value);
 
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
 
 function slugify(value: string) {
   return value
@@ -91,7 +98,8 @@ export default async function OrderSuccessPage({ params }: PageProps) {
   if (order?.product_id) {
     const { data: productData } = await supabase
       .from("products")
-      .select(`
+      .select(
+        `
         id,
         title,
         price,
@@ -102,7 +110,8 @@ export default async function OrderSuccessPage({ params }: PageProps) {
         game_name,
         category,
         slug
-      `)
+      `
+      )
       .eq("id", Number(order.product_id))
       .maybeSingle();
 
@@ -112,7 +121,10 @@ export default async function OrderSuccessPage({ params }: PageProps) {
   const productTitle =
     order?.product_title || order?.product || product?.title || "Product";
   const sellerName =
-    order?.seller_name || product?.seller_name || product?.seller || "Verified Seller";
+    order?.seller_name ||
+    product?.seller_name ||
+    product?.seller ||
+    "Verified Seller";
   const gameName = order?.game_name || product?.game_name || "-";
   const category = order?.category || product?.category || "Game Product";
   const quantity = Number(order?.quantity || 1);
@@ -134,6 +146,7 @@ export default async function OrderSuccessPage({ params }: PageProps) {
         category_slug={eventCategoryName ? slugify(eventCategoryName) : null}
         category_name={eventCategoryName}
       />
+
       <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,.18),transparent_38%)]">
         <div className="mx-auto max-w-5xl px-4 py-14 text-center">
           <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-400/10">
