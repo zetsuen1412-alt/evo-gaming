@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { FaBolt, FaChartLine, FaFire, FaShoppingCart, FaTags, FaTrophy } from "react-icons/fa";
 
 type IntelligenceSummary = {

@@ -41,6 +41,11 @@ type Withdrawal = {
 
 const statusFilters = ["all", "pending", "approved", "rejected", "cancelled"];
 
+function formatPrice(value: string | number | null) {
+  const price = Number(value || 0);
+  if (!Number.isFinite(price)) return "Rp 0";
+  return `Rp ${price.toLocaleString("id-ID")}`;
+}
 
 function formatDate(value: string | null) {
   if (!value) return "-";

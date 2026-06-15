@@ -45,26 +45,22 @@ const PAYPAL_PRESETS = [
   { usd: 50, label: "$50" },
 ];
 
+
 function formatDate(value: string | null | undefined) {
   if (!value) return "-";
   return new Date(value).toLocaleString("id-ID");
 }
 
 function getStatusClass(status: string) {
-  if (status === "approved") {
+  if (status === "approved")
     return "border-green-400/20 bg-green-400/10 text-green-300";
-  }
-
-  if (status === "pending") {
+  if (status === "pending")
     return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
-  }
-
-  if (status === "rejected" || status === "cancelled") {
+  if (status === "rejected" || status === "cancelled")
     return "border-red-400/20 bg-red-400/10 text-red-300";
-  }
-
   return "border-white/10 bg-white/[0.04] text-gray-300";
 }
+
 
 async function getAccessToken() {
   const { data, error } = await supabase.auth.getSession();
@@ -89,8 +85,7 @@ function createSafeFileName(fileName: string) {
 }
 
 export default function WalletTopUpPageV1() {
-  const { formatPrice, currency, country } = useCurrency();
-
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topups, setTopups] = useState<WalletTopup[]>([]);
@@ -244,6 +239,7 @@ export default function WalletTopUpPageV1() {
 
   async function uploadTopupProof(file: File, currentUser: User) {
     const safeFileName = createSafeFileName(file.name);
+
     const filePath = `${currentUser.id}/wallet-topup-${Date.now()}-${safeFileName}`;
 
     const { error: uploadError } = await supabase.storage
@@ -420,10 +416,6 @@ export default function WalletTopUpPageV1() {
               <span className="rounded-full border border-yellow-400/20 bg-yellow-400/10 px-4 py-2 text-sm font-black text-yellow-300">
                 Pending: {pendingTopups.length}
               </span>
-
-              <span className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-black text-slate-300">
-                {country} · {currency}
-              </span>
             </div>
           </div>
 
@@ -444,8 +436,7 @@ export default function WalletTopUpPageV1() {
             </h2>
 
             <p className="mt-2 text-sm text-gray-300">
-              Pay with PayPal Sandbox. Your wallet balance will be added
-              automatically after payment success.
+              Pay with PayPal Sandbox. Your wallet balance will be added automatically after payment success.
             </p>
 
             <div className="mt-6 grid gap-3 sm:grid-cols-4">
@@ -461,7 +452,6 @@ export default function WalletTopUpPageV1() {
                   }`}
                 >
                   <p>{preset.label}</p>
-
                   <p className="mt-1 text-xs opacity-80">
                     {formatPrice(preset.usd * PAYPAL_RATE)}
                   </p>
@@ -473,7 +463,6 @@ export default function WalletTopUpPageV1() {
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-sm text-gray-400">You Pay</p>
-
                   <p className="text-2xl font-black text-yellow-300">
                     ${selectedPaypalUsd.toFixed(2)}
                   </p>
@@ -481,7 +470,6 @@ export default function WalletTopUpPageV1() {
 
                 <div className="text-right">
                   <p className="text-sm text-gray-400">Wallet Credit</p>
-
                   <p className="text-2xl font-black text-green-300">
                     {formatPrice(selectedPaypalIdr)}
                   </p>
@@ -535,9 +523,7 @@ export default function WalletTopUpPageV1() {
 
                     if (!response.ok) {
                       setPaypalLoading(false);
-                      throw new Error(
-                        data.error || "Failed to create PayPal order."
-                      );
+                      throw new Error(data.error || "Failed to create PayPal order.");
                     }
 
                     return data.id;
@@ -611,10 +597,6 @@ export default function WalletTopUpPageV1() {
                   placeholder="100000"
                   className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-green-400"
                 />
-
-                <p className="mt-2 text-xs text-gray-500">
-                  Input amount is stored in IDR. Display follows user currency.
-                </p>
               </div>
 
               <div>
@@ -635,15 +617,6 @@ export default function WalletTopUpPageV1() {
                 </select>
               </div>
             </div>
-
-            {amount ? (
-              <div className="mt-5 rounded-2xl border border-green-400/20 bg-black/30 p-4">
-                <p className="text-sm text-gray-400">Top Up Preview</p>
-                <p className="mt-1 text-2xl font-black text-green-300">
-                  {formatPrice(amount)}
-                </p>
-              </div>
-            ) : null}
 
             <div className="mt-5 grid gap-5 md:grid-cols-2">
               <div>
@@ -690,7 +663,7 @@ export default function WalletTopUpPageV1() {
               </p>
             </div>
 
-            {proofPreviewUrl ? (
+            {proofPreviewUrl && (
               <div className="mt-5 overflow-hidden rounded-2xl border border-green-400/20 bg-black/30">
                 <div className="flex max-h-[420px] items-center justify-center bg-black">
                   <img
@@ -706,7 +679,7 @@ export default function WalletTopUpPageV1() {
                   </p>
                 </div>
               </div>
-            ) : null}
+            )}
 
             <div className="mt-5">
               <label className="mb-2 block text-sm font-bold text-gray-300">
@@ -796,7 +769,7 @@ export default function WalletTopUpPageV1() {
                       {formatDate(topup.created_at)}
                     </p>
 
-                    {topup.payment_image ? (
+                    {topup.payment_image && (
                       <a
                         href={topup.payment_image}
                         target="_blank"
@@ -805,13 +778,13 @@ export default function WalletTopUpPageV1() {
                       >
                         View Proof →
                       </a>
-                    ) : null}
+                    )}
 
-                    {topup.admin_note ? (
+                    {topup.admin_note && (
                       <p className="mt-3 text-sm text-gray-300">
                         Admin Note: {topup.admin_note}
                       </p>
-                    ) : null}
+                    )}
                   </div>
                 ))}
               </div>
