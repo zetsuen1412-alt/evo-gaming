@@ -8,10 +8,10 @@ import {
   FaCheckCircle,
   FaClock,
   FaMinus,
+  FaPaypal,
   FaPlus,
   FaShieldAlt,
   FaShoppingCart,
-  FaStore,
   FaWallet,
 } from "react-icons/fa";
 import { trackMarketplaceEvent } from "@/lib/marketplace-events-client";
@@ -48,6 +48,8 @@ type Coupon = {
   end_at: string | null;
   status: "active" | "inactive";
 };
+
+type PaymentMethod = "wallet" | "paypal";
 
 function numberPrice(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -91,6 +93,7 @@ export default function CheckoutPage() {
   const [product, setProduct] = useState<Product | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("wallet");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -102,19 +105,27 @@ export default function CheckoutPage() {
   const [discountAmount, setDiscountAmount] = useState(0);
 
   const unitPrice = numberPrice(product?.price);
+  const subtotal = useMemo(() => unitPrice * quantity, [unitPrice, quantity]);
 
-  const subtotal = useMemo(
-    () => unitPrice * quantity,
-    [unitPrice, quantity]
-  );
-
-  const total = useMemo(
+  const totalBeforePaymentFee = useMemo(
     () => Math.max(0, subtotal - discountAmount),
     [discountAmount, subtotal]
   );
 
+  const paypalFee = useMemo(() => {
+    if (paymentMethod !== "paypal") return 0;
+    if (totalBeforePaymentFee <= 0) return 0;
+    return Math.ceil(totalBeforePaymentFee * 0.05);
+  }, [paymentMethod, totalBeforePaymentFee]);
+
+  const total = useMemo(
+    () => totalBeforePaymentFee + paypalFee,
+    [paypalFee, totalBeforePaymentFee]
+  );
+
   const stock = Number(product?.stock ?? 1);
-  const sellerName = product?.seller_name || product?.seller || "Verified Seller";
+  const sellerName =
+    product?.seller_name || product?.seller || "Verified Seller";
 
   useEffect(() => {
     async function loadCheckout() {
@@ -132,7 +143,8 @@ export default function CheckoutPage() {
 
       const { data, error } = await supabase
         .from("products")
-        .select(`
+        .select(
+          `
           id,
           title,
           price,
@@ -146,7 +158,8 @@ export default function CheckoutPage() {
           status,
           game_name,
           slug
-        `)
+        `
+        )
         .eq("id", Number(productId))
         .maybeSingle();
 
@@ -161,6 +174,7 @@ export default function CheckoutPage() {
       setCouponError("");
       setCouponData(null);
       setDiscountAmount(0);
+      setPaymentMethod("wallet");
 
       trackMarketplaceEvent({
         event_type: "checkout_start",
@@ -182,7 +196,6 @@ export default function CheckoutPage() {
 
   useEffect(() => {
     if (!couponData) return;
-
     calculateCouponDiscount(couponData);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quantity, subtotal]);
@@ -194,10 +207,7 @@ export default function CheckoutPage() {
       discount = subtotal * (Number(coupon.discount_value || 0) / 100);
 
       if (coupon.maximum_discount_amount) {
-        discount = Math.min(
-          discount,
-          Number(coupon.maximum_discount_amount)
-        );
+        discount = Math.min(discount, Number(coupon.maximum_discount_amount));
       }
     } else {
       discount = Number(coupon.discount_value || 0);
@@ -284,20 +294,13 @@ export default function CheckoutPage() {
     setCreating(true);
     setError("");
 
-    const basePayload = {
+    const orderPayload = {
       buyer_id: userId,
       seller_id: product.seller_id,
       product_id: product.id,
       quantity,
-
-      subtotal_amount: subtotal,
-      discount_amount: discountAmount,
-      coupon_code: couponData?.code || null,
-
-      total_amount: total,
       total_price: total,
-      price: total,
-
+      price: String(total),
       status: "pending",
       payment_status: "unpaid",
       product_title: product.title,
@@ -306,27 +309,25 @@ export default function CheckoutPage() {
       category: product.category,
     };
 
-    let orderId: number | string | null = null;
-
     const { data, error } = await supabase
       .from("orders")
-      .insert(basePayload)
+      .insert(orderPayload)
       .select("id")
       .single();
 
     if (error) {
-      const minimalPayload = {
+      const fallbackPayload = {
         buyer_id: userId,
         seller_id: product.seller_id,
         product_id: product.id,
         quantity,
-        total_amount: total,
+        total_price: total,
         status: "pending",
       };
 
       const retry = await supabase
         .from("orders")
-        .insert(minimalPayload)
+        .insert(fallbackPayload)
         .select("id")
         .single();
 
@@ -336,9 +337,8 @@ export default function CheckoutPage() {
         return;
       }
 
-      orderId = retry.data?.id || null;
-    } else {
-      orderId = data?.id || null;
+      router.push(`/payment/${retry.data.id}?method=${paymentMethod}`);
+      return;
     }
 
     if (couponData) {
@@ -350,7 +350,7 @@ export default function CheckoutPage() {
         .eq("id", couponData.id);
     }
 
-    router.push(`/payment/${orderId}`);
+    router.push(`/payment/${data.id}?method=${paymentMethod}`);
   }
 
   if (loading) {
@@ -533,6 +533,15 @@ export default function CheckoutPage() {
                 <span className="font-bold">Rp 0</span>
               </div>
 
+              {paymentMethod === "paypal" ? (
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-slate-300">PayPal Processing Fee</span>
+                  <span className="font-bold text-cyan-300">
+                    {formatPrice(paypalFee)}
+                  </span>
+                </div>
+              ) : null}
+
               <div className="flex justify-between text-lg">
                 <span className="font-black">Total</span>
                 <span className="font-black text-cyan-300">
@@ -616,24 +625,109 @@ export default function CheckoutPage() {
                 disabled={creating}
                 className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl bg-cyan-400 px-5 py-4 font-black text-black transition hover:bg-cyan-300 disabled:opacity-60"
               >
-                <FaShoppingCart />
-                {creating ? "Creating Order..." : "Continue to Payment"}
+                {paymentMethod === "paypal" ? <FaPaypal /> : <FaShoppingCart />}
+                {creating
+                  ? "Creating Order..."
+                  : paymentMethod === "paypal"
+                  ? "Continue with PayPal"
+                  : "Continue to Payment"}
               </button>
             )}
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
             <h3 className="flex items-center gap-2 text-xl font-black">
-              <FaWallet className="text-cyan-300" />
+              {paymentMethod === "paypal" ? (
+                <FaPaypal className="text-cyan-300" />
+              ) : (
+                <FaWallet className="text-cyan-300" />
+              )}
               Payment Method
             </h3>
 
-            <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-black/30 p-4">
-              <p className="font-black">ComePlayers Wallet / Payment</p>
+            <div className="mt-5 grid gap-3">
+              <button
+                type="button"
+                onClick={() => setPaymentMethod("wallet")}
+                className={`rounded-2xl border p-4 text-left transition ${
+                  paymentMethod === "wallet"
+                    ? "border-cyan-400 bg-cyan-400/10"
+                    : "border-white/10 bg-black/30 hover:border-cyan-400/40"
+                }`}
+              >
+                <div className="flex items-start gap-4">
+                  <div
+                    className={`mt-1 flex h-5 w-5 items-center justify-center rounded-full border ${
+                      paymentMethod === "wallet"
+                        ? "border-cyan-300"
+                        : "border-white/30"
+                    }`}
+                  >
+                    {paymentMethod === "wallet" ? (
+                      <span className="h-2.5 w-2.5 rounded-full bg-cyan-300" />
+                    ) : null}
+                  </div>
 
-              <p className="mt-2 text-sm text-slate-400">
-                You will choose the final payment method on the payment page.
-              </p>
+                  <div>
+                    <p className="flex items-center gap-2 font-black">
+                      <FaWallet className="text-cyan-300" />
+                      ComePlayers Wallet / Payment
+                    </p>
+
+                    <p className="mt-2 text-sm leading-6 text-slate-400">
+                      Use the marketplace payment flow and continue to the
+                      standard payment page.
+                    </p>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPaymentMethod("paypal")}
+                className={`rounded-2xl border p-4 text-left transition ${
+                  paymentMethod === "paypal"
+                    ? "border-cyan-400 bg-cyan-400/10"
+                    : "border-white/10 bg-black/30 hover:border-cyan-400/40"
+                }`}
+              >
+                <div className="flex items-start gap-4">
+                  <div
+                    className={`mt-1 flex h-5 w-5 items-center justify-center rounded-full border ${
+                      paymentMethod === "paypal"
+                        ? "border-cyan-300"
+                        : "border-white/30"
+                    }`}
+                  >
+                    {paymentMethod === "paypal" ? (
+                      <span className="h-2.5 w-2.5 rounded-full bg-cyan-300" />
+                    ) : null}
+                  </div>
+
+                  <div>
+                    <p className="flex items-center gap-2 font-black">
+                      <FaPaypal className="text-cyan-300" />
+                      PayPal
+                    </p>
+
+                    <p className="mt-2 text-sm leading-6 text-slate-400">
+                      Continue with PayPal. A processing fee will be added to
+                      the final total.
+                    </p>
+
+                    {paymentMethod === "paypal" ? (
+                      <div className="mt-3 rounded-xl border border-cyan-400/20 bg-black/30 p-3 text-sm">
+                        <div className="flex justify-between gap-4">
+                          <span className="text-slate-400">PayPal Fee</span>
+                          <span className="font-black text-cyan-300">
+                            {formatPrice(paypalFee)}
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </button>
             </div>
           </div>
         </aside>

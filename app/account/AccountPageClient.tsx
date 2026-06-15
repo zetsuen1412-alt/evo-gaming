@@ -4,9 +4,6 @@ import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AccountShell from "@/components/account/AccountShell";
-import InterestRecommendations from "@/components/marketplace/InterestRecommendations";
-import RecentlyViewed from "@/components/marketplace/RecentlyViewed";
-import RecommendedGames from "@/components/marketplace/RecommendedGames";
 import { supabase } from "@/lib/supabase";
 
 type AccountSettings = {
@@ -378,18 +375,6 @@ export default function AccountPageClient() {
           </div>
         </section>
 
-        <section className="border-b border-white/10 p-6 md:p-8">
-          <h2 className="text-2xl font-black">Your Marketplace Activity</h2>
-          <p className="mt-2 text-sm text-slate-400">
-            Continue from your recent views and discover personalized recommendations.
-          </p>
-
-          <div className="mt-6 space-y-8">
-            <RecentlyViewed />
-            <RecommendedGames />
-            <InterestRecommendations />
-          </div>
-        </section>
 
         <section className="border-b border-white/10 p-6 md:p-8">
           <h1 className="text-2xl font-black">Personal</h1>
