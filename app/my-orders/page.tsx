@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   FaBoxOpen,
+  FaCheckCircle,
   FaClock,
   FaCreditCard,
-  FaFilter,
   FaReceipt,
   FaSearch,
   FaShieldAlt,
@@ -49,11 +49,8 @@ type ProductMap = Record<number, Product>;
 const FILTERS = [
   { label: "All Orders", value: "all" },
   { label: "Pending", value: "pending" },
-  { label: "Waiting Payment", value: "waiting_payment" },
   { label: "Paid", value: "paid" },
-  { label: "Delivered", value: "delivered" },
   { label: "Completed", value: "completed" },
-  { label: "Disputed", value: "disputed" },
   { label: "Cancelled", value: "cancelled" },
 ];
 
@@ -96,34 +93,30 @@ function prettyStatus(status?: string | null) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function isPaid(order: Order) {
+  return (
+    normalizeStatus(order.payment_status) === "paid" ||
+    normalizeStatus(order.status) === "paid" ||
+    normalizeStatus(order.status).includes("completed")
+  );
+}
+
 function statusStyle(status?: string | null) {
   const value = normalizeStatus(status);
 
-  if (value.includes("disputed")) {
-    return "border-red-400/40 bg-red-400/10 text-red-300";
+  if (value.includes("complete") || value.includes("paid")) {
+    return "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
   }
 
-  if (value.includes("complete") || value.includes("released")) {
-    return "border-emerald-400/40 bg-emerald-400/10 text-emerald-300";
+  if (value.includes("cancel") || value.includes("disputed")) {
+    return "border-red-400/30 bg-red-400/10 text-red-300";
   }
 
-  if (value.includes("delivered")) {
-    return "border-blue-400/40 bg-blue-400/10 text-blue-300";
+  if (value.includes("pending") || value.includes("waiting")) {
+    return "border-yellow-400/30 bg-yellow-400/10 text-yellow-300";
   }
 
-  if (value.includes("paid") || value.includes("holding")) {
-    return "border-cyan-400/40 bg-cyan-400/10 text-cyan-300";
-  }
-
-  if (value.includes("waiting") || value.includes("pending")) {
-    return "border-yellow-400/40 bg-yellow-400/10 text-yellow-300";
-  }
-
-  if (value.includes("cancel")) {
-    return "border-red-400/40 bg-red-400/10 text-red-300";
-  }
-
-  return "border-slate-400/30 bg-slate-400/10 text-slate-300";
+  return "border-cyan-400/30 bg-cyan-400/10 text-cyan-300";
 }
 
 function formatDate(value?: string | null) {
@@ -190,15 +183,7 @@ export default function MyOrdersPage() {
       if (productIds.length > 0) {
         const { data: productData } = await supabase
           .from("products")
-          .select(`
-            id,
-            title,
-            image_url,
-            price,
-            game_name,
-            category,
-            seller_name
-          `)
+          .select("id,title,image_url,price,game_name,category,seller_name")
           .in("id", productIds);
 
         const map: ProductMap = {};
@@ -219,30 +204,18 @@ export default function MyOrdersPage() {
   }, []);
 
   const stats = useMemo(() => {
-    const pending = orders.filter(
-      (order) => normalizeStatus(order.status) === "pending"
+    const pending = orders.filter((order) =>
+      normalizeStatus(order.status).includes("pending")
     ).length;
 
-    const paid = orders.filter(
-      (order) => normalizeStatus(order.payment_status) === "paid"
-    ).length;
-
-    const delivered = orders.filter((order) =>
-      normalizeStatus(order.status).includes("delivered")
-    ).length;
+    const paid = orders.filter((order) => isPaid(order)).length;
 
     const completed = orders.filter((order) =>
       normalizeStatus(order.status).includes("completed")
     ).length;
 
-    const disputed = orders.filter(
-      (order) =>
-        normalizeStatus(order.status).includes("disputed") ||
-        normalizeStatus(order.escrow_status).includes("disputed")
-    ).length;
-
     const totalSpent = orders
-      .filter((order) => normalizeStatus(order.status).includes("completed"))
+      .filter((order) => isPaid(order))
       .reduce((sum, order) => {
         const product = order.product_id ? products[order.product_id] : null;
         return sum + getOrderTotal(order, product);
@@ -252,9 +225,7 @@ export default function MyOrdersPage() {
       total: orders.length,
       pending,
       paid,
-      delivered,
       completed,
-      disputed,
       totalSpent,
     };
   }, [orders, products]);
@@ -330,113 +301,50 @@ export default function MyOrdersPage() {
 
   return (
     <main className="min-h-screen bg-[#050816] text-white">
-      <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.16),transparent_35%)]">
+      <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.14),transparent_35%)]">
         <div className="mx-auto max-w-7xl px-4 py-10">
-          <div className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-5 py-2 text-sm font-black text-cyan-200">
-            Purchase Center Pro
+          <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
+            <div>
+              <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-black text-cyan-300">
+                Buyer Orders
+              </p>
+
+              <h1 className="mt-5 text-5xl font-black">My Orders</h1>
+
+              <p className="mt-3 max-w-2xl text-slate-300">
+                Manage purchases, payments, delivery status, and completed
+                marketplace transactions.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <MiniStat label="Orders" value={stats.total} />
+              <MiniStat label="Pending" value={stats.pending} tone="yellow" />
+              <MiniStat label="Paid" value={stats.paid} tone="cyan" />
+              <MiniStat label="Completed" value={stats.completed} tone="green" />
+            </div>
           </div>
-
-          <h1 className="mt-8 text-5xl font-black">My Orders</h1>
-
-          <p className="mt-3 max-w-2xl text-slate-300">
-            Track purchases, payment status, seller delivery, escrow protection,
-            disputes, and completed order history.
-          </p>
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 py-10">
-        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-          <button
-            onClick={() => setFilter("all")}
-            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-cyan-400"
-          >
-            <p className="text-sm text-slate-400">Total Orders</p>
-            <h2 className="mt-2 text-4xl font-black text-cyan-300">
-              {stats.total}
-            </h2>
-          </button>
-
-          <button
-            onClick={() => setFilter("pending")}
-            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-yellow-400"
-          >
-            <p className="text-sm text-slate-400">Pending</p>
-            <h2 className="mt-2 text-4xl font-black text-yellow-300">
-              {stats.pending}
-            </h2>
-          </button>
-
-          <button
-            onClick={() => setFilter("paid")}
-            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-cyan-400"
-          >
-            <p className="text-sm text-slate-400">Paid</p>
-            <h2 className="mt-2 text-4xl font-black text-cyan-300">
-              {stats.paid}
-            </h2>
-          </button>
-
-          <button
-            onClick={() => setFilter("delivered")}
-            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-blue-400"
-          >
-            <p className="text-sm text-slate-400">Delivered</p>
-            <h2 className="mt-2 text-4xl font-black text-blue-300">
-              {stats.delivered}
-            </h2>
-          </button>
-
-          <button
-            onClick={() => setFilter("completed")}
-            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-emerald-400"
-          >
-            <p className="text-sm text-slate-400">Completed</p>
-            <h2 className="mt-2 text-4xl font-black text-emerald-300">
-              {stats.completed}
-            </h2>
-          </button>
-
-          <button
-            onClick={() => setFilter("disputed")}
-            className="rounded-3xl border border-white/10 bg-white/[0.04] p-5 text-left transition hover:border-red-400"
-          >
-            <p className="text-sm text-slate-400">Disputed</p>
-            <h2 className="mt-2 text-4xl font-black text-red-300">
-              {stats.disputed}
-            </h2>
-          </button>
-        </div>
-
-        <div className="mb-8 rounded-3xl border border-emerald-400/20 bg-emerald-400/10 p-6">
-          <p className="text-sm font-bold text-emerald-200">
-            Completed Purchase Value
-          </p>
-          <h2 className="mt-2 text-4xl font-black text-emerald-300">
-            {formatPrice(stats.totalSpent)}
-          </h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Total value from completed orders.
-          </p>
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
-          <div className="grid gap-4 lg:grid-cols-[1fr_240px]">
-            <div className="relative">
+      <section className="mx-auto max-w-7xl px-4 py-8">
+        <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-5 shadow-2xl shadow-black/20">
+          <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+            <div className="relative flex-1">
               <FaSearch className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
 
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search by order, product, seller, or game..."
-                className="w-full rounded-xl border border-white/10 bg-black/40 px-11 py-4 text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
+                className="w-full rounded-2xl border border-white/10 bg-black/40 px-11 py-4 text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
               />
             </div>
 
             <select
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
-              className="rounded-xl border border-white/10 bg-black/40 px-4 py-4 text-white outline-none focus:border-cyan-400"
+              className="rounded-2xl border border-white/10 bg-black/40 px-4 py-4 text-white outline-none focus:border-cyan-400 lg:w-56"
             >
               {FILTERS.map((item) => (
                 <option
@@ -450,9 +358,21 @@ export default function MyOrdersPage() {
             </select>
           </div>
 
-          <div className="mt-5 flex items-center gap-2 text-sm text-slate-400">
-            <FaFilter className="text-cyan-300" />
-            Showing {filteredOrders.length} of {orders.length} orders
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-5 text-sm text-slate-400">
+            <span>
+              Showing{" "}
+              <span className="font-black text-cyan-300">
+                {filteredOrders.length}
+              </span>{" "}
+              of {orders.length} orders
+            </span>
+
+            <span>
+              Total paid value:{" "}
+              <span className="font-black text-emerald-300">
+                {formatPrice(stats.totalSpent)}
+              </span>
+            </span>
           </div>
         </div>
 
@@ -462,9 +382,9 @@ export default function MyOrdersPage() {
           </div>
         ) : null}
 
-        <div className="mt-8 space-y-5">
+        <div className="mt-6 space-y-4">
           {filteredOrders.length === 0 ? (
-            <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-12 text-center">
+            <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-12 text-center">
               <FaBoxOpen className="mx-auto text-5xl text-cyan-300" />
 
               <h2 className="mt-6 text-3xl font-black">No orders found</h2>
@@ -476,7 +396,7 @@ export default function MyOrdersPage() {
 
               <Link
                 href="/games"
-                className="mt-8 inline-flex rounded-xl bg-cyan-400 px-6 py-4 font-black text-black hover:bg-cyan-300"
+                className="mt-8 inline-flex rounded-2xl bg-cyan-400 px-6 py-4 font-black text-black hover:bg-cyan-300"
               >
                 Browse Games
               </Link>
@@ -493,49 +413,46 @@ export default function MyOrdersPage() {
                 order.category || product?.category || "Game Product";
               const total = getOrderTotal(order, product);
               const image = product?.image_url || fallbackImage(title);
-              const escrowStatus = order.escrow_status || "pending";
+              const paymentLabel = isPaid(order) ? "Paid" : "Unpaid";
 
               return (
-                <div
+                <article
                   key={order.id}
-                  className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04] transition hover:border-cyan-400/50"
+                  className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.04] shadow-2xl shadow-black/20 transition hover:border-cyan-400/40"
                 >
-                  <div className="grid gap-0 lg:grid-cols-[260px_1fr_260px]">
+                  <div className="grid gap-0 lg:grid-cols-[220px_1fr_280px]">
                     <div
-                      className="min-h-56 bg-cover bg-center"
+                      className="min-h-56 bg-cover bg-center lg:min-h-full"
                       style={{ backgroundImage: `url(${image})` }}
                     />
 
                     <div className="p-6">
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <h2 className="text-2xl font-black">Order #{order.id}</h2>
+
                         <span
-                          className={`rounded-full border px-4 py-1 text-xs font-black ${statusStyle(
+                          className={`rounded-full border px-3 py-1 text-xs font-black ${statusStyle(
                             order.status
                           )}`}
                         >
                           {prettyStatus(order.status)}
                         </span>
-
-                        <span
-                          className={`rounded-full border px-4 py-1 text-xs font-black ${statusStyle(
-                            order.payment_status
-                          )}`}
-                        >
-                          Payment: {prettyStatus(order.payment_status)}
-                        </span>
-
-                        <span
-                          className={`rounded-full border px-4 py-1 text-xs font-black ${statusStyle(
-                            escrowStatus
-                          )}`}
-                        >
-                          Escrow: {prettyStatus(escrowStatus)}
-                        </span>
                       </div>
 
-                      <h2 className="mt-4 text-2xl font-black">{title}</h2>
+                      <p className="mt-2 text-sm text-slate-500">
+                        {formatDate(order.created_at)}
+                      </p>
 
-                      <div className="mt-4 flex flex-wrap gap-2">
+                      <div className="mt-5">
+                        <h3 className="text-xl font-black">{title}</h3>
+
+                        <p className="mt-2 flex items-center gap-2 text-sm text-slate-400">
+                          <FaStore className="text-cyan-300" />
+                          Seller: {seller}
+                        </p>
+                      </div>
+
+                      <div className="mt-5 flex flex-wrap gap-2">
                         <span className="rounded-full bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200">
                           {category}
                         </span>
@@ -548,75 +465,141 @@ export default function MyOrdersPage() {
                           Qty: {order.quantity || 1}
                         </span>
                       </div>
-
-                      <div className="mt-5 grid gap-3 text-sm text-slate-300 md:grid-cols-2">
-                        <p className="flex items-center gap-2">
-                          <FaReceipt className="text-cyan-300" />
-                          Order #{order.id}
-                        </p>
-
-                        <p className="flex items-center gap-2">
-                          <FaStore className="text-cyan-300" />
-                          {seller}
-                        </p>
-
-                        <p className="flex items-center gap-2">
-                          <FaClock className="text-yellow-300" />
-                          {formatDate(order.created_at)}
-                        </p>
-
-                        <p className="flex items-center gap-2">
-                          <FaShieldAlt className="text-emerald-300" />
-                          {prettyStatus(escrowStatus)}
-                        </p>
-                      </div>
                     </div>
 
                     <div className="border-t border-white/10 p-6 lg:border-l lg:border-t-0">
-                      <p className="text-sm text-slate-400">Total</p>
+                      <div className="flex flex-wrap justify-between gap-4 lg:block">
+                        <div>
+                          <p className="text-sm text-slate-400">Total Amount</p>
+                          <p className="mt-2 text-3xl font-black text-cyan-300">
+                            {formatPrice(total)}
+                          </p>
+                        </div>
 
-                      <p className="mt-2 text-3xl font-black text-cyan-300">
-                        {formatPrice(total)}
-                      </p>
+                        <div className="lg:mt-5">
+                          <p className="text-sm text-slate-400">
+                            Payment Status
+                          </p>
 
-                      <div className="mt-6 space-y-3">
+                          <p
+                            className={`mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-black ${statusStyle(
+                              paymentLabel
+                            )}`}
+                          >
+                            {paymentLabel}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 grid gap-3">
+                        {!isPaid(order) ? (
+                          <Link
+                            href={`/payment/${order.id}`}
+                            className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-400 px-5 py-3 font-black text-black hover:bg-cyan-300"
+                          >
+                            <FaCreditCard />
+                            Pay Now
+                          </Link>
+                        ) : (
+                          <Link
+                            href={`/orders/${order.id}`}
+                            className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-400 px-5 py-3 font-black text-black hover:bg-cyan-300"
+                          >
+                            <FaReceipt />
+                            View Details
+                          </Link>
+                        )}
+
                         <Link
                           href={`/orders/${order.id}`}
-                          className="flex items-center justify-center gap-2 rounded-xl bg-cyan-400 px-5 py-3 font-black text-black hover:bg-cyan-300"
+                          className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/30 px-5 py-3 font-black text-white hover:border-cyan-400"
                         >
                           <FaReceipt />
-                          View Order
+                          Order Detail
                         </Link>
 
                         {product?.id ? (
                           <Link
                             href={`/product/${product.id}`}
-                            className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/30 px-5 py-3 font-black text-white hover:border-cyan-400"
+                            className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/30 px-5 py-3 font-black text-white hover:border-cyan-400"
                           >
                             <FaShoppingBag />
-                            Product
-                          </Link>
-                        ) : null}
-
-                        {normalizeStatus(order.payment_status) !== "paid" &&
-                        normalizeStatus(order.status) !== "paid" ? (
-                          <Link
-                            href={`/payment/${order.id}`}
-                            className="flex items-center justify-center gap-2 rounded-xl border border-yellow-400/40 bg-yellow-400/10 px-5 py-3 font-black text-yellow-200 hover:bg-yellow-400 hover:text-black"
-                          >
-                            <FaCreditCard />
-                            Pay Now
+                            Product Page
                           </Link>
                         ) : null}
                       </div>
                     </div>
                   </div>
-                </div>
+                </article>
               );
             })
           )}
         </div>
+
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
+          <InfoCard
+            icon={<FaShieldAlt />}
+            title="Secure Transactions"
+            description="Payments are protected by marketplace escrow flow."
+          />
+
+          <InfoCard
+            icon={<FaClock />}
+            title="Fast Delivery"
+            description="Digital products are delivered directly by sellers."
+          />
+
+          <InfoCard
+            icon={<FaCheckCircle />}
+            title="Buyer Protection"
+            description="Track every order status from payment to completion."
+          />
+        </div>
       </section>
     </main>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: number;
+  tone?: "default" | "yellow" | "cyan" | "green";
+}) {
+  const color =
+    tone === "yellow"
+      ? "text-yellow-300"
+      : tone === "green"
+      ? "text-emerald-300"
+      : "text-cyan-300";
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/30 px-5 py-4">
+      <p className="text-xs text-slate-400">{label}</p>
+      <p className={`mt-1 text-2xl font-black ${color}`}>
+        {value.toLocaleString("id-ID")}
+      </p>
+    </div>
+  );
+}
+
+function InfoCard({
+  icon,
+  title,
+  description,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+      <div className="text-2xl text-cyan-300">{icon}</div>
+      <h3 className="mt-4 font-black">{title}</h3>
+      <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
+    </div>
   );
 }
