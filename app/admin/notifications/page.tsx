@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -55,6 +56,7 @@ function formatDate(value: string) {
 }
 
 export default function AdminNotificationCenterV1Page() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);

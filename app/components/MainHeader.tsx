@@ -16,6 +16,7 @@ import {
   FaWallet,
 } from "react-icons/fa";
 import { FcGoogle } from "react-icons/fc";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 import MarketplaceSearch from "@/components/marketplace/MarketplaceSearch";
 
@@ -111,15 +112,6 @@ function formatShortDate(value: string | null | undefined) {
   });
 }
 
-function formatRupiah(value: number | string | null | undefined) {
-  const amount = Number(value || 0);
-
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
 
 function getOAuthUsername(user: User) {
   const metadata = user.user_metadata || {};
@@ -145,6 +137,7 @@ function getInitial(name?: string | null) {
 }
 
 export default function MainHeader() {
+  const { formatPrice, currency } = useCurrency();
   const router = useRouter();
 
   const [user, setUser] = useState<User | null>(null);
@@ -1026,7 +1019,10 @@ export default function MainHeader() {
                   Wallet Credit
                 </p>
                 <p className="mt-1 text-lg font-black text-emerald-300">
-                  {formatRupiah(walletBalance)}
+                  {formatPrice(walletBalance)}
+                </p>
+                <p className="mt-1 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                  {currency}
                 </p>
               </div>
               <FaWallet className="text-2xl text-emerald-300" />

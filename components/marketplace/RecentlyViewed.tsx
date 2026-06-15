@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { FaClock, FaShoppingCart, FaStar } from "react-icons/fa";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Product = {
@@ -27,19 +28,6 @@ type RecentlyViewedRow = {
   products: Product | null;
 };
 
-function numberPrice(value: string | number | null | undefined) {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === "number") return value;
-  return Number(String(value).replace(/[^\d]/g, "") || 0);
-}
-
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
-}
 
 function fallbackImage(title: string | null) {
   return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
@@ -48,6 +36,7 @@ function fallbackImage(title: string | null) {
 }
 
 export default function RecentlyViewed() {
+  const { formatPrice } = useCurrency();
   const [rows, setRows] = useState<RecentlyViewedRow[]>([]);
   const [loading, setLoading] = useState(true);
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -98,11 +99,6 @@ function formatLastSeen(lastSeen?: string | null) {
   return `Last seen ${diffDays}d ago`;
 }
 
-function formatPrice(value: unknown) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 function otherProfile(room: RoomView, userId: string) {
   return room.buyer_id === userId ? room.seller : room.buyer;
@@ -142,6 +138,7 @@ function looksLikeImageUrl(value?: string | null) {
 }
 
 export default function MessagesPage() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [rooms, setRooms] = useState<RoomView[]>([]);

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -53,6 +54,7 @@ function formatDate(value?: string | null) {
 }
 
 export default function SellerApplicationsAdminPage() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [applications, setApplications] = useState<SellerApplication[]>([]);

@@ -18,6 +18,7 @@ import {
   FaUser,
   FaWallet,
 } from "react-icons/fa";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
@@ -62,13 +63,6 @@ function numberPrice(value: string | number | null | undefined) {
   return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
-}
 
 function getOrderTotal(order: Order | null, product: Product | null) {
   return (
@@ -135,6 +129,7 @@ function fallbackImage(title: string) {
 }
 
 export default function OrderDetailPage() {
+  const { formatPrice, currency } = useCurrency();
   const params = useParams();
   const router = useRouter();
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type SellerProfile = {
@@ -28,6 +29,7 @@ type FilterMode = "all" | "active" | "inactive" | "out-of-stock";
 
 function formatPrice(value: string | number | null) {
   const amount = Number(String(value ?? 0).replace(/[^\d]/g, "") || 0);
+
   return `Rp ${amount.toLocaleString("id-ID")}`;
 }
 
@@ -37,27 +39,25 @@ function getProductStatus(product: Product) {
   if (stock <= 0) {
     return {
       label: "Out Of Stock",
-      dotClass: "bg-red-300",
-      className: "border-red-400/20 bg-red-500/10 text-red-300",
+      className: "bg-red-500/10 text-red-300",
     };
   }
 
   if (product.status === "active") {
     return {
       label: "Active",
-      dotClass: "bg-emerald-300",
-      className: "border-emerald-400/20 bg-emerald-400/10 text-emerald-300",
+      className: "bg-green-400/10 text-green-300",
     };
   }
 
   return {
     label: "Inactive",
-    dotClass: "bg-yellow-300",
-    className: "border-yellow-400/20 bg-yellow-400/10 text-yellow-300",
+    className: "bg-yellow-400/10 text-yellow-300",
   };
 }
 
 export default function SellerProductsPage() {
+  const { formatPrice, currency } = useCurrency();
   const [loading, setLoading] = useState(true);
   const [seller, setSeller] = useState<SellerProfile | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -144,7 +144,9 @@ export default function SellerProductsPage() {
 
     const { error } = await supabase
       .from("products")
-      .update({ status: nextStatus })
+      .update({
+        status: nextStatus,
+      })
       .eq("id", product.id);
 
     if (error) {
@@ -206,158 +208,133 @@ export default function SellerProductsPage() {
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <div className="rounded-3xl border border-cyan-400/20 bg-white/[0.04] px-8 py-6 shadow-2xl shadow-cyan-500/10">
-          <p className="text-lg font-black text-cyan-300">
-            Loading products...
-          </p>
-        </div>
+        <p className="text-xl font-black text-cyan-300">
+          Loading products...
+        </p>
       </main>
     );
   }
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      <section className="mx-auto max-w-7xl px-6 py-8 md:px-8">
-        <div className="mb-6 flex items-center gap-3 text-sm text-slate-400">
-          <Link href="/seller" className="transition hover:text-cyan-300">
-            Seller Dashboard
-          </Link>
-          <span>/</span>
-          <span className="font-bold text-cyan-300">My Products</span>
-        </div>
+      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
 
-        <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30 md:p-8">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.16),transparent_35%),radial-gradient(circle_at_top_right,rgba(59,130,246,.12),transparent_35%)]" />
+        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
+          <div>
+            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              Seller Products V2
+            </p>
 
-          <div className="relative z-10 flex flex-col justify-between gap-6 lg:flex-row lg:items-start">
-            <div className="flex gap-5">
-              <div className="hidden h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-3xl shadow-lg shadow-cyan-500/10 sm:flex">
-                📦
-              </div>
+            <h1 className="text-5xl font-black md:text-7xl">My Products</h1>
 
-              <div>
-                <p className="mb-3 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-black text-cyan-300">
-                  Seller Products
-                </p>
+            <p className="mt-5 max-w-2xl text-gray-300">
+              Search, filter, edit, publish, pause, and manage your marketplace
+              listings from one seller inventory dashboard.
+            </p>
 
-                <h1 className="text-4xl font-black tracking-tight md:text-6xl">
-                  Product Inventory
-                </h1>
-
-                <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300 md:text-base">
-                  Manage, edit, publish, pause, and monitor all marketplace
-                  listings from one clean inventory dashboard.
-                </p>
-
-                <p className="mt-3 text-sm text-slate-500">
-                  Seller:{" "}
-                  <span className="text-slate-300">
-                    {seller?.seller_name ||
-                      seller?.username ||
-                      seller?.email ||
-                      "-"}
-                  </span>
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href="/seller"
-                className="rounded-2xl border border-white/10 px-5 py-3 font-black text-slate-300 transition hover:bg-white hover:text-black"
-              >
-                Dashboard
-              </Link>
-
-              <Link
-                href="/seller/products/new"
-                className="rounded-2xl bg-cyan-400 px-5 py-3 font-black text-black shadow-lg shadow-cyan-500/20 transition hover:bg-cyan-300"
-              >
-                ＋ Add Product
-              </Link>
-            </div>
+            <p className="mt-3 text-sm text-gray-500">
+              Seller:{" "}
+              {seller?.seller_name || seller?.username || seller?.email || "-"}
+            </p>
           </div>
 
-          <div className="relative z-10 mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            {[
-              ["📦", "Total Products", products.length, "All listings", "all"],
-              ["📈", "Active", activeProducts, "Live listings", "active"],
-              ["⏸️", "Inactive", inactiveProducts, "Paused listings", "inactive"],
-              [
-                "🚫",
-                "Out Of Stock",
-                outOfStockProducts,
-                "No stock listings",
-                "out-of-stock",
-              ],
-              ["🧱", "Total Stock", totalStock, "Across all products", ""],
-            ].map(([icon, label, value, desc, mode]) => {
-              const isActive = filter === mode;
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/seller"
+              className="rounded-full border border-white/10 px-5 py-2 font-bold text-gray-300 transition hover:bg-white hover:text-black"
+            >
+              Dashboard
+            </Link>
 
-              return mode ? (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => setFilter(mode as FilterMode)}
-                  className={`rounded-3xl border p-5 text-left transition ${
-                    isActive
-                      ? "border-cyan-400 bg-cyan-400/10"
-                      : "border-white/10 bg-black/20 hover:border-cyan-400/40"
-                  }`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-2xl">
-                      {icon}
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-400">{label}</p>
-                      <p className="mt-1 text-3xl font-black text-white">
-                        {value}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">{desc}</p>
-                    </div>
-                  </div>
-                </button>
-              ) : (
-                <div
-                  key={label}
-                  className="rounded-3xl border border-white/10 bg-black/20 p-5"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400/10 text-2xl">
-                      {icon}
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-400">{label}</p>
-                      <p className="mt-1 text-3xl font-black text-cyan-300">
-                        {value}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">{desc}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            <Link
+              href="/seller/products/new"
+              className="rounded-full bg-cyan-400 px-5 py-2 font-black text-black transition hover:bg-cyan-300"
+            >
+              Add Product
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="px-8 py-10">
+        <div className="mb-10 grid gap-5 md:grid-cols-5">
+          <button
+            onClick={() => setFilter("all")}
+            className={`rounded-3xl border p-6 text-left shadow-2xl shadow-black/30 transition ${
+              filter === "all"
+                ? "border-cyan-400 bg-cyan-400/10"
+                : "border-white/10 bg-white/[0.035] hover:border-cyan-400/50"
+            }`}
+          >
+            <p className="text-sm font-bold text-gray-400">Total Products</p>
+            <h2 className="mt-3 text-4xl font-black text-cyan-300">
+              {products.length}
+            </h2>
+          </button>
+
+          <button
+            onClick={() => setFilter("active")}
+            className={`rounded-3xl border p-6 text-left shadow-2xl shadow-black/30 transition ${
+              filter === "active"
+                ? "border-green-400 bg-green-400/10"
+                : "border-white/10 bg-white/[0.035] hover:border-green-400/50"
+            }`}
+          >
+            <p className="text-sm font-bold text-gray-400">Active</p>
+            <h2 className="mt-3 text-4xl font-black text-green-300">
+              {activeProducts}
+            </h2>
+          </button>
+
+          <button
+            onClick={() => setFilter("inactive")}
+            className={`rounded-3xl border p-6 text-left shadow-2xl shadow-black/30 transition ${
+              filter === "inactive"
+                ? "border-yellow-400 bg-yellow-400/10"
+                : "border-white/10 bg-white/[0.035] hover:border-yellow-400/50"
+            }`}
+          >
+            <p className="text-sm font-bold text-gray-400">Inactive</p>
+            <h2 className="mt-3 text-4xl font-black text-yellow-300">
+              {inactiveProducts}
+            </h2>
+          </button>
+
+          <button
+            onClick={() => setFilter("out-of-stock")}
+            className={`rounded-3xl border p-6 text-left shadow-2xl shadow-black/30 transition ${
+              filter === "out-of-stock"
+                ? "border-red-400 bg-red-400/10"
+                : "border-white/10 bg-white/[0.035] hover:border-red-400/50"
+            }`}
+          >
+            <p className="text-sm font-bold text-gray-400">Out Of Stock</p>
+            <h2 className="mt-3 text-4xl font-black text-red-300">
+              {outOfStockProducts}
+            </h2>
+          </button>
+
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30">
+            <p className="text-sm font-bold text-gray-400">Total Stock</p>
+            <h2 className="mt-3 text-4xl font-black text-cyan-300">
+              {totalStock}
+            </h2>
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_220px]">
-          <div className="relative">
-            <span className="pointer-events-none absolute left-5 top-1/2 -translate-y-1/2 text-slate-500">
-              🔍
-            </span>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search products by title, description, or category..."
-              className="w-full rounded-2xl border border-white/10 bg-black/40 py-4 pl-12 pr-5 text-white outline-none placeholder:text-slate-500 focus:border-cyan-400"
-            />
-          </div>
+        <div className="mb-8 grid gap-4 lg:grid-cols-[1fr_240px]">
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search by title, description, or category..."
+            className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+          />
 
           <select
             value={filter}
             onChange={(event) => setFilter(event.target.value as FilterMode)}
-            className="w-full rounded-2xl border border-white/10 bg-black/40 px-5 py-4 text-white outline-none focus:border-cyan-400"
+            className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400"
           >
             <option value="all">All Products</option>
             <option value="active">Active</option>
@@ -366,189 +343,161 @@ export default function SellerProductsPage() {
           </select>
         </div>
 
-        <section className="mt-6">
-          {products.length === 0 ? (
-            <div className="rounded-[2rem] border border-white/10 bg-white/[0.035] p-12 text-center shadow-2xl shadow-black/30">
-              <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-4xl">
-                📦
-              </div>
+        {products.length === 0 ? (
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-12 text-center shadow-2xl shadow-black/30">
+            <h2 className="text-3xl font-black">No Products Yet</h2>
 
-              <h2 className="text-3xl font-black">No Products Yet</h2>
+            <p className="mt-3 text-gray-400">Create your first listing.</p>
 
-              <p className="mt-3 text-slate-400">
-                Start selling today by creating your first marketplace listing.
-              </p>
+            <Link
+              href="/seller/products/new"
+              className="mt-6 inline-block rounded-full bg-cyan-400 px-6 py-3 font-black text-black transition hover:bg-cyan-300"
+            >
+              Add Product
+            </Link>
+          </div>
+        ) : filteredProducts.length === 0 ? (
+          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-12 text-center shadow-2xl shadow-black/30">
+            <h2 className="text-3xl font-black">No Products Found</h2>
 
-              <Link
-                href="/seller/products/new"
-                className="mt-6 inline-block rounded-2xl bg-cyan-400 px-6 py-3 font-black text-black transition hover:bg-cyan-300"
-              >
-                Create Product
-              </Link>
-            </div>
-          ) : filteredProducts.length === 0 ? (
-            <div className="rounded-[2rem] border border-white/10 bg-white/[0.035] p-12 text-center shadow-2xl shadow-black/30">
-              <div className="mx-auto mb-5 flex h-20 w-20 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-4xl">
-                🔎
-              </div>
+            <p className="mt-3 text-gray-400">
+              Try another keyword or change the filter.
+            </p>
 
-              <h2 className="text-3xl font-black">No Products Found</h2>
+            <button
+              onClick={() => {
+                setSearch("");
+                setFilter("all");
+              }}
+              className="mt-6 inline-block rounded-full border border-cyan-400 px-6 py-3 font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+            >
+              Reset Filter
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-6">
+            {filteredProducts.map((product) => {
+              const status = getProductStatus(product);
+              const isUpdating = updatingId === product.id;
 
-              <p className="mt-3 text-slate-400">
-                Try another keyword or change the filter.
-              </p>
+              return (
+                <div
+                  key={product.id}
+                  className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30"
+                >
+                  <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
+                    <div className="flex h-64 items-center justify-center bg-black/50 lg:h-full">
+                      {product.image_url ? (
+                        <img
+                          src={product.image_url}
+                          alt={product.title}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-6xl">🎮</span>
+                      )}
+                    </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setSearch("");
-                  setFilter("all");
-                }}
-                className="mt-6 inline-block rounded-2xl border border-cyan-400 px-6 py-3 font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-              >
-                Reset Filter
-              </button>
-            </div>
-          ) : (
-            <div className="grid gap-5">
-              {filteredProducts.map((product) => {
-                const status = getProductStatus(product);
-                const isUpdating = updatingId === product.id;
+                    <div className="p-6">
+                      <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-start">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <h2 className="text-2xl font-black">
+                              {product.title}
+                            </h2>
 
-                return (
-                  <article
-                    key={product.id}
-                    className="overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30 transition hover:border-cyan-400/30"
-                  >
-                    <div className="grid gap-0 lg:grid-cols-[260px_1fr]">
-                      <div className="flex h-56 items-center justify-center bg-black/50 lg:h-full">
-                        {product.image_url ? (
-                          <img
-                            src={product.image_url}
-                            alt={product.title}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <span className="text-6xl">🎮</span>
-                        )}
-                      </div>
-
-                      <div className="p-6">
-                        <div className="grid gap-6 xl:grid-cols-[1fr_260px_1.1fr] xl:items-center">
-                          <div>
-                            <div className="flex flex-wrap items-center gap-3">
-                              <h2 className="text-2xl font-black">
-                                {product.title}
-                              </h2>
-
-                              <span
-                                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-black ${status.className}`}
-                              >
-                                <span
-                                  className={`h-2 w-2 rounded-full ${status.dotClass}`}
-                                />
-                                {status.label}
-                              </span>
-                            </div>
-
-                            <p className="mt-2 text-sm font-bold text-cyan-300">
-                              {product.category_name ||
-                                product.category ||
-                                "Game Product"}
-                            </p>
-
-                            <p className="mt-4 line-clamp-2 max-w-2xl text-sm leading-6 text-slate-400">
-                              {product.description ||
-                                "No description provided."}
-                            </p>
-
-                            <p className="mt-4 text-xs text-slate-600">
-                              Created{" "}
-                              {product.created_at
-                                ? new Date(product.created_at).toLocaleString(
-                                    "id-ID"
-                                  )
-                                : "-"}
-                            </p>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-black ${status.className}`}
+                            >
+                              {status.label}
+                            </span>
                           </div>
 
-                          <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                            <p className="text-sm text-slate-400">Price</p>
+                          <p className="mt-2 text-sm font-bold text-cyan-300">
+                            {product.category_name ||
+                              product.category ||
+                              "Game Product"}
+                          </p>
+
+                          <p className="mt-4 line-clamp-3 max-w-3xl text-gray-400">
+                            {product.description || "No description provided."}
+                          </p>
+
+                          <p className="mt-4 text-xs text-gray-600">
+                            Created:{" "}
+                            {product.created_at
+                              ? new Date(product.created_at).toLocaleString(
+                                  "id-ID"
+                                )
+                              : "-"}
+                          </p>
+                        </div>
+
+                        <div className="grid min-w-[220px] gap-4 rounded-2xl border border-white/10 bg-black/30 p-5">
+                          <div>
+                            <p className="text-sm text-gray-400">Price</p>
                             <h3 className="mt-1 text-2xl font-black text-cyan-300">
                               {formatPrice(product.price)}
                             </h3>
-
-                            <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
-                              <div>
-                                <p className="text-slate-500">Stock</p>
-                                <p
-                                  className={`mt-1 font-black ${
-                                    Number(product.stock || 0) <= 0
-                                      ? "text-red-300"
-                                      : "text-white"
-                                  }`}
-                                >
-                                  {product.stock || 0}
-                                </p>
-                              </div>
-
-                              <div>
-                                <p className="text-slate-500">Category</p>
-                                <p className="mt-1 truncate font-black text-white">
-                                  {product.category_name ||
-                                    product.category ||
-                                    "-"}
-                                </p>
-                              </div>
-                            </div>
                           </div>
 
-                          <div className="flex flex-wrap justify-start gap-3 xl:justify-end">
-                            <Link
-                              href={`/seller/products/${product.id}/edit`}
-                              className="rounded-2xl border border-white/10 px-5 py-3 font-black text-white transition hover:bg-white hover:text-black"
+                          <div>
+                            <p className="text-sm text-gray-400">Stock</p>
+                            <h3
+                              className={`mt-1 text-2xl font-black ${
+                                Number(product.stock || 0) <= 0
+                                  ? "text-red-300"
+                                  : "text-white"
+                              }`}
                             >
-                              ✏ Edit
-                            </Link>
-
-                            <Link
-                              href={`/product/${product.id}`}
-                              className="rounded-2xl border border-cyan-400/30 px-5 py-3 font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-                            >
-                              👁 View
-                            </Link>
-
-                            <button
-                              type="button"
-                              onClick={() => toggleStatus(product)}
-                              disabled={isUpdating}
-                              className="rounded-2xl border border-yellow-400/30 bg-yellow-400/10 px-5 py-3 font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {isUpdating
-                                ? "Updating..."
-                                : product.status === "active"
-                                ? "⏸ Pause"
-                                : "▶ Activate"}
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => deleteProduct(product.id)}
-                              disabled={isUpdating}
-                              className="rounded-2xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-black text-red-300 transition hover:bg-red-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {isUpdating ? "Processing..." : "🗑 Delete"}
-                            </button>
+                              {product.stock || 0}
+                            </h3>
                           </div>
                         </div>
                       </div>
+
+                      <div className="mt-6 flex flex-wrap gap-3">
+                        <Link
+                          href={`/seller/products/${product.id}/edit`}
+                          className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-black transition hover:bg-cyan-300"
+                        >
+                          Edit
+                        </Link>
+
+                        <Link
+                          href={`/product/${product.id}`}
+                          className="rounded-xl border border-white/10 px-5 py-3 font-black text-gray-300 transition hover:bg-white hover:text-black"
+                        >
+                          View Product
+                        </Link>
+
+                        <button
+                          onClick={() => toggleStatus(product)}
+                          disabled={isUpdating}
+                          className="rounded-xl bg-yellow-500 px-5 py-3 font-black text-black transition hover:bg-yellow-400 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isUpdating
+                            ? "Updating..."
+                            : product.status === "active"
+                            ? "Deactivate"
+                            : "Activate"}
+                        </button>
+
+                        <button
+                          onClick={() => deleteProduct(product.id)}
+                          disabled={isUpdating}
+                          className="rounded-xl bg-red-500 px-5 py-3 font-black text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isUpdating ? "Processing..." : "Delete"}
+                        </button>
+                      </div>
                     </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
     </main>
   );

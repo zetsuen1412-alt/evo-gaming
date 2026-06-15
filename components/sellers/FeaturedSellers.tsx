@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { FaBoxOpen, FaChartLine, FaShieldAlt, FaStar, FaStore, FaTrophy } from "react-icons/fa";
+import {
+  FaBoxOpen,
+  FaChartLine,
+  FaShieldAlt,
+  FaStar,
+  FaStore,
+  FaTrophy,
+} from "react-icons/fa";
 
 type FeaturedSeller = {
   id: string;
@@ -60,15 +67,24 @@ export default function FeaturedSellers({
 
       try {
         const params = new URLSearchParams({ limit: String(limit) });
-        if (gameSlug) params.set("game", gameSlug);
 
-        const response = await fetch(`/api/sellers/featured?${params.toString()}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        if (gameSlug) {
+          params.set("game", gameSlug);
+        }
+
+        const response = await fetch(
+          `/api/sellers/featured?${params.toString()}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          }
+        );
+
         const json = await response.json();
 
-        if (!response.ok) throw new Error(json.error || "Failed to load featured sellers.");
+        if (!response.ok) {
+          throw new Error(json.error || "Failed to load featured sellers.");
+        }
 
         setSellers(Array.isArray(json.sellers) ? json.sellers : []);
       } catch (error) {
@@ -77,7 +93,9 @@ export default function FeaturedSellers({
           setSellers([]);
         }
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     }
 
@@ -105,11 +123,16 @@ export default function FeaturedSellers({
           <p className="inline-flex items-center gap-2 rounded-full border border-yellow-400/30 bg-yellow-400/10 px-4 py-2 text-xs font-black text-yellow-300">
             <FaTrophy /> Seller Ranking
           </p>
+
           <h2 className="mt-4 text-4xl font-black">{title}</h2>
+
           <p className="mt-2 max-w-2xl text-gray-300">{subtitle}</p>
         </div>
 
-        <Link href="/sellers/leaderboard" className="font-black text-cyan-300 hover:text-cyan-200">
+        <Link
+          href="/sellers/leaderboard"
+          className="font-black text-cyan-300 hover:text-cyan-200"
+        >
           View leaderboard →
         </Link>
       </div>
@@ -125,12 +148,20 @@ export default function FeaturedSellers({
               <div className="flex items-center gap-3">
                 <div
                   className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-cyan-400/10 bg-cover bg-center text-xl font-black text-cyan-300"
-                  style={seller.avatar_url ? { backgroundImage: `url(${seller.avatar_url})` } : undefined}
+                  style={
+                    seller.avatar_url
+                      ? { backgroundImage: `url(${seller.avatar_url})` }
+                      : undefined
+                  }
                 >
                   {!seller.avatar_url && sellerInitial(seller.name)}
                 </div>
+
                 <div className="min-w-0">
-                  <h3 className="truncate text-lg font-black group-hover:text-yellow-300">{seller.name}</h3>
+                  <h3 className="truncate text-lg font-black group-hover:text-yellow-300">
+                    {seller.name}
+                  </h3>
+
                   <p className="mt-1 flex items-center gap-1 text-xs font-bold text-emerald-300">
                     <FaShieldAlt /> Verified marketplace seller
                   </p>
@@ -145,20 +176,29 @@ export default function FeaturedSellers({
             <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-3">
                 <p className="text-xs text-slate-400">Rating</p>
+
                 <p className="mt-1 flex items-center gap-1 font-black text-yellow-300">
                   <FaStar /> {formatRating(seller.average_rating)}
                 </p>
-                <p className="mt-1 text-xs text-yellow-100/70">{formatCount(seller.review_count)} reviews</p>
+
+                <p className="mt-1 text-xs text-yellow-100/70">
+                  {formatCount(seller.review_count)} reviews
+                </p>
               </div>
 
               <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-3">
                 <p className="text-xs text-slate-400">Orders</p>
-                <p className="mt-1 font-black text-emerald-300">{formatCount(seller.completed_orders)}</p>
+
+                <p className="mt-1 font-black text-emerald-300">
+                  {formatCount(seller.completed_orders)}
+                </p>
+
                 <p className="mt-1 text-xs text-emerald-100/70">completed</p>
               </div>
 
               <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-3">
                 <p className="text-xs text-slate-400">Listings</p>
+
                 <p className="mt-1 flex items-center gap-1 font-black text-cyan-300">
                   <FaBoxOpen /> {formatCount(seller.active_products)}
                 </p>
@@ -166,8 +206,12 @@ export default function FeaturedSellers({
 
               <div className="rounded-2xl border border-purple-400/20 bg-purple-400/10 p-3">
                 <p className="text-xs text-slate-400">Conversion</p>
+
                 <p className="mt-1 flex items-center gap-1 font-black text-purple-300">
-                  <FaChartLine /> {seller.conversion_rate ? `${seller.conversion_rate}%` : "New"}
+                  <FaChartLine />{" "}
+                  {seller.conversion_rate
+                    ? `${seller.conversion_rate}%`
+                    : "New"}
                 </p>
               </div>
             </div>
@@ -176,6 +220,7 @@ export default function FeaturedSellers({
               <span className="inline-flex items-center gap-2 text-white">
                 <FaStore className="text-cyan-300" /> View Store
               </span>
+
               <span className="text-cyan-300">→</span>
             </div>
           </Link>

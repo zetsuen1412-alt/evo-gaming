@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -35,11 +36,6 @@ const productStatuses = ["all", "active", "hidden", "pending", "rejected"];
 
 const statusOptions = ["active", "hidden", "pending", "rejected"];
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 function getStatusClass(status: string | null) {
   if (status === "active") return "border-green-400/20 bg-green-400/10 text-green-300";
@@ -49,6 +45,7 @@ function getStatusClass(status: string | null) {
 }
 
 export default function AdminProductManagementV1Page() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [products, setProducts] = useState<Product[]>([]);

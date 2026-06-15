@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -92,11 +93,6 @@ type Stats = {
   transactionCount: number;
 };
 
-function formatPrice(value: string | number | null | undefined) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 function normalizeStatus(status: string | null | undefined) {
   if (status === "pending") return "Pending";
@@ -121,6 +117,7 @@ function getDate(value: string | null | undefined) {
 }
 
 export default function AdminFinanceDashboardPage() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type SellerProfile = {
@@ -36,6 +37,7 @@ function formatDate(value: string | null | undefined) {
 }
 
 export default function FollowingPageV1() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [followingRows, setFollowingRows] = useState<FollowRow[]>([]);
   const [loading, setLoading] = useState(true);

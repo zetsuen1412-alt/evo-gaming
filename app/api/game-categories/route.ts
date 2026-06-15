@@ -1,13 +1,32 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
+type CategoryRow = {
+  id: number;
+  name: string;
+  slug: string;
+  icon: string | null;
+  created_at?: string | null;
+};
+
 export async function GET() {
   const { data, error } = await supabase
     .from("categories")
-    .select("id,name,slug,description,icon,sort_order")
-    .eq("is_active", true)
-    .order("sort_order", { ascending: true });
+    .select("id,name,slug,icon,created_at")
+    .order("name", { ascending: true });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ categories: data || [] });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const categories = ((data || []) as CategoryRow[]).map((category) => ({
+    id: category.id,
+    name: category.name,
+    slug: category.slug,
+    icon: category.icon,
+    description: "",
+    href: `/games?category=${category.slug}`,
+  }));
+
+  return NextResponse.json({ categories });
 }

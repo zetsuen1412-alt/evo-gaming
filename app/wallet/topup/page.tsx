@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { PayPalButtons, PayPalScriptProvider } from "@paypal/react-paypal-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Wallet = {
@@ -44,11 +45,6 @@ const PAYPAL_PRESETS = [
   { usd: 50, label: "$50" },
 ];
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "-";
@@ -89,6 +85,7 @@ function createSafeFileName(fileName: string) {
 }
 
 export default function WalletTopUpPageV1() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topups, setTopups] = useState<WalletTopup[]>([]);

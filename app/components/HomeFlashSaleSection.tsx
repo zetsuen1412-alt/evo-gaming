@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Product = {
@@ -30,11 +31,6 @@ type FlashSale = {
   products: Product | null;
 };
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 function getTimeLeft(endAt: string) {
   const distance = new Date(endAt).getTime() - Date.now();
@@ -63,6 +59,7 @@ function pad(value: number) {
 }
 
 export default function HomeFlashSaleSection() {
+  const { formatPrice, currency } = useCurrency();
   const [flashSales, setFlashSales] = useState<FlashSale[]>([]);
   const [loading, setLoading] = useState(true);
   const [nowTick, setNowTick] = useState(0);

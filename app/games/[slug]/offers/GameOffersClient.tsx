@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { trackMarketplaceEvent } from "@/lib/marketplace-events-client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -126,13 +127,6 @@ function numberPrice(value: string | number | null | undefined) {
   return Number(cleaned || 0);
 }
 
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
-}
 
 function stockValue(value: number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -185,6 +179,7 @@ function sellerCreateUrl(gameSlug: string, categoryName: string) {
 }
 
 export default function GameOffersClient({ game }: { game: Game }) {
+  const { formatPrice, currency } = useCurrency();
   const router = useRouter();
   const searchParams = useSearchParams();
 

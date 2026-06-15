@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 import { dispatchNotificationEvent } from "@/lib/notification-event-helper";
 
@@ -60,6 +61,7 @@ function getDisplayName(profile: Profile | null, fallback: string) {
 }
 
 export default function AdminSupportTicketManagementNotificationV1Page() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);

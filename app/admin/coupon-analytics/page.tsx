@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -38,11 +39,6 @@ type CouponUsage = {
   coupons: Coupon | null;
 };
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -55,6 +51,7 @@ function isExpired(coupon: Coupon) {
 }
 
 export default function AdminCouponAnalyticsV1Page() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [coupons, setCoupons] = useState<Coupon[]>([]);

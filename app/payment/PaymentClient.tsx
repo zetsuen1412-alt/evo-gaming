@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 import { createNotification } from "@/lib/createNotification";
 
@@ -44,15 +45,6 @@ type GameMaster = {
   image_url: string | null;
 };
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-
-  if (!Number.isFinite(price)) {
-    return "Rp 0";
-  }
-
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 function normalizeStatus(status: string | null) {
   if (status === "pending") return "Pending Payment";
@@ -100,6 +92,7 @@ function createSafeFileName(fileName: string) {
 }
 
 export default function PaymentUploadV3NotificationPage() {
+  const { formatPrice, currency } = useCurrency();
   const searchParams = useSearchParams();
   const orderId = searchParams.get("order");
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -97,17 +98,9 @@ function getStatusClass(status: string | null) {
   return "border-cyan-400/20 bg-cyan-400/10 text-cyan-300";
 }
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-
-  if (!Number.isFinite(price)) {
-    return "Rp 0";
-  }
-
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 export default function AdminOrderManagementV1Page() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);

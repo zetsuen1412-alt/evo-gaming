@@ -9,6 +9,7 @@ import {
   FaStore,
 } from "react-icons/fa";
 import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTracker";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -57,13 +58,6 @@ function numberPrice(value: string | number | null | undefined) {
   return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
-}
 
 
 function slugify(value: string) {

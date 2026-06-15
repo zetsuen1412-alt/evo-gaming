@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FaBell, FaCheckDouble } from "react-icons/fa";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type NotificationItem = {
@@ -21,6 +22,7 @@ function formatDate(value: string) {
 }
 
 export default function NotificationsPage() {
+  const { formatPrice, currency } = useCurrency();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
 

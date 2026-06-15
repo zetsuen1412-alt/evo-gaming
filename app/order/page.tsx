@@ -1,4 +1,5 @@
 export default function OrderPage() {
+  const { formatPrice, currency } = useCurrency();
   return (
     <main className="min-h-screen bg-black px-8 py-10 text-white">
       <a href="/product" className="text-cyan-400">

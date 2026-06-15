@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type AccountDropdownProps = {
@@ -9,6 +10,7 @@ type AccountDropdownProps = {
 };
 
 export default function AccountDropdown({ balance = 0 }: AccountDropdownProps) {
+  const { formatPrice, currency } = useCurrency();
   const [open, setOpen] = useState(false);
 
   const handleLogout = async () => {

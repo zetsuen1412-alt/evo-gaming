@@ -13,6 +13,7 @@ import {
   FaShoppingBag,
   FaStore,
 } from "react-icons/fa";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
@@ -58,14 +59,6 @@ function numberPrice(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
   if (typeof value === "number") return value;
   return Number(String(value).replace(/[^\d]/g, "") || 0);
-}
-
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
 }
 
 function getOrderTotal(order: Order, product?: Product | null) {
@@ -129,6 +122,8 @@ function formatDate(value?: string | null) {
 }
 
 export default function MyOrdersPage() {
+  const { formatPrice, currency } = useCurrency();
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<ProductMap>({});
   const [filter, setFilter] = useState("all");
@@ -305,9 +300,15 @@ export default function MyOrdersPage() {
         <div className="mx-auto max-w-7xl px-4 py-10">
           <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
             <div>
-              <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-black text-cyan-300">
-                Buyer Orders
-              </p>
+              <div className="flex flex-wrap gap-3">
+                <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-black text-cyan-300">
+                  Buyer Orders
+                </p>
+
+                <p className="inline-flex rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-xs font-black text-emerald-300">
+                  {currency}
+                </p>
+              </div>
 
               <h1 className="mt-5 text-5xl font-black">My Orders</h1>
 
@@ -403,9 +404,14 @@ export default function MyOrdersPage() {
             </div>
           ) : (
             filteredOrders.map((order) => {
-              const product = order.product_id ? products[order.product_id] : null;
+              const product = order.product_id
+                ? products[order.product_id]
+                : null;
               const title =
-                order.product_title || order.product || product?.title || "Product";
+                order.product_title ||
+                order.product ||
+                product?.title ||
+                "Product";
               const seller =
                 order.seller_name || product?.seller_name || "Verified Seller";
               const game = order.game_name || product?.game_name || "-";
@@ -428,7 +434,9 @@ export default function MyOrdersPage() {
 
                     <div className="p-6">
                       <div className="flex flex-wrap items-center gap-3">
-                        <h2 className="text-2xl font-black">Order #{order.id}</h2>
+                        <h2 className="text-2xl font-black">
+                          Order #{order.id}
+                        </h2>
 
                         <span
                           className={`rounded-full border px-3 py-1 text-xs font-black ${statusStyle(
@@ -579,6 +587,7 @@ function MiniStat({
   return (
     <div className="rounded-2xl border border-white/10 bg-black/30 px-5 py-4">
       <p className="text-xs text-slate-400">{label}</p>
+
       <p className={`mt-1 text-2xl font-black ${color}`}>
         {value.toLocaleString("id-ID")}
       </p>
@@ -598,7 +607,9 @@ function InfoCard({
   return (
     <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
       <div className="text-2xl text-cyan-300">{icon}</div>
+
       <h3 className="mt-4 font-black">{title}</h3>
+
       <p className="mt-2 text-sm leading-6 text-slate-400">{description}</p>
     </div>
   );

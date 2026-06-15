@@ -14,6 +14,7 @@ import {
   FaShoppingCart,
   FaWallet,
 } from "react-icons/fa";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { trackMarketplaceEvent } from "@/lib/marketplace-events-client";
 import { supabase } from "@/lib/supabase";
 
@@ -57,14 +58,6 @@ function numberPrice(value: string | number | null | undefined) {
   return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
-}
-
 function fallbackImage(title: string) {
   return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
     title || "ComePlayers Product"
@@ -84,6 +77,8 @@ function normalizeCouponCode(value: string) {
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const { formatPrice, currency } = useCurrency();
+
   const params = useParams<{ id?: string }>();
   const searchParams = useSearchParams();
 
@@ -384,7 +379,13 @@ export default function CheckoutPage() {
             Back to Product
           </Link>
 
-          <h1 className="mt-8 text-5xl font-black">Checkout</h1>
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <h1 className="text-5xl font-black">Checkout</h1>
+
+            <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              {currency}
+            </span>
+          </div>
 
           <p className="mt-3 text-slate-300">
             Review your order before continuing to payment.
@@ -530,7 +531,7 @@ export default function CheckoutPage() {
 
               <div className="flex justify-between border-b border-white/10 pb-3">
                 <span className="text-slate-300">Platform Fee</span>
-                <span className="font-bold">Rp 0</span>
+                <span className="font-bold">{formatPrice(0)}</span>
               </div>
 
               {paymentMethod === "paypal" ? (
@@ -542,11 +543,18 @@ export default function CheckoutPage() {
                 </div>
               ) : null}
 
-              <div className="flex justify-between text-lg">
+              <div className="flex items-start justify-between gap-4 text-lg">
                 <span className="font-black">Total</span>
-                <span className="font-black text-cyan-300">
-                  {formatPrice(total)}
-                </span>
+
+                <div className="text-right">
+                  <p className="text-xl font-black text-cyan-300">
+                    {formatPrice(total)}
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    Currency: {currency}
+                  </p>
+                </div>
               </div>
             </div>
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
@@ -112,6 +113,7 @@ function formatPrice(value: string | number | null) {
 }
 
 export default function OrderDetailV2Page() {
+  const { formatPrice, currency } = useCurrency();
   const params = useParams();
   const orderId = String(params.id || "");
 

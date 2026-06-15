@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useCurrency } from "@/components/CurrencyProvider";
 
 type SearchCategory = {
   id: number;
@@ -48,16 +49,6 @@ type MarketplaceSearchProps = {
   compact?: boolean;
 };
 
-function formatPrice(value: string | number | null | undefined) {
-  const amount = Number(String(value ?? 0).replace(/[^\d]/g, "") || 0);
-
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
-
 export default function MarketplaceSearch({
   categories = [],
   initialQuery = "",
@@ -65,8 +56,10 @@ export default function MarketplaceSearch({
   placeholder = "Search games, products, categories...",
   compact = false,
 }: MarketplaceSearchProps) {
+  const { formatPrice } = useCurrency();
   const router = useRouter();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+
   const [query, setQuery] = useState(initialQuery);
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
   const [results, setResults] = useState<SearchResponse>({
@@ -86,14 +79,19 @@ export default function MarketplaceSearch({
   const quickLinks = [
     ...results.games.map((game) => game.href),
     ...results.products.map((product) => product.href),
-    ...results.categories.map((category) => category.href || `/games?category=${category.slug}`),
+    ...results.categories.map(
+      (category) => category.href || `/games?category=${category.slug}`
+    ),
   ];
 
   function searchHref() {
     const params = new URLSearchParams();
+
     if (query.trim()) params.set("q", query.trim());
     if (selectedCategory) params.set("category", selectedCategory);
+
     const qs = params.toString();
+
     return qs ? `/search?${qs}` : "/search";
   }
 
@@ -105,6 +103,7 @@ export default function MarketplaceSearch({
 
   useEffect(() => {
     const controller = new AbortController();
+
     const timer = window.setTimeout(async () => {
       if (query.trim().length < 2 && selectedCategory.length < 2) {
         setResults({ games: [], products: [], categories: [] });
@@ -116,16 +115,27 @@ export default function MarketplaceSearch({
       setLoading(true);
 
       try {
-        const params = new URLSearchParams({ q: query.trim(), limit: "6" });
+        const params = new URLSearchParams({
+          q: query.trim(),
+          limit: "6",
+        });
+
         if (selectedCategory) params.set("category", selectedCategory);
 
-        const response = await fetch(`/api/marketplace/search?${params.toString()}`, {
-          signal: controller.signal,
-        });
+        const response = await fetch(
+          `/api/marketplace/search?${params.toString()}`,
+          {
+            signal: controller.signal,
+          }
+        );
+
         const json = await response.json();
 
         if (!response.ok) {
-          console.error("Marketplace search error:", json.error || response.statusText);
+          console.error(
+            "Marketplace search error:",
+            json.error || response.statusText
+          );
           setResults({ games: [], products: [], categories: [] });
           setActiveIndex(-1);
           return;
@@ -140,6 +150,7 @@ export default function MarketplaceSearch({
         setOpen(true);
       } catch (error) {
         if ((error as DOMException).name === "AbortError") return;
+
         console.error("Marketplace search error:", error);
         setResults({ games: [], products: [], categories: [] });
         setActiveIndex(-1);
@@ -162,17 +173,23 @@ export default function MarketplaceSearch({
     }
 
     document.addEventListener("mousedown", handleClickOutside);
+
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  function resultIndex(section: "games" | "products" | "categories", index: number) {
+  function resultIndex(
+    section: "games" | "products" | "categories",
+    index: number
+  ) {
     if (section === "games") return index;
     if (section === "products") return results.games.length + index;
     return results.games.length + results.products.length + index;
   }
 
   function activeResultClass(index: number) {
-    return activeIndex === index ? "bg-white/10 ring-1 ring-cyan-400/50" : "hover:bg-white/10";
+    return activeIndex === index
+      ? "bg-white/10 ring-1 ring-cyan-400/50"
+      : "hover:bg-white/10";
   }
 
   return (
@@ -268,7 +285,9 @@ export default function MarketplaceSearch({
       {open && (query.trim().length >= 2 || selectedCategory) ? (
         <div className="absolute left-0 right-0 top-full z-[9999] mt-3 overflow-hidden rounded-2xl border border-white/10 bg-[#0b1220] shadow-2xl shadow-black">
           {loading ? (
-            <div className="p-5 text-sm text-slate-400">Searching marketplace...</div>
+            <div className="p-5 text-sm text-slate-400">
+              Searching marketplace...
+            </div>
           ) : hasResults ? (
             <div className="max-h-[70vh] overflow-y-auto">
               {results.games.length > 0 ? (
@@ -276,20 +295,27 @@ export default function MarketplaceSearch({
                   <p className="px-2 pb-2 text-xs font-black uppercase tracking-[0.2em] text-cyan-300">
                     Games
                   </p>
-                  {results.games.map((game) => (
+
+                  {results.games.map((game, index) => (
                     <Link
                       key={`game-${game.id}`}
                       href={game.href}
                       onClick={() => setOpen(false)}
-                      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition ${activeResultClass(resultIndex("games", results.games.indexOf(game)))}`}
+                      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition ${activeResultClass(
+                        resultIndex("games", index)
+                      )}`}
                     >
                       <div>
                         <p className="font-bold text-white">{game.name}</p>
+
                         <p className="text-xs text-slate-400">
                           {game.offer_count || 0} offers
-                          {game.rating ? ` • ★ ${Number(game.rating).toFixed(1)}` : ""}
+                          {game.rating
+                            ? ` • ★ ${Number(game.rating).toFixed(1)}`
+                            : ""}
                         </p>
                       </div>
+
                       {game.is_trending ? (
                         <span className="rounded-full bg-yellow-400 px-2 py-1 text-xs font-black text-black">
                           HOT
@@ -305,21 +331,30 @@ export default function MarketplaceSearch({
                   <p className="px-2 pb-2 text-xs font-black uppercase tracking-[0.2em] text-emerald-300">
                     Products
                   </p>
-                  {results.products.map((product) => (
+
+                  {results.products.map((product, index) => (
                     <Link
                       key={`product-${product.id}`}
                       href={product.href}
                       onClick={() => setOpen(false)}
-                      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition ${activeResultClass(resultIndex("products", results.products.indexOf(product)))}`}
+                      className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 transition ${activeResultClass(
+                        resultIndex("products", index)
+                      )}`}
                     >
                       <div className="min-w-0">
-                        <p className="line-clamp-1 font-bold text-white">{product.title}</p>
+                        <p className="line-clamp-1 font-bold text-white">
+                          {product.title}
+                        </p>
+
                         <p className="line-clamp-1 text-xs text-slate-400">
                           {product.game_name || "Game"}
                           {product.category ? ` • ${product.category}` : ""}
-                          {product.seller_name ? ` • ${product.seller_name}` : ""}
+                          {product.seller_name
+                            ? ` • ${product.seller_name}`
+                            : ""}
                         </p>
                       </div>
+
                       <span className="shrink-0 text-sm font-black text-cyan-300">
                         {formatPrice(product.price)}
                       </span>
@@ -333,13 +368,18 @@ export default function MarketplaceSearch({
                   <p className="px-2 pb-2 text-xs font-black uppercase tracking-[0.2em] text-purple-300">
                     Categories
                   </p>
+
                   <div className="flex flex-wrap gap-2 px-2 pb-1">
-                    {results.categories.map((category) => (
+                    {results.categories.map((category, index) => (
                       <Link
                         key={`category-${category.id}`}
-                        href={category.href || `/games?category=${category.slug}`}
+                        href={
+                          category.href || `/games?category=${category.slug}`
+                        }
                         onClick={() => setOpen(false)}
-                        className={`rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-bold text-slate-200 transition hover:border-cyan-400 ${activeResultClass(resultIndex("categories", results.categories.indexOf(category)))}`}
+                        className={`rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-bold text-slate-200 transition hover:border-cyan-400 ${activeResultClass(
+                          resultIndex("categories", index)
+                        )}`}
                       >
                         {category.icon ? `${category.icon} ` : ""}
                         {category.name}
@@ -360,7 +400,9 @@ export default function MarketplaceSearch({
               </div>
             </div>
           ) : (
-            <div className="p-5 text-sm text-slate-400">No marketplace results found.</div>
+            <div className="p-5 text-sm text-slate-400">
+              No marketplace results found.
+            </div>
           )}
         </div>
       ) : null}

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -19,6 +20,7 @@ import {
 import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
 import RecentlyViewedGameTracker from "@/components/marketplace/RecentlyViewedGameTracker";
 import FeaturedSellers from "@/components/sellers/FeaturedSellers";
+import { formatLocalizedPrice } from "@/lib/localization";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -194,6 +196,12 @@ function sellerCreateUrl(gameSlug: string, categoryName?: string) {
 }
 
 export default async function GameDetailPage({ params }: PageProps) {
+  const cookieStore = await cookies();
+  const locale = cookieStore.get("cp_locale")?.value || "id-ID";
+  const currency = cookieStore.get("cp_currency")?.value || "IDR";
+  const formatPrice = (value: string | number | null | undefined) =>
+    formatLocalizedPrice(value, locale, currency);
+
   const { slug } = await params;
 
   const { data: game } = await supabase

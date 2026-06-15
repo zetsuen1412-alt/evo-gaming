@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -23,8 +24,9 @@ import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcru
 import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTracker";
 import RecentlyViewedTracker from "@/components/marketplace/RecentlyViewedTracker";
 import RecommendedProducts from "@/components/marketplace/RecommendedProducts";
-import { supabase } from "@/lib/supabase";
+import { convertFromIdr, formatLocalizedPrice } from "@/lib/localization";
 import { calculateSellerReputation } from "@/lib/sellerReputation";
+import { supabase } from "@/lib/supabase";
 
 type PageProps = {
   params: Promise<{
@@ -32,8 +34,9 @@ type PageProps = {
   }>;
 };
 
-
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://comeplayers.com").replace(/\/$/, "");
+const SITE_URL = (
+  process.env.NEXT_PUBLIC_SITE_URL || "https://comeplayers.com"
+).replace(/\/$/, "");
 
 function absoluteUrl(path: string) {
   if (!path) return SITE_URL;
@@ -51,18 +54,11 @@ function JsonLd({ data }: { data: unknown }) {
     />
   );
 }
+
 function numberPrice(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
   if (typeof value === "number") return value;
   return Number(String(value).replace(/[^\d]/g, "") || 0);
-}
-
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
 }
 
 function fallbackImage(title: string) {
@@ -90,8 +86,9 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: PageProps): Promise<Metadata> {
   const { id } = await params;
   const productId = Number(id);
   const productQueryKey = decodeURIComponent(id);
@@ -119,7 +116,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const title = `${product.title} | ComePlayers`;
   const description = product.description
     ? String(product.description).slice(0, 155)
-    : `Buy ${product.title}${product.game_name ? ` for ${product.game_name}` : ""} on ComePlayers.`;
+    : `Buy ${product.title}${
+        product.game_name ? ` for ${product.game_name}` : ""
+      } on ComePlayers.`;
   const canonicalKey = product.slug || String(product.id);
   const canonical = `/product/${canonicalKey}`;
   const image = product.image_url || fallbackImage(product.title);
@@ -146,14 +145,18 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function ProductDetailPage({ params }: PageProps) {
-  const { id } = await params;
+  const cookieStore = await cookies();
+  const locale = cookieStore.get("cp_locale")?.value || "id-ID";
+  const currency = cookieStore.get("cp_currency")?.value || "IDR";
 
+  const formatPrice = (value: string | number | null | undefined) =>
+    formatLocalizedPrice(value, locale, currency);
+
+  const { id } = await params;
   const productId = Number(id);
   const productQueryKey = decodeURIComponent(id);
 
-  let productQuery = supabase
-    .from("products")
-    .select(`
+  let productQuery = supabase.from("products").select(`
       id,
       created_at,
       title,
@@ -193,7 +196,9 @@ export default async function ProductDetailPage({ params }: PageProps) {
     ? await Promise.all([
         supabase
           .from("profiles")
-          .select("id,username,seller_name,seller_rating,seller_review_count,seller_status")
+          .select(
+            "id,username,seller_name,seller_rating,seller_review_count,seller_status"
+          )
           .eq("id", product.seller_id)
           .maybeSingle(),
         supabase
@@ -211,12 +216,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
           .eq("seller_id", product.seller_id)
           .eq("status", "active"),
       ])
-    : [
-        { data: null },
-        { data: [] },
-        { data: [] },
-        { data: [] },
-      ];
+    : [{ data: null }, { data: [] }, { data: [] }, { data: [] }];
 
   const sellerAverageRating = Number(sellerProfile?.seller_rating || 0);
   const sellerReviewCount = Number(sellerProfile?.seller_review_count || 0);
@@ -235,7 +235,9 @@ export default async function ProductDetailPage({ params }: PageProps) {
   const gameSlug = product.game_name ? slugify(product.game_name) : "";
   const categorySlug = product.category ? slugify(product.category) : "";
   const gameOffersHref = gameSlug
-    ? `/games/${gameSlug}/offers${categorySlug ? `?category=${categorySlug}` : ""}`
+    ? `/games/${gameSlug}/offers${
+        categorySlug ? `?category=${categorySlug}` : ""
+      }`
     : "";
 
   let relatedProductsQuery = supabase
@@ -260,14 +262,20 @@ export default async function ProductDetailPage({ params }: PageProps) {
     .limit(24);
 
   if (product.game_name) {
-    relatedProductsQuery = relatedProductsQuery.eq("game_name", product.game_name);
+    relatedProductsQuery = relatedProductsQuery.eq(
+      "game_name",
+      product.game_name
+    );
   } else if (product.category) {
     relatedProductsQuery = relatedProductsQuery.eq("category", product.category);
   }
 
-  const { data: relatedProductCandidates } = await relatedProductsQuery.order("created_at", {
-    ascending: false,
-  });
+  const { data: relatedProductCandidates } = await relatedProductsQuery.order(
+    "created_at",
+    {
+      ascending: false,
+    }
+  );
 
   const relatedSellerIds = Array.from(
     new Set(
@@ -277,21 +285,36 @@ export default async function ProductDetailPage({ params }: PageProps) {
     )
   );
 
-  const [{ data: relatedProfiles }, { data: relatedReviews }, { data: relatedOrders }] =
+  const [
+    { data: relatedProfiles },
+    { data: relatedReviews },
+    { data: relatedOrders },
+  ] =
     relatedSellerIds.length > 0
       ? await Promise.all([
           supabase
             .from("profiles")
             .select("id,username,seller_name,seller_rating,seller_review_count")
             .in("id", relatedSellerIds),
-          supabase.from("reviews").select("seller_id,rating").in("seller_id", relatedSellerIds),
-          supabase.from("orders").select("seller_id,status").in("seller_id", relatedSellerIds),
+          supabase
+            .from("reviews")
+            .select("seller_id,rating")
+            .in("seller_id", relatedSellerIds),
+          supabase
+            .from("orders")
+            .select("seller_id,status")
+            .in("seller_id", relatedSellerIds),
         ])
       : [{ data: [] }, { data: [] }, { data: [] }];
 
   const relatedSellerStats = new Map<
     string,
-    { name: string; ratingTotal: number; reviewCount: number; completedOrders: number }
+    {
+      name: string;
+      ratingTotal: number;
+      reviewCount: number;
+      completedOrders: number;
+    }
   >();
 
   for (const sellerId of relatedSellerIds) {
@@ -312,7 +335,8 @@ export default async function ProductDetailPage({ params }: PageProps) {
     current.name = profile.seller_name || profile.username || current.name;
 
     if (profile.seller_rating && profile.seller_review_count) {
-      current.ratingTotal = Number(profile.seller_rating) * Number(profile.seller_review_count);
+      current.ratingTotal =
+        Number(profile.seller_rating) * Number(profile.seller_review_count);
       current.reviewCount = Number(profile.seller_review_count);
     }
   }
@@ -339,7 +363,9 @@ export default async function ProductDetailPage({ params }: PageProps) {
   const basePrice = Math.max(numberPrice(product.price), 1);
   const relatedProducts = (relatedProductCandidates || [])
     .map((item: any) => {
-      const stats = item.seller_id ? relatedSellerStats.get(item.seller_id) : null;
+      const stats = item.seller_id
+        ? relatedSellerStats.get(item.seller_id)
+        : null;
       const sellerRating = stats?.reviewCount
         ? Number((stats.ratingTotal / stats.reviewCount).toFixed(1))
         : null;
@@ -358,7 +384,8 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
       return {
         ...item,
-        seller_display_name: stats?.name || item.seller_name || item.seller || "Verified Seller",
+        seller_display_name:
+          stats?.name || item.seller_name || item.seller || "Verified Seller",
         seller_rating: sellerRating,
         seller_review_count: stats?.reviewCount || 0,
         seller_completed_orders: stats?.completedOrders || 0,
@@ -378,6 +405,8 @@ export default async function ProductDetailPage({ params }: PageProps) {
     "Verified Seller";
   const stock = Number(product.stock ?? 1);
   const productCanonicalPath = `/product/${product.slug || product.id}`;
+  const structuredPrice = Number(convertFromIdr(product.price, currency).toFixed(2));
+
   const productStructuredData = [
     {
       "@context": "https://schema.org",
@@ -430,11 +459,12 @@ export default async function ProductDetailPage({ params }: PageProps) {
       offers: {
         "@type": "Offer",
         url: absoluteUrl(productCanonicalPath),
-        priceCurrency: "IDR",
-        price: numberPrice(product.price),
-        availability: stock > 0
-          ? "https://schema.org/InStock"
-          : "https://schema.org/OutOfStock",
+        priceCurrency: currency,
+        price: structuredPrice,
+        availability:
+          stock > 0
+            ? "https://schema.org/InStock"
+            : "https://schema.org/OutOfStock",
         itemCondition: "https://schema.org/NewCondition",
         seller: {
           "@type": "Organization",
@@ -455,8 +485,11 @@ export default async function ProductDetailPage({ params }: PageProps) {
         category_slug={categorySlug || null}
         category_name={product.category || null}
       />
+
       <RecentlyViewedTracker productId={product.id} />
+
       <JsonLd data={productStructuredData} />
+
       <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_35%)]">
         <div className="mx-auto max-w-7xl px-4 py-10">
           <MarketplaceBreadcrumbs
@@ -521,6 +554,10 @@ export default async function ProductDetailPage({ params }: PageProps) {
                   <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
                     Fast Delivery
                   </span>
+
+                  <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
+                    {currency}
+                  </span>
                 </div>
               </div>
             </div>
@@ -543,7 +580,9 @@ export default async function ProductDetailPage({ params }: PageProps) {
                   </Link>
 
                   <Link
-                    href={`/messages?seller=${product.seller_id || ""}&product=${product.id}`}
+                    href={`/messages?seller=${product.seller_id || ""}&product=${
+                      product.id
+                    }`}
                     className="flex w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-black/30 px-5 py-4 font-black text-white transition hover:border-cyan-400"
                   >
                     <FaComments />
@@ -580,13 +619,17 @@ export default async function ProductDetailPage({ params }: PageProps) {
                     <p className="mt-1 flex items-center gap-2 text-sm text-yellow-300">
                       <FaStar />
                       {sellerAverageRating > 0
-                        ? `${sellerAverageRating.toFixed(1)} rating • ${sellerReviewCount} reviews`
+                        ? `${sellerAverageRating.toFixed(
+                            1
+                          )} rating • ${sellerReviewCount} reviews`
                         : "New seller"}
                     </p>
                   </div>
                 </div>
 
-                <div className={`mt-5 rounded-2xl border p-4 ${sellerReputation.colorClass}`}>
+                <div
+                  className={`mt-5 rounded-2xl border p-4 ${sellerReputation.colorClass}`}
+                >
                   <p className="text-xs font-black uppercase tracking-[0.2em] opacity-80">
                     Seller Reputation
                   </p>
@@ -653,9 +696,12 @@ export default async function ProductDetailPage({ params }: PageProps) {
               <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-2xl font-black">Smart Related Offers</h2>
+                    <h2 className="text-2xl font-black">
+                      Smart Related Offers
+                    </h2>
                     <p className="mt-1 text-sm text-slate-400">
-                      Ranked by same game, category match, similar price, stock, and seller reputation.
+                      Ranked by same game, category match, similar price, stock,
+                      and seller reputation.
                     </p>
                   </div>
 
@@ -672,7 +718,8 @@ export default async function ProductDetailPage({ params }: PageProps) {
                 <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {relatedProducts.map((item) => {
                     const itemHref = `/product/${item.slug || item.id}`;
-                    const itemImage = item.image_url || fallbackImage(item.title);
+                    const itemImage =
+                      item.image_url || fallbackImage(item.title);
 
                     return (
                       <Link
@@ -715,12 +762,15 @@ export default async function ProductDetailPage({ params }: PageProps) {
                             </span>
                             <span className="inline-flex items-center gap-2">
                               <FaStar className="text-yellow-300" />
-                              {item.seller_rating ? `${item.seller_rating} rating` : "New seller"}
+                              {item.seller_rating
+                                ? `${item.seller_rating} rating`
+                                : "New seller"}
                               {Number(item.seller_completed_orders || 0) > 0
                                 ? ` • ${item.seller_completed_orders} completed`
                                 : ""}
                             </span>
-                            {slugify(String(item.category || "")) === categorySlug ? (
+                            {slugify(String(item.category || "")) ===
+                            categorySlug ? (
                               <span className="inline-flex items-center gap-2 text-emerald-300">
                                 <FaAward /> Same category match
                               </span>
@@ -804,6 +854,11 @@ export default async function ProductDetailPage({ params }: PageProps) {
                 <div className="flex justify-between border-b border-white/10 pb-3">
                   <span className="text-slate-400">Status</span>
                   <span className="font-bold text-emerald-300">Active</span>
+                </div>
+
+                <div className="flex justify-between border-b border-white/10 pb-3">
+                  <span className="text-slate-400">Currency</span>
+                  <span className="font-bold text-cyan-300">{currency}</span>
                 </div>
 
                 <div className="flex justify-between">

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 import { createNotification } from "@/lib/createNotification";
 
@@ -47,13 +48,9 @@ function normalizeStatus(status: string | null) {
   return status || "Pending Payment";
 }
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 export default function ReviewPageV1NotificationSeller() {
+  const { formatPrice, currency } = useCurrency();
   const params = useParams();
   const orderId = String(params.id || "");
 

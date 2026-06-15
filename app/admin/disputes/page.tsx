@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -69,11 +70,6 @@ function normalizeOrderStatus(status: string | null) {
   return status || "Pending Payment";
 }
 
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
-}
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "-";
@@ -133,6 +129,7 @@ function readableDisputeStatus(status: string) {
 }
 
 export default function AdminDisputesV2Page() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [disputes, setDisputes] = useState<Dispute[]>([]);

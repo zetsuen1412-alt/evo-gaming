@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Product = {
@@ -38,6 +39,7 @@ function formatPrice(value: string | number | null) {
 }
 
 export default function WishlistPageV1() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [wishlistRows, setWishlistRows] = useState<WishlistRow[]>([]);
   const [loading, setLoading] = useState(true);

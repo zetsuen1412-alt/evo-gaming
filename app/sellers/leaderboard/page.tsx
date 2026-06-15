@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { calculateSellerReputation } from "@/lib/sellerReputation";
+import { supabase } from "@/lib/supabase";
 
 type SellerProfile = {
   id: string;
@@ -55,13 +56,8 @@ function normalizeStatus(status: string | null) {
   if (status === "Diproses") return "Processing";
   if (status === "Selesai") return "Completed";
   if (status === "Dibatalkan") return "Cancelled";
-  return status || "Pending Payment";
-}
 
-function formatPrice(value: string | number | null | undefined) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
+  return status || "Pending Payment";
 }
 
 function renderStars(rating: number) {
@@ -83,19 +79,29 @@ function getRankBadge(index: number) {
   if (index === 0) return "🏆 #1";
   if (index === 1) return "🥈 #2";
   if (index === 2) return "🥉 #3";
+
   return `#${index + 1}`;
 }
 
 function getRankClass(index: number) {
-  if (index === 0)
+  if (index === 0) {
     return "border-yellow-400/30 bg-yellow-400/10 text-yellow-300";
-  if (index === 1) return "border-gray-300/30 bg-gray-300/10 text-gray-200";
-  if (index === 2)
+  }
+
+  if (index === 1) {
+    return "border-gray-300/30 bg-gray-300/10 text-gray-200";
+  }
+
+  if (index === 2) {
     return "border-orange-400/30 bg-orange-400/10 text-orange-300";
+  }
+
   return "border-cyan-400/20 bg-cyan-400/10 text-cyan-300";
 }
 
 export default function SellerLeaderboardPage() {
+  const { formatPrice, currency } = useCurrency();
+
   const [sellers, setSellers] = useState<LeaderboardSeller[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortMode, setSortMode] = useState<SortMode>("reputation");
@@ -182,7 +188,7 @@ export default function SellerLeaderboardPage() {
         supabase
           .from("profiles")
           .select(
-            "id,email,username,seller_name,seller_status,avatar_url,bio,seller_rating,seller_review_count,created_at",
+            "id,email,username,seller_name,seller_status,avatar_url,bio,seller_rating,seller_review_count,created_at"
           )
           .eq("seller_status", "approved"),
         supabase
@@ -217,7 +223,7 @@ export default function SellerLeaderboardPage() {
 
       const leaderboard = profiles.map((profile) => {
         const sellerReviews = reviews.filter(
-          (review) => review.seller_id === profile.id,
+          (review) => review.seller_id === profile.id
         );
 
         const reviewCount =
@@ -227,19 +233,19 @@ export default function SellerLeaderboardPage() {
           sellerReviews.length > 0
             ? sellerReviews.reduce(
                 (sum, review) => sum + Number(review.rating || 0),
-                0,
+                0
               ) / sellerReviews.length
             : Number(profile.seller_rating || 0);
 
         const completedOrders = orders.filter(
           (order) =>
             order.seller_id === profile.id &&
-            normalizeStatus(order.status) === "Completed",
+            normalizeStatus(order.status) === "Completed"
         );
 
         const totalRevenue = completedOrders.reduce(
           (sum, order) => sum + Number(order.total_price || order.price || 0),
-          0,
+          0
         );
 
         const reputation = calculateSellerReputation({
@@ -251,15 +257,13 @@ export default function SellerLeaderboardPage() {
           sellerStatus: profile.seller_status,
         });
 
-        const score = reputation.score;
-
         return {
           profile,
           averageRating,
           reviewCount,
           completedOrders: completedOrders.length,
           totalRevenue,
-          score,
+          score: reputation.score,
         };
       });
 
@@ -269,8 +273,8 @@ export default function SellerLeaderboardPage() {
             b.score - a.score ||
             b.averageRating - a.averageRating ||
             b.completedOrders - a.completedOrders ||
-            b.reviewCount - a.reviewCount,
-        ),
+            b.reviewCount - a.reviewCount
+        )
       );
 
       setLoading(false);
@@ -296,9 +300,15 @@ export default function SellerLeaderboardPage() {
 
         <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
-            <p className="mb-4 inline-flex rounded-full border border-yellow-400/30 bg-yellow-400/10 px-4 py-2 text-sm font-black text-yellow-300">
-              Seller Leaderboard
-            </p>
+            <div className="mb-4 flex flex-wrap gap-3">
+              <p className="inline-flex rounded-full border border-yellow-400/30 bg-yellow-400/10 px-4 py-2 text-sm font-black text-yellow-300">
+                Seller Leaderboard
+              </p>
+
+              <p className="inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+                Display: {currency}
+              </p>
+            </div>
 
             <h1 className="text-5xl font-black md:text-7xl">Top Sellers</h1>
 
@@ -357,7 +367,7 @@ export default function SellerLeaderboardPage() {
           </div>
         </div>
 
-        {topSeller && (
+        {topSeller ? (
           <div className="mb-8 rounded-3xl border border-yellow-400/30 bg-yellow-400/10 p-7 shadow-2xl shadow-black/30">
             <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
               <div className="flex flex-col gap-5 md:flex-row md:items-center">
@@ -392,44 +402,22 @@ export default function SellerLeaderboardPage() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-5 lg:w-[640px]">
-                <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-center">
-                  <p className="text-xl font-black text-yellow-300">
-                    {Math.round(topSeller.score)}
-                  </p>
-                  <p className="text-xs text-gray-400">Score</p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-center">
-                  <p className="text-xl font-black text-yellow-300">
-                    {topSeller.averageRating.toFixed(1)}
-                  </p>
-                  <p className="text-xs text-gray-400">Rating</p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-center">
-                  <p className="text-xl font-black text-cyan-300">
-                    {topSeller.reviewCount}
-                  </p>
-                  <p className="text-xs text-gray-400">Reviews</p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-center">
-                  <p className="text-xl font-black text-green-300">
-                    {topSeller.completedOrders}
-                  </p>
-                  <p className="text-xs text-gray-400">Orders</p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-center">
-                  <p className="text-lg font-black text-purple-300">
-                    {formatPrice(topSeller.totalRevenue)}
-                  </p>
-                  <p className="text-xs text-gray-400">Revenue</p>
-                </div>
+                <StatBox label="Score" value={Math.round(topSeller.score)} />
+                <StatBox
+                  label="Rating"
+                  value={topSeller.averageRating.toFixed(1)}
+                />
+                <StatBox label="Reviews" value={topSeller.reviewCount} />
+                <StatBox label="Orders" value={topSeller.completedOrders} />
+                <StatBox
+                  label="Revenue"
+                  value={formatPrice(topSeller.totalRevenue)}
+                  small
+                />
               </div>
             </div>
           </div>
-        )}
+        ) : null}
 
         <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
           <input
@@ -465,6 +453,7 @@ export default function SellerLeaderboardPage() {
         {filteredSellers.length === 0 ? (
           <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-12 text-center">
             <h2 className="text-3xl font-black">No sellers found.</h2>
+
             <p className="mt-3 text-gray-400">
               Approved sellers with marketplace activity will appear here.
             </p>
@@ -498,7 +487,7 @@ export default function SellerLeaderboardPage() {
 
                       <span
                         className={`absolute -bottom-2 -right-3 rounded-full border px-3 py-1 text-xs font-black ${getRankClass(
-                          index,
+                          index
                         )}`}
                       >
                         {getRankBadge(index)}
@@ -525,40 +514,18 @@ export default function SellerLeaderboardPage() {
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-5">
-                    <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-center">
-                      <p className="text-2xl font-black text-yellow-300">
-                        {Math.round(item.score)}
-                      </p>
-                      <p className="text-xs text-gray-400">Score</p>
-                    </div>
-
-                    <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-center">
-                      <p className="text-2xl font-black text-yellow-300">
-                        {item.averageRating.toFixed(1)}
-                      </p>
-                      <p className="text-xs text-gray-400">Rating</p>
-                    </div>
-
-                    <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-center">
-                      <p className="text-2xl font-black text-cyan-300">
-                        {item.reviewCount}
-                      </p>
-                      <p className="text-xs text-gray-400">Reviews</p>
-                    </div>
-
-                    <div className="rounded-2xl border border-green-400/20 bg-green-400/10 p-4 text-center">
-                      <p className="text-2xl font-black text-green-300">
-                        {item.completedOrders}
-                      </p>
-                      <p className="text-xs text-gray-400">Orders</p>
-                    </div>
-
-                    <div className="rounded-2xl border border-purple-400/20 bg-purple-400/10 p-4 text-center">
-                      <p className="text-lg font-black text-purple-300">
-                        {formatPrice(item.totalRevenue)}
-                      </p>
-                      <p className="text-xs text-gray-400">Revenue</p>
-                    </div>
+                    <StatBox label="Score" value={Math.round(item.score)} />
+                    <StatBox
+                      label="Rating"
+                      value={item.averageRating.toFixed(1)}
+                    />
+                    <StatBox label="Reviews" value={item.reviewCount} />
+                    <StatBox label="Orders" value={item.completedOrders} />
+                    <StatBox
+                      label="Revenue"
+                      value={formatPrice(item.totalRevenue)}
+                      small
+                    />
                   </div>
                 </div>
               </Link>
@@ -567,5 +534,29 @@ export default function SellerLeaderboardPage() {
         )}
       </section>
     </main>
+  );
+}
+
+function StatBox({
+  label,
+  value,
+  small = false,
+}: {
+  label: string;
+  value: string | number;
+  small?: boolean;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-center">
+      <p
+        className={`font-black text-yellow-300 ${
+          small ? "text-lg" : "text-2xl"
+        }`}
+      >
+        {value}
+      </p>
+
+      <p className="text-xs text-gray-400">{label}</p>
+    </div>
   );
 }

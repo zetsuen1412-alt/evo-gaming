@@ -14,6 +14,7 @@ import {
   FaStore,
   FaWallet,
 } from "react-icons/fa";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { trackMarketplaceEvent } from "@/lib/marketplace-events-client";
 import { supabase } from "@/lib/supabase";
 
@@ -58,13 +59,6 @@ function numberPrice(value: string | number | null | undefined) {
   return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
-}
 
 function fallbackImage(title: string) {
   return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
@@ -91,6 +85,7 @@ function getOrderTotal(order: Order | null, product: Product | null) {
 export default function PaymentPage() {
   const params = useParams();
   const router = useRouter();
+  const { formatPrice, currency } = useCurrency();
 
   const orderId = String(params?.id || "");
 
@@ -254,7 +249,14 @@ export default function PaymentPage() {
             Back to Checkout
           </Link>
 
-          <h1 className="mt-8 text-5xl font-black">Payment</h1>
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            <h1 className="text-5xl font-black">Payment</h1>
+
+            <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+              {currency}
+            </span>
+          </div>
+
           <p className="mt-3 text-slate-300">
             Complete your payment securely on ComePlayers.
           </p>
@@ -412,11 +414,18 @@ export default function PaymentPage() {
                 <span className="font-bold uppercase">{method}</span>
               </div>
 
-              <div className="flex justify-between text-lg">
+              <div className="flex items-start justify-between gap-4 text-lg">
                 <span className="font-black">Total Pay</span>
-                <span className="font-black text-cyan-300">
-                  {formatPrice(total)}
-                </span>
+
+                <div className="text-right">
+                  <p className="font-black text-cyan-300">
+                    {formatPrice(total)}
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-500">
+                    Currency: {currency}
+                  </p>
+                </div>
               </div>
             </div>
 

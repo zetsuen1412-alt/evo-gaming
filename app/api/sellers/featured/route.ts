@@ -11,7 +11,6 @@ type ProfileRow = {
   bio: string | null;
   seller_rating?: number | string | null;
   seller_review_count?: number | string | null;
-  created_at?: string | null;
 };
 
 type ProductRow = {
@@ -19,9 +18,7 @@ type ProductRow = {
   seller_id: string | null;
   seller_name: string | null;
   status: string | null;
-  game_slug?: string | null;
-  game_name?: string | null;
-  game?: string | null;
+  game_name: string | null;
 };
 
 type ReviewRow = {
@@ -53,11 +50,25 @@ function normalizeStatus(status: string | null | undefined) {
 
 function isCompletedStatus(status: string | null | undefined) {
   const normalizedStatus = normalizeStatus(status);
-  return ["completed", "complete", "selesai", "done", "paid"].includes(normalizedStatus);
+
+  return [
+    "completed",
+    "complete",
+    "selesai",
+    "done",
+    "paid",
+    "delivered",
+  ].includes(normalizedStatus);
 }
 
 function sellerDisplayName(profile: ProfileRow, fallback?: string | null) {
-  return profile.seller_name || profile.username || fallback || profile.email || "ComePlayers Seller";
+  return (
+    profile.seller_name ||
+    profile.username ||
+    fallback ||
+    profile.email ||
+    "ComePlayers Seller"
+  );
 }
 
 function calculateSellerScore(input: {
@@ -78,63 +89,96 @@ function calculateSellerScore(input: {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const gameSlug = searchParams.get("game")?.trim() || "";
-  const limit = Math.min(Math.max(Number(searchParams.get("limit") || 8), 1), 24);
 
-  const productQuery = supabase
+  const gameSlug = searchParams.get("game")?.trim() || "";
+  const limit = Math.min(
+    Math.max(Number(searchParams.get("limit") || 8), 1),
+    24
+  );
+
+  let productQuery = supabase
     .from("products")
-    .select("id,seller_id,seller_name,status,game_slug,game_name,game")
+    .select("id,seller_id,seller_name,status,game_name")
     .eq("status", "active")
     .not("seller_id", "is", null)
     .range(0, 9999);
 
   if (gameSlug) {
-    productQuery.or(`game_slug.eq.${gameSlug},game.eq.${gameSlug},game_name.ilike.*${gameSlug.replace(/-/g, "%")}*`);
+    const gameSearch = gameSlug.replace(/-/g, " ");
+    productQuery = productQuery.ilike("game_name", `%${gameSearch}%`);
   }
 
   const productsResult = await productQuery;
 
   if (productsResult.error) {
-    return NextResponse.json({ error: productsResult.error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: productsResult.error.message },
+      { status: 500 }
+    );
   }
 
   const products = (productsResult.data || []) as ProductRow[];
+
   const sellerIds = Array.from(
-    new Set(products.map((product) => product.seller_id).filter((id): id is string => Boolean(id)))
+    new Set(
+      products
+        .map((product) => product.seller_id)
+        .filter((id): id is string => Boolean(id))
+    )
   );
 
   if (sellerIds.length === 0) {
     return NextResponse.json({ sellers: [] });
   }
 
-  const [profilesResult, reviewsResult, ordersResult, eventsResult] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("id,email,username,seller_name,seller_status,avatar_url,bio,seller_rating,seller_review_count,created_at")
-      .in("id", sellerIds),
-    supabase.from("reviews").select("seller_id,rating").in("seller_id", sellerIds),
-    supabase.from("orders").select("seller_id,status").in("seller_id", sellerIds).range(0, 9999),
-    supabase
-      .from("marketplace_events")
-      .select("seller_id,event_type")
-      .in("seller_id", sellerIds)
-      .in("event_type", ["product_view", "checkout_start"])
-      .range(0, 9999),
-  ]);
+  const profilesResult = await supabase
+    .from("profiles")
+    .select(
+      "id,email,username,seller_name,seller_status,avatar_url,bio,seller_rating,seller_review_count"
+    )
+    .in("id", sellerIds);
 
   if (profilesResult.error) {
-    return NextResponse.json({ error: profilesResult.error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: profilesResult.error.message },
+      { status: 500 }
+    );
   }
+
+  let reviewsResult = await supabase
+    .from("seller_reviews")
+    .select("seller_id,rating")
+    .in("seller_id", sellerIds);
 
   if (reviewsResult.error) {
-    return NextResponse.json({ error: reviewsResult.error.message }, { status: 500 });
+    reviewsResult = await supabase
+      .from("reviews")
+      .select("seller_id,rating")
+      .in("seller_id", sellerIds);
   }
 
+  const ordersResult = await supabase
+    .from("orders")
+    .select("seller_id,status")
+    .in("seller_id", sellerIds)
+    .range(0, 9999);
+
+  const eventsResult = await supabase
+    .from("marketplace_events")
+    .select("seller_id,event_type")
+    .in("seller_id", sellerIds)
+    .in("event_type", ["product_view", "checkout_start"])
+    .range(0, 9999);
+
   if (ordersResult.error) {
-    return NextResponse.json({ error: ordersResult.error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: ordersResult.error.message },
+      { status: 500 }
+    );
   }
 
   const profilesById = new Map<string, ProfileRow>();
+
   for (const profile of (profilesResult.data || []) as ProfileRow[]) {
     profilesById.set(profile.id, profile);
   }
@@ -154,6 +198,7 @@ export async function GET(request: NextRequest) {
 
   function ensureStats(sellerId: string) {
     const existing = statsBySellerId.get(sellerId);
+
     if (existing) return existing;
 
     const created = {
@@ -167,18 +212,22 @@ export async function GET(request: NextRequest) {
     };
 
     statsBySellerId.set(sellerId, created);
+
     return created;
   }
 
   for (const product of products) {
     if (!product.seller_id) continue;
+
     const stats = ensureStats(product.seller_id);
+
     stats.activeProducts += 1;
     stats.fallbackName = stats.fallbackName || product.seller_name;
   }
 
   for (const profile of profilesById.values()) {
     const stats = ensureStats(profile.id);
+
     const profileRating = numberValue(profile.seller_rating);
     const profileReviewCount = numberValue(profile.seller_review_count);
 
@@ -188,22 +237,29 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  for (const review of (reviewsResult.data || []) as ReviewRow[]) {
-    if (!review.seller_id) continue;
-    const stats = ensureStats(review.seller_id);
-    stats.ratingTotal += numberValue(review.rating);
-    stats.reviewCount += 1;
+  if (!reviewsResult.error) {
+    for (const review of (reviewsResult.data || []) as ReviewRow[]) {
+      if (!review.seller_id) continue;
+
+      const stats = ensureStats(review.seller_id);
+
+      stats.ratingTotal += numberValue(review.rating);
+      stats.reviewCount += 1;
+    }
   }
 
   for (const order of (ordersResult.data || []) as OrderRow[]) {
     if (!order.seller_id || !isCompletedStatus(order.status)) continue;
+
     const stats = ensureStats(order.seller_id);
+
     stats.completedOrders += 1;
   }
 
   if (!eventsResult.error) {
     for (const event of (eventsResult.data || []) as MarketplaceEventRow[]) {
       if (!event.seller_id) continue;
+
       const stats = ensureStats(event.seller_id);
 
       if (event.event_type === "product_view") stats.productViews += 1;
@@ -226,9 +282,11 @@ export async function GET(request: NextRequest) {
       const averageRating = stats.reviewCount
         ? Number((stats.ratingTotal / stats.reviewCount).toFixed(1))
         : 0;
+
       const conversionRate = stats.productViews
         ? Number(((stats.checkoutStarts / stats.productViews) * 100).toFixed(1))
         : 0;
+
       const score = calculateSellerScore({
         averageRating,
         reviewCount: stats.reviewCount,
@@ -251,7 +309,8 @@ export async function GET(request: NextRequest) {
         checkout_starts: stats.checkoutStarts,
         conversion_rate: conversionRate,
         featured_score: score,
-        is_featured: score >= 50 || stats.completedOrders >= 5 || averageRating >= 4.5,
+        is_featured:
+          score >= 50 || stats.completedOrders >= 5 || averageRating >= 4.5,
       };
     })
     .filter((seller) => seller.active_products > 0)

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Order = {
@@ -63,15 +64,6 @@ function getStatusClass(status: string | null) {
   return "border-cyan-400/20 bg-cyan-400/10 text-cyan-300";
 }
 
-function formatPrice(value: string | number | null) {
-  const numberValue = Number(value || 0);
-
-  if (!Number.isFinite(numberValue)) {
-    return "Rp 0";
-  }
-
-  return `Rp ${numberValue.toLocaleString("id-ID")}`;
-}
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "-";
@@ -86,6 +78,7 @@ function formatDate(value: string | null | undefined) {
 }
 
 export default function BuyerOrdersPage() {
+  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);

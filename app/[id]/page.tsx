@@ -1,8 +1,10 @@
 "use client";
 
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 export default function ProductPage() {
+  const { formatPrice, currency } = useCurrency();
   async function handleBuy() {
     const { data } = await supabase.auth.getUser();
 
@@ -16,7 +18,7 @@ export default function ProductPage() {
       .insert({
         product: "Diamond Mobile Legends",
         buyer: data.user.email,
-        price: "Rp 50.000",
+        price: "{currency} 50.000",
         status: "Menunggu Pembayaran",
       });
 
@@ -44,7 +46,7 @@ export default function ProductPage() {
         </p>
 
         <p className="mt-8 text-4xl font-black text-cyan-400">
-          Rp 50.000
+          {currency} 50.000
         </p>
 
         <button

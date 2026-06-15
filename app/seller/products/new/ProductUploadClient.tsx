@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -68,10 +69,12 @@ function numberPrice(value: string | number | null | undefined) {
 
 function formatRupiah(value: string | number | null | undefined) {
   const amount = numberPrice(value);
+
   return `Rp ${amount.toLocaleString("id-ID")}`;
 }
 
 export default function ProductUploadClient() {
+  const { currency } = useCurrency();
   const searchParams = useSearchParams();
   const params = useParams();
 
@@ -80,12 +83,15 @@ export default function ProductUploadClient() {
 
   const rawEditingId = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const editingId = rawEditingId ? Number(rawEditingId) : null;
-  const isEditMode = Number.isFinite(editingId) && Number(editingId) > 0;
+  const isEditMode =
+    Number.isFinite(editingId) &&
+    Number(editingId) > 0;
 
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [existingProduct, setExistingProduct] =
-    useState<ExistingProduct | null>(null);
+  const [existingProduct, setExistingProduct] = useState<ExistingProduct | null>(
+    null
+  );
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [games, setGames] = useState<GameMaster[]>([]);
@@ -102,9 +108,6 @@ export default function ProductUploadClient() {
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [selectedGameId, setSelectedGameId] = useState("");
 
-  const [successModal, setSuccessModal] = useState(false);
-  const [createdProductLink, setCreatedProductLink] = useState("");
-
   const selectedCategory = categories.find(
     (category) => String(category.id) === selectedCategoryId
   );
@@ -112,7 +115,9 @@ export default function ProductUploadClient() {
   const selectedGame = games.find((game) => String(game.id) === selectedGameId);
 
   const productSlug = useMemo(() => {
-    if (isEditMode && existingProduct?.slug) return existingProduct.slug;
+    if (isEditMode && existingProduct?.slug) {
+      return existingProduct.slug;
+    }
 
     const baseSlug = createSlug(title);
     const gameSlug = selectedGame?.slug || "game";
@@ -120,7 +125,7 @@ export default function ProductUploadClient() {
     if (!baseSlug) return "";
 
     return `${gameSlug}-${baseSlug}`;
-  }, [existingProduct?.slug, isEditMode, selectedGame?.slug, title]);
+  }, [existingProduct?.slug, isEditMode, selectedGame, title]);
 
   useEffect(() => {
     initializePage();
@@ -274,9 +279,7 @@ export default function ProductUploadClient() {
           );
         });
 
-        setSelectedCategoryId(
-          String((requestedCategory || activeCategories[0]).id)
-        );
+        setSelectedCategoryId(String((requestedCategory || activeCategories[0]).id));
       }
 
       if (activeGames.length > 0) {
@@ -309,7 +312,9 @@ export default function ProductUploadClient() {
     const shouldNotifyPriceDrop = oldPrice > 0 && nextPrice < oldPrice;
     const shouldNotifyBackInStock = oldStock <= 0 && nextStock > 0;
 
-    if (!shouldNotifyPriceDrop && !shouldNotifyBackInStock) return;
+    if (!shouldNotifyPriceDrop && !shouldNotifyBackInStock) {
+      return;
+    }
 
     const { data: wishlistUsers, error } = await supabase
       .from("wishlists")
@@ -367,10 +372,7 @@ export default function ProductUploadClient() {
         .insert(notifications);
 
       if (notificationError) {
-        console.warn(
-          "Wishlist notification insert failed:",
-          notificationError.message
-        );
+        console.warn("Wishlist notification insert failed:", notificationError.message);
       }
     }
   }
@@ -452,8 +454,7 @@ export default function ProductUploadClient() {
           game_category_id: selectedGame.id,
           seller_name: sellerDisplayName,
           image_url: imageUrl.trim() || selectedGame.image_url || null,
-          status:
-            parsedStock > 0 ? "active" : existingProduct.status || "active",
+          status: parsedStock > 0 ? "active" : existingProduct.status || "active",
         })
         .eq("id", editingId)
         .eq("seller_id", profile.id)
@@ -476,9 +477,8 @@ export default function ProductUploadClient() {
         );
       }
 
-      setCreatedProductLink("/seller/products");
-      setSuccessModal(true);
-      setSubmitting(false);
+      alert("Product updated successfully.");
+      window.location.href = "/seller/products";
       return;
     }
 
@@ -489,15 +489,20 @@ export default function ProductUploadClient() {
         description: description.trim(),
         price: parsedPrice,
         stock: parsedStock,
+
         category: selectedCategory.name,
         category_id: selectedCategory.id,
+
         game_name: selectedGame.name,
         game_category_id: selectedGame.id,
+
         seller: sellerDisplayName,
         seller_id: profile.id,
         seller_name: sellerDisplayName,
+
         image_url: imageUrl.trim() || selectedGame.image_url || null,
         slug: productSlug || createSlug(title),
+
         status: "active",
       })
       .select("id")
@@ -527,140 +532,29 @@ export default function ProductUploadClient() {
       console.error("Followed seller notification error:", notificationError);
     }
 
-    setCreatedProductLink(
-      `/games/${selectedGame.slug}/offers?category=${encodeURIComponent(
-        selectedCategory.name
-      )}`
-    );
-    setSuccessModal(true);
-    setSubmitting(false);
+    alert("Product created successfully.");
+    window.location.href = `/games/${selectedGame.slug}/offers?category=${encodeURIComponent(selectedCategory.name)}`;
   }
 
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <div className="rounded-3xl border border-cyan-400/20 bg-white/[0.04] px-8 py-6 shadow-2xl shadow-cyan-500/10">
-          <p className="text-lg font-black text-cyan-300">
-            {isEditMode
-              ? "Loading product editor..."
-              : "Loading product creator..."}
-          </p>
-        </div>
+        <p className="text-xl font-black text-cyan-300">
+          {isEditMode ? "Loading product editor..." : "Loading product creator..."}
+        </p>
       </main>
     );
   }
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
-      {successModal ? (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/75 px-5 backdrop-blur-md">
-          <div className="w-full max-w-lg overflow-hidden rounded-[2rem] border border-cyan-400/20 bg-[#07111f] shadow-2xl shadow-cyan-500/20">
-            <div className="relative px-8 pt-8">
-              <div className="absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_top,rgba(34,211,238,.25),transparent_65%)]" />
-
-              <div className="relative mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-400/15 text-4xl shadow-lg shadow-emerald-500/20">
-                ✓
-              </div>
-
-              <h2 className="relative mt-6 text-center text-3xl font-black">
-                {isEditMode ? "Product Updated" : "Product Created"}
-              </h2>
-
-              <p className="relative mt-3 text-center text-sm leading-6 text-slate-400">
-                {isEditMode
-                  ? "Your product listing has been updated successfully."
-                  : "Your product has been published successfully and is now visible in the marketplace."}
-              </p>
-            </div>
-
-            <div className="px-8 py-6">
-              <div className="rounded-3xl border border-white/10 bg-black/25 p-5">
-                <div className="flex items-start justify-between gap-5 border-b border-white/10 pb-4">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">
-                      Product
-                    </p>
-                    <p className="mt-1 font-black text-white">
-                      {title || "Product Listing"}
-                    </p>
-                  </div>
-
-                  <div className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-black text-cyan-300">
-                    Active
-                  </div>
-                </div>
-
-                <div className="mt-4 grid gap-3 text-sm">
-                  <div className="flex justify-between gap-4">
-                    <span className="text-slate-400">Game</span>
-                    <span className="text-right font-bold text-white">
-                      {selectedGame?.name || "-"}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-slate-400">Category</span>
-                    <span className="text-right font-bold text-white">
-                      {selectedCategory?.name || "-"}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-slate-400">Price</span>
-                    <span className="font-black text-cyan-300">
-                      {formatRupiah(price)}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between gap-4">
-                    <span className="text-slate-400">Stock</span>
-                    <span className="font-black text-emerald-300">
-                      {stock || "0"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    window.location.href = createdProductLink || "/seller/products";
-                  }}
-                  className="rounded-2xl bg-cyan-400 py-4 font-black text-black transition hover:bg-cyan-300"
-                >
-                  {isEditMode ? "Back to Products" : "View Listing"}
-                </button>
-
-                {!isEditMode ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTitle("");
-                      setPrice("");
-                      setStock("1");
-                      setDescription("");
-                      setImageUrl("");
-                      setSuccessModal(false);
-                    }}
-                    className="rounded-2xl border border-white/10 bg-white/[0.03] py-4 font-black text-white transition hover:bg-white hover:text-black"
-                  >
-                    Create Another Product
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <section className="relative overflow-hidden border-b border-white/10 px-6 py-12 md:px-8">
+      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
 
-        <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
+        <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              {isEditMode ? "Product Editor" : "Product Upload"}
+              {isEditMode ? "Product Edit V1" : "Product Upload V3"}
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">
@@ -670,7 +564,7 @@ export default function ProductUploadClient() {
             <p className="mt-5 max-w-2xl text-gray-300">
               {isEditMode
                 ? "Update product details, stock, price, and marketplace placement."
-                : "Create a clean, trusted, and ready-to-sell marketplace listing."}
+                : "Select a marketplace category and any active game from the unified ComePlayers Game Master catalog."}
             </p>
           </div>
 
@@ -683,32 +577,19 @@ export default function ProductUploadClient() {
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-8 px-6 py-10 md:px-8 lg:grid-cols-[1fr_420px]">
+      <section className="grid gap-8 px-8 py-10 lg:grid-cols-[1fr_420px]">
         <form
           onSubmit={submitProduct}
           className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30"
         >
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h2 className="text-3xl font-black">Product Information</h2>
-              <p className="mt-2 text-sm text-slate-400">
-                Fill in product details clearly to increase buyer trust.
-              </p>
-            </div>
-
-            <div className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-4 py-2 text-sm font-black text-emerald-300">
-              Public Listing
-            </div>
-          </div>
+          <h2 className="text-3xl font-black">Product Information</h2>
 
           {isEditMode ? (
             <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
-              <h3 className="font-black text-cyan-300">
-                Wishlist Alerts Active
-              </h3>
+              <h3 className="font-black text-cyan-300">Wishlist Alerts Active</h3>
               <p className="mt-2 text-sm text-gray-300">
-                If you lower the price or restock this product, buyers who saved
-                it to their wishlist will receive a notification automatically.
+                If you lower the price or restock this product, buyers who saved it
+                to their wishlist will receive a notification automatically.
               </p>
             </div>
           ) : null}
@@ -766,7 +647,7 @@ export default function ProductUploadClient() {
               <input
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder="Example: Premium Account / Top Up / Rare Item"
+                placeholder="Example: 1000 Gold / Premium Account / Top Up"
                 className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
               />
             </div>
@@ -828,48 +709,34 @@ export default function ProductUploadClient() {
             />
           </div>
 
-          <div className="mt-7 rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-5">
-            <h3 className="font-black text-cyan-300">
-              Marketplace Placement
-            </h3>
+          <div className="mt-7 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-5">
+            <h3 className="font-black text-yellow-300">Listing Notice</h3>
 
-            <div className="mt-4 grid gap-3 text-sm md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <p className="text-slate-500">Category</p>
-                <p className="mt-1 font-black text-white">
-                  {selectedCategory?.name || "Category"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <p className="text-slate-500">Game</p>
-                <p className="mt-1 font-black text-white">
-                  {selectedGame?.name || "Game"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <p className="text-slate-500">Visibility</p>
-                <p className="mt-1 font-black text-emerald-300">Public</p>
-              </div>
-            </div>
+            <p className="mt-3 text-sm text-gray-300">
+              This product will be listed under{" "}
+              <span className="font-black text-cyan-300">
+                {selectedCategory?.name || "Category"}
+              </span>{" "}
+              and{" "}
+              <span className="font-black text-cyan-300">
+                {selectedGame?.name || "Game"}
+              </span>
+              .
+            </p>
           </div>
 
           <button
             type="submit"
             disabled={submitting || games.length === 0}
-            className="mt-8 flex w-full items-center justify-center gap-3 rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-8 w-full rounded-2xl bg-cyan-400 py-4 text-lg font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {submitting ? (
-              <>
-                <span className="h-5 w-5 animate-spin rounded-full border-2 border-black/30 border-t-black" />
-                {isEditMode ? "Saving Product..." : "Publishing Product..."}
-              </>
-            ) : isEditMode ? (
-              "Save Product"
-            ) : (
-              "Create Product"
-            )}
+            {submitting
+              ? isEditMode
+                ? "Saving Product..."
+                : "Creating Product..."
+              : isEditMode
+              ? "Save Product"
+              : "Create Product"}
           </button>
         </form>
 
@@ -877,7 +744,7 @@ export default function ProductUploadClient() {
           <h2 className="text-3xl font-black">Preview</h2>
 
           <div className="mt-7 overflow-hidden rounded-3xl border border-white/10 bg-black/30">
-            <div className="flex h-52 items-center justify-center bg-black">
+            <div className="flex h-56 items-center justify-center bg-black">
               {imageUrl || selectedGame?.image_url ? (
                 <img
                   src={imageUrl || selectedGame?.image_url || ""}
@@ -908,14 +775,14 @@ export default function ProductUploadClient() {
               </p>
 
               <p className="mt-5 text-3xl font-black text-cyan-300">
-                {formatRupiah(price)}
+                Rp {Number(price || 0).toLocaleString("id-ID")}
               </p>
 
-              <div className="mt-3 inline-flex rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-black text-emerald-300">
+              <p className="mt-2 text-sm text-gray-400">
                 Stock: {stock || "0"}
-              </div>
+              </p>
 
-              <p className="mt-4 line-clamp-4 text-sm leading-6 text-gray-300">
+              <p className="mt-4 line-clamp-4 text-sm text-gray-300">
                 {description ||
                   "Product description will appear here as a preview."}
               </p>
@@ -934,8 +801,9 @@ export default function ProductUploadClient() {
             <h3 className="font-black">Listing Path</h3>
 
             <p className="mt-2 break-words text-sm text-gray-400">
-              /games/{selectedGame?.slug || "game"}/offers?category=
-              {encodeURIComponent(selectedCategory?.name || "category")}
+              /games/{selectedGame?.slug || "game"}/offers?category={encodeURIComponent(
+                selectedCategory?.name || "category",
+              )}
             </p>
           </div>
         </aside>

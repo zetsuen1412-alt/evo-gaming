@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 import {
   getAdminIds,
@@ -98,6 +99,7 @@ function isClosedStatus(status: TicketStatus) {
 }
 
 export default function SupportTicketDetailPageV1NotificationEvent() {
+  const { formatPrice, currency } = useCurrency();
   const params = useParams();
   const ticketId = String(params.id || "");
 

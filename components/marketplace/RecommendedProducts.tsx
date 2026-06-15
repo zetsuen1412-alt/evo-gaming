@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { FaMagic, FaShoppingCart, FaStar } from "react-icons/fa";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 import { calculateSellerReputation } from "@/lib/sellerReputation";
 
@@ -53,19 +54,6 @@ type RecommendedProductsProps = {
   compact?: boolean;
 };
 
-function numberPrice(value: string | number | null | undefined) {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === "number") return value;
-  return Number(String(value).replace(/[^\d]/g, "") || 0);
-}
-
-function formatPrice(value: string | number | null | undefined) {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(numberPrice(value));
-}
 
 function fallbackImage(title: string | null) {
   return `https://placehold.co/900x600/020617/22d3ee?text=${encodeURIComponent(
@@ -88,6 +76,7 @@ export default function RecommendedProducts({
   subtitle = "Personalized products based on your recently viewed games and categories.",
   compact = false,
 }: RecommendedProductsProps) {
+  const { formatPrice } = useCurrency();
   const [recentRows, setRecentRows] = useState<RecentlyViewedRow[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [sellerProfiles, setSellerProfiles] = useState<Record<string, SellerProfile>>({});

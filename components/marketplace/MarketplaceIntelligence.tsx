@@ -77,6 +77,7 @@ function metricLabel(value: number) {
 }
 
 export default function MarketplaceIntelligence() {
+  const { formatPrice, currency } = useCurrency();
   const [data, setData] = useState<IntelligencePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
