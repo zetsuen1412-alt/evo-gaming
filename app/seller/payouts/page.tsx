@@ -18,7 +18,6 @@ import {
 } from "react-icons/fa";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
-import { calculateWithdrawalTaxQuote } from "@/lib/tax";
 
 const DEVICE_KEY_STORAGE = "comeplayers_security_device_id";
 
@@ -84,6 +83,16 @@ type Withdrawal = {
   tax_source_reference?: string | null;
   net_amount: number | string;
   currency: string;
+  source_amount?: number | string | null;
+  source_currency?: string | null;
+  payout_currency?: string | null;
+  fx_rate?: number | string | null;
+  payout_gross_amount?: number | string | null;
+  payout_tax_amount?: number | string | null;
+  payout_net_amount?: number | string | null;
+  payout_provider_fee?: number | string | null;
+  provider_batch_id?: string | null;
+  provider_item_id?: string | null;
   payout_method: string;
   payout_account_name: string;
   payout_account_number: string;
@@ -100,6 +109,21 @@ type Withdrawal = {
   risk_level?: string | null;
   risk_reasons?: string[] | null;
   security_review_status?: string | null;
+};
+
+
+type WithdrawalQuote = {
+  source_amount: number | string;
+  source_currency: string;
+  payout_currency: string;
+  fx_rate: number | string;
+  payout_gross_amount: number | string;
+  rate_percent: number | string;
+  fixed_amount: number | string;
+  tax_amount: number | string;
+  payout_net_amount: number | string;
+  country_code: string;
+  payout_method: string;
 };
 
 type PayoutOverview = {
@@ -149,6 +173,12 @@ function numberValue(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function currencyMoney(value: unknown, currency: unknown) {
+  const code = String(currency || "IDR").toUpperCase();
+  try { return new Intl.NumberFormat("id-ID", { style: "currency", currency: code, maximumFractionDigits: code === "IDR" ? 0 : 2 }).format(numberValue(value)); }
+  catch { return `${code} ${numberValue(value).toLocaleString("id-ID")}`; }
+}
+
 function formatDate(value?: string | null) {
   if (!value) return "-";
   return new Intl.DateTimeFormat("id-ID", {
@@ -190,6 +220,8 @@ export default function SellerPayoutCenterPage() {
   const [busy, setBusy] = useState(false);
   const [renderNow] = useState(() => Date.now());
   const [accountForm, setAccountForm] = useState(emptyAccountForm);
+  const [withdrawalQuoteState, setWithdrawalQuoteState] = useState<{ key: string; quote: WithdrawalQuote } | null>(null);
+  const [quoteError, setQuoteError] = useState("");
   const [withdrawalForm, setWithdrawalForm] = useState({
     payoutAccountId: "",
     amount: "",
@@ -255,15 +287,25 @@ export default function SellerPayoutCenterPage() {
       rule.currency.toUpperCase() ===
         String(selectedPayoutAccount?.currency || "").toUpperCase()
   );
-  const withdrawalQuote = useMemo(() => {
+  const quoteKey = `${withdrawalForm.payoutAccountId}:${withdrawalForm.amount}`;
+  const withdrawalQuote = withdrawalQuoteState?.key === quoteKey ? withdrawalQuoteState.quote : null;
+
+  useEffect(() => {
+    const payoutAccountId = Number(withdrawalForm.payoutAccountId || 0);
     const amount = numberValue(withdrawalForm.amount);
-    if (!amount || !selectedWithdrawalTaxRate) return null;
-    return calculateWithdrawalTaxQuote({
-      amount,
-      ratePercent: numberValue(selectedWithdrawalTaxRate.rate_percent),
-      fixedAmount: numberValue(selectedWithdrawalTaxRate.fixed_amount),
-    });
-  }, [selectedWithdrawalTaxRate, withdrawalForm.amount]);
+    if (!Number.isInteger(payoutAccountId) || payoutAccountId <= 0 || amount <= 0) return;
+    const key = `${payoutAccountId}:${withdrawalForm.amount}`;
+    const timer = window.setTimeout(async () => {
+      try {
+        const payload = await authenticatedFetchJson<{ quote: WithdrawalQuote }>(`/api/withdrawals/quote?payoutAccountId=${payoutAccountId}&amount=${encodeURIComponent(String(amount))}`, { cache: "no-store" });
+        setWithdrawalQuoteState({ key, quote: payload.quote });
+        setQuoteError("");
+      } catch (loadError) {
+        setQuoteError(loadError instanceof Error ? loadError.message : "Unable to calculate payout quote.");
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [withdrawalForm.payoutAccountId, withdrawalForm.amount]);
 
   async function addAccount(event: React.FormEvent) {
     event.preventDefault();
@@ -483,12 +525,15 @@ export default function SellerPayoutCenterPage() {
                 </div>
               ) : null}
 
+              {quoteError && withdrawalForm.amount ? <div className="rounded-xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-100">{quoteError}</div> : null}
               {withdrawalQuote && selectedWithdrawalTaxRate ? (
                 <div className="rounded-xl border border-cyan-400/20 bg-black/30 p-4 text-sm">
-                  <div className="flex justify-between gap-4 text-slate-300"><span>Gross withdrawal</span><strong>{formatPrice(withdrawalQuote.amount)}</strong></div>
-                  <div className="mt-2 flex justify-between gap-4 text-yellow-200"><span>Withdrawal tax ({numberValue(selectedWithdrawalTaxRate.rate_percent).toFixed(2)}%{numberValue(selectedWithdrawalTaxRate.fixed_amount) ? ` + ${formatPrice(selectedWithdrawalTaxRate.fixed_amount)}` : ""})</span><strong>-{formatPrice(withdrawalQuote.taxAmount)}</strong></div>
-                  <div className="mt-3 flex justify-between gap-4 border-t border-white/10 pt-3 text-emerald-200"><span>Estimated payout before provider fee</span><strong>{formatPrice(withdrawalQuote.netAmount)}</strong></div>
-                  <p className="mt-2 text-xs text-slate-500">Country {selectedWithdrawalTaxRate.country_code} · {pretty(selectedWithdrawalTaxRate.payout_method)}. The server snapshots this rate when the request is created.</p>
+                  <div className="flex justify-between gap-4 text-slate-300"><span>Wallet debit</span><strong>{currencyMoney(withdrawalQuote.source_amount, withdrawalQuote.source_currency)}</strong></div>
+                  <div className="mt-2 flex justify-between gap-4 text-slate-300"><span>FX snapshot</span><strong>{withdrawalQuote.source_currency} → {withdrawalQuote.payout_currency} @ {numberValue(withdrawalQuote.fx_rate)}</strong></div>
+                  <div className="mt-2 flex justify-between gap-4 text-slate-300"><span>Payout gross</span><strong>{currencyMoney(withdrawalQuote.payout_gross_amount, withdrawalQuote.payout_currency)}</strong></div>
+                  <div className="mt-2 flex justify-between gap-4 text-yellow-200"><span>Withdrawal tax ({numberValue(withdrawalQuote.rate_percent).toFixed(2)}%{numberValue(withdrawalQuote.fixed_amount) ? ` + ${currencyMoney(withdrawalQuote.fixed_amount, withdrawalQuote.payout_currency)}` : ""})</span><strong>-{currencyMoney(withdrawalQuote.tax_amount, withdrawalQuote.payout_currency)}</strong></div>
+                  <div className="mt-3 flex justify-between gap-4 border-t border-white/10 pt-3 text-emerald-200"><span>Seller receives before provider fee</span><strong>{currencyMoney(withdrawalQuote.payout_net_amount, withdrawalQuote.payout_currency)}</strong></div>
+                  <p className="mt-2 text-xs text-slate-500">Country {withdrawalQuote.country_code} · {pretty(withdrawalQuote.payout_method)}. FX and tax are snapshotted when the request is created.</p>
                 </div>
               ) : null}
 
@@ -662,7 +707,7 @@ export default function SellerPayoutCenterPage() {
                           <p className="text-lg font-black">Withdrawal #{withdrawal.id}</p>
                           <span className={`rounded-full border px-3 py-1 text-xs font-black ${statusClass(withdrawal.status)}`}>{pretty(withdrawal.status)}</span>
                         </div>
-                        <p className="mt-3 text-3xl font-black text-emerald-300">{formatPrice(withdrawal.amount)}</p>
+                        <p className="mt-3 text-3xl font-black text-emerald-300">{currencyMoney(withdrawal.payout_net_amount || withdrawal.net_amount, withdrawal.payout_currency || withdrawal.currency)}</p>
                         <p className="mt-2 text-sm text-slate-400">{pretty(withdrawal.payout_method)} · {withdrawal.payout_account_number}</p>
                       </div>
                       <div className="text-right text-sm text-slate-400">
@@ -672,9 +717,11 @@ export default function SellerPayoutCenterPage() {
                     </div>
 
                     <div className="mt-4 grid gap-1 text-sm text-slate-300 sm:grid-cols-3">
-                      <p>Withdrawal tax: {formatPrice(withdrawal.tax_amount)} ({numberValue(withdrawal.tax_rate_percent).toFixed(2)}%)</p>
-                      <p>Provider fee: {formatPrice(withdrawal.fee_amount)}</p>
-                      <p className="font-black text-emerald-300">Net payout: {formatPrice(withdrawal.net_amount)}</p>
+                      <p>Wallet debit: {currencyMoney(withdrawal.source_amount || withdrawal.amount, withdrawal.source_currency || "IDR")}</p>
+                      <p>FX: {withdrawal.source_currency || "IDR"} → {withdrawal.payout_currency || withdrawal.currency} @ {numberValue(withdrawal.fx_rate || 1)}</p>
+                      <p>Withdrawal tax: {currencyMoney(withdrawal.payout_tax_amount || withdrawal.tax_amount, withdrawal.payout_currency || withdrawal.currency)} ({numberValue(withdrawal.tax_rate_percent).toFixed(2)}%)</p>
+                      <p>Provider fee: {currencyMoney(withdrawal.payout_provider_fee || withdrawal.fee_amount, withdrawal.payout_currency || withdrawal.currency)}</p>
+                      <p className="font-black text-emerald-300">Net payout: {currencyMoney(withdrawal.payout_net_amount || withdrawal.net_amount, withdrawal.payout_currency || withdrawal.currency)}</p>
                     </div>
                     {withdrawal.payout_reference ? <p className="mt-3 text-sm text-cyan-300">Reference: {withdrawal.payout_reference}</p> : null}
                     {withdrawal.admin_note ? <p className="mt-3 rounded-xl border border-yellow-400/20 bg-yellow-400/10 p-3 text-sm text-yellow-100">{withdrawal.admin_note}</p> : null}

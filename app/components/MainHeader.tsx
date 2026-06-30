@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
@@ -10,37 +11,18 @@ import {
   FaBullhorn,
   FaCommentDots,
   FaCog,
-  FaDiscord,
   FaShoppingBag,
   FaSignOutAlt,
   FaStore,
   FaWallet,
 } from "react-icons/fa";
-import { FcGoogle } from "react-icons/fc";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 import MarketplaceSearch from "@/components/marketplace/MarketplaceSearch";
+import AuthModal, { type AuthMode } from "@/components/auth/AuthModal";
 import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 
-function getUsernameFromEmail(email?: string | null) {
-  const localPart = (email || "").split("@")[0]?.trim();
-  if (!localPart) return "player";
-  return localPart
-    .toLowerCase()
-    .replace(/[^a-z0-9_]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "") || "player";
-}
-
-function getSafeDisplayName(profileUsername?: string | null, email?: string | null) {
-  const username = profileUsername?.trim();
-  if (username && username.toLowerCase() !== "unknown user") {
-    return username;
-  }
-
-  return getUsernameFromEmail(email);
-}
 
 type Category = {
   id: number;
@@ -92,8 +74,7 @@ type Profile = {
   avatar_url: string | null;
 };
 
-type AuthMode = "login" | "register";
-type OAuthProvider = "google" | "discord";
+
 
 function isVisibleAnnouncement(item: Announcement) {
   const now = Date.now();
@@ -115,23 +96,6 @@ function formatShortDate(value: string | null | undefined) {
 }
 
 
-function getOAuthUsername(user: User) {
-  const metadata = user.user_metadata || {};
-  const rawName =
-    metadata.user_name ||
-    metadata.preferred_username ||
-    metadata.name ||
-    metadata.full_name ||
-    user.email?.split("@")[0] ||
-    "player";
-
-  return String(rawName)
-    .toLowerCase()
-    .replace(/[^a-z0-9_]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 20);
-}
 
 function getInitial(name?: string | null) {
   if (!name) return "U";
@@ -165,15 +129,10 @@ export default function MainHeader() {
   const [showProfileSettingsMenu, setShowProfileSettingsMenu] = useState(false);
 
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
-  const [authLoading, setAuthLoading] = useState(false);
-
-  const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [authMode, setAuthMode] = useState<Extract<AuthMode, "login" | "register">>("login");
 
   const totalHeaderUnread = unreadCount + announcementUnreadCount;
+
 
   const visibleLatestAnnouncements = useMemo(() => {
     return latestAnnouncements.filter(isVisibleAnnouncement).slice(0, 4);
@@ -456,6 +415,9 @@ export default function MainHeader() {
     });
 
     return () => subscription.unsubscribe();
+    // This initialization effect intentionally subscribes once; the auth listener
+    // owns subsequent header refreshes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -556,166 +518,13 @@ export default function MainHeader() {
     };
   }, [user]);
 
-  function openAuthModal(mode: AuthMode) {
+  function openAuthModal(mode: Extract<AuthMode, "login" | "register">) {
     setAuthMode(mode);
     setShowAuthModal(true);
   }
 
   function closeAuthModal() {
     setShowAuthModal(false);
-    setUsername("");
-    setEmail("");
-    setPassword("");
-    setConfirmPassword("");
-  }
-
-  async function handleEmailAuth(event: React.FormEvent) {
-    event.preventDefault();
-
-    if (!email || !password) {
-      alert("Please fill in your email and password.");
-      return;
-    }
-
-    setAuthLoading(true);
-
-    if (authMode === "login") {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        alert(error.message);
-        setAuthLoading(false);
-        return;
-      }
-
-      closeAuthModal();
-      setAuthLoading(false);
-      return;
-    }
-
-    if (!username) {
-      alert("Please enter your username.");
-      setAuthLoading(false);
-      return;
-    }
-
-    if (password.length < 6) {
-      alert("Password must be at least 6 characters.");
-      setAuthLoading(false);
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      alert("Passwords do not match.");
-      setAuthLoading(false);
-      return;
-    }
-
-    const { data: existingUsername, error: usernameCheckError } = await supabase
-      .from("profiles")
-      .select("id")
-      .ilike("username", username)
-      .maybeSingle();
-
-    if (usernameCheckError) {
-      alert(usernameCheckError.message);
-      setAuthLoading(false);
-      return;
-    }
-
-    if (existingUsername) {
-      alert("Username is already taken.");
-      setAuthLoading(false);
-      return;
-    }
-
-    const { data: existingEmail, error: emailCheckError } = await supabase
-      .from("profiles")
-      .select("id")
-      .ilike("email", email)
-      .maybeSingle();
-
-    if (emailCheckError) {
-      alert(emailCheckError.message);
-      setAuthLoading(false);
-      return;
-    }
-
-    if (existingEmail) {
-      alert("Email is already registered.");
-      setAuthLoading(false);
-      return;
-    }
-
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          username,
-        },
-      },
-    });
-
-    if (signUpError) {
-      alert(signUpError.message);
-      setAuthLoading(false);
-      return;
-    }
-
-    const userId = authData.user?.id;
-
-    if (userId) {
-      const { error: profileError } = await supabase.from("profiles").insert({
-        id: userId,
-        email,
-        username,
-        role: "user",
-        seller_status: "not_applied",
-        avatar_url: null,
-        bio: "ComePlayers user.",
-        discord: null,
-      });
-
-      if (profileError) {
-        alert(profileError.message);
-        setAuthLoading(false);
-        return;
-      }
-
-      const walletCreated = await createInitialWallet();
-
-      if (!walletCreated) {
-        alert(
-          "Account created, but wallet creation failed. Please contact support."
-        );
-        setAuthLoading(false);
-        return;
-      }
-    }
-
-    alert("Account created successfully.");
-    closeAuthModal();
-    setAuthLoading(false);
-  }
-
-  async function handleOAuthLogin(provider: OAuthProvider) {
-    setAuthLoading(true);
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo: window.location.origin,
-      },
-    });
-
-    if (error) {
-      alert(error.message);
-      setAuthLoading(false);
-    }
   }
 
   async function handleSellWithUs() {
@@ -767,10 +576,13 @@ export default function MainHeader() {
       <nav className="sticky top-0 z-50 flex min-h-24 w-full items-center gap-6 border-b border-white/10 bg-[#020617] px-8 shadow-2xl shadow-black/40">
         <div className="flex shrink-0 items-center gap-5">
           <Link href="/" className="flex items-center">
-            <img
-              src="/logo.png?v=2"
+            <Image
+              src="/logo.png"
               alt="ComePlayers"
+              width={260}
+              height={80}
               className="h-16 w-auto object-contain md:h-20"
+              priority
             />
           </Link>
 
@@ -842,9 +654,12 @@ export default function MainHeader() {
                 title="Profile"
               >
                 {profile?.avatar_url ? (
-                  <img
+                  <Image
                     src={profile.avatar_url}
                     alt={profile.username || "Profile"}
+                    width={28}
+                    height={28}
+                    unoptimized
                     className="h-7 w-7 rounded-full object-cover"
                   />
                 ) : (
@@ -979,9 +794,12 @@ export default function MainHeader() {
           <div className="border-b border-slate-700 bg-[#1b2436] p-5">
             <div className="flex items-center gap-4">
               {profile?.avatar_url ? (
-                <img
+                <Image
                   src={profile.avatar_url}
                   alt={profile.username || "User"}
+                  width={56}
+                  height={56}
+                  unoptimized
                   className="h-14 w-14 rounded-full border border-cyan-400/30 object-cover"
                 />
               ) : (
@@ -1218,133 +1036,11 @@ export default function MainHeader() {
         </button>
       )}
 
-      {showAuthModal && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 px-6 backdrop-blur-md">
-          <div className="relative w-full max-w-md rounded-3xl border border-slate-700 bg-[#171b3a] p-7 shadow-2xl shadow-black/80">
-            <button
-              onClick={closeAuthModal}
-              className="absolute right-6 top-5 text-2xl font-black text-gray-400 hover:text-white"
-            >
-              ×
-            </button>
-
-            <div className="text-center">
-              <h2 className="text-3xl font-black">
-                {authMode === "login" ? "Welcome Back" : "Create Account"}
-              </h2>
-
-              <p className="mt-2 text-sm text-gray-400">
-                {authMode === "login"
-                  ? "Login to continue your ComePlayers journey."
-                  : "Register and start buying safely."}
-              </p>
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 rounded-2xl border border-slate-700 bg-[#0b1024] p-1">
-              <button
-                onClick={() => setAuthMode("login")}
-                className={`rounded-xl py-3 font-black transition ${
-                  authMode === "login" ? "bg-cyan-400 text-black" : "text-white"
-                }`}
-              >
-                Login
-              </button>
-
-              <button
-                onClick={() => setAuthMode("register")}
-                className={`rounded-xl py-3 font-black transition ${
-                  authMode === "register"
-                    ? "bg-cyan-400 text-black"
-                    : "text-white"
-                }`}
-              >
-                Register
-              </button>
-            </div>
-
-            <form onSubmit={handleEmailAuth} className="mt-6 grid gap-4">
-              {authMode === "register" && (
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  placeholder="Username"
-                  className="w-full rounded-xl border border-slate-700 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
-                />
-              )}
-
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="Email"
-                className="w-full rounded-xl border border-slate-700 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
-              />
-
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Password"
-                className="w-full rounded-xl border border-slate-700 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
-              />
-
-              {authMode === "register" && (
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  placeholder="Confirm Password"
-                  className="w-full rounded-xl border border-slate-700 bg-[#070b20] px-4 py-4 outline-none focus:border-cyan-400"
-                />
-              )}
-
-              <button
-                disabled={authLoading}
-                className="rounded-xl bg-cyan-400 py-4 font-black text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {authLoading
-                  ? "Please wait..."
-                  : authMode === "login"
-                  ? "Login"
-                  : "Create Account"}
-              </button>
-            </form>
-
-            <div className="my-6 flex items-center gap-4">
-              <div className="h-px flex-1 bg-slate-700" />
-              <p className="text-sm text-gray-400">OR</p>
-              <div className="h-px flex-1 bg-slate-700" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                disabled={authLoading}
-                onClick={() => handleOAuthLogin("google")}
-                className="flex h-11 items-center justify-center rounded-xl border border-slate-700 bg-[#111827] transition hover:border-cyan-400/60 hover:bg-[#202b42] disabled:cursor-not-allowed disabled:opacity-60"
-                title="Continue with Google"
-              >
-                <FcGoogle className="h-5 w-5" />
-              </button>
-
-              <button
-                type="button"
-                disabled={authLoading}
-                onClick={() => handleOAuthLogin("discord")}
-                className="flex h-11 items-center justify-center rounded-xl border border-slate-700 bg-[#111827] transition hover:border-[#5865F2]/70 hover:bg-[#202b42] disabled:cursor-not-allowed disabled:opacity-60"
-                title="Continue with Discord"
-              >
-                <FaDiscord className="h-5 w-5 text-[#5865F2]" />
-              </button>
-            </div>
-
-            <p className="mt-6 text-center text-xs text-gray-400">
-              By continuing, you agree to ComePlayers Terms and Privacy Policy.
-            </p>
-          </div>
-        </div>
-      )}
+      <AuthModal
+        open={showAuthModal}
+        initialMode={authMode}
+        onClose={closeAuthModal}
+      />
     </>
   );
 }

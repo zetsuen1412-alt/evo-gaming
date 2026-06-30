@@ -73,7 +73,6 @@ export async function PATCH(request: Request) {
       result = await completeMarketplaceOrderAsAdmin({
         supabaseAdmin,
         orderId,
-        feeRate: Number(process.env.MARKETPLACE_FEE_RATE || 0.05),
       });
     } else {
       const status = normalizeStatus(body.status);

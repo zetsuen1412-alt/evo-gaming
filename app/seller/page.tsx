@@ -300,6 +300,8 @@ export default function SellerDashboardPage() {
               <Tool href="/seller/followers" label="Followers" />
               <Tool href="/wallet" label="Wallet" />
               <Tool href="/seller/payouts" label="Payout Center" />
+              <Tool href="/seller/tax-profile" label="Tax Residency" />
+              <Tool href="/seller/tax-statements" label="Tax Statements" />
               <Tool href="/seller/verification" label="Verification Status" />
             </div>
           </aside>

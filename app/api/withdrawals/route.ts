@@ -89,7 +89,7 @@ export async function GET(request: Request) {
           .order("created_at", { ascending: false }),
         supabaseAdmin
           .from("withdrawal_requests")
-          .select("id,payout_account_id,amount,fee_amount,net_amount,currency,payout_method,payout_account_name,payout_account_number,payout_note,status,admin_note,payout_reference,payout_provider,provider_status,eligible_at,approved_at,processing_at,paid_at,failed_at,cancelled_at,processed_at,created_at,updated_at,risk_score,risk_level,risk_reasons,security_review_status,tax_country_code,tax_payout_method,tax_rate_percent,tax_fixed_amount,tax_amount,tax_rule_id,tax_source_reference")
+          .select("id,payout_account_id,amount,fee_amount,net_amount,currency,payout_method,payout_account_name,payout_account_number,payout_note,status,admin_note,payout_reference,payout_provider,provider_status,eligible_at,approved_at,processing_at,paid_at,failed_at,cancelled_at,processed_at,created_at,updated_at,risk_score,risk_level,risk_reasons,security_review_status,tax_country_code,tax_payout_method,tax_rate_percent,tax_fixed_amount,tax_amount,tax_rule_id,tax_source_reference,source_currency,payout_currency,source_amount,fx_rate,fx_rate_id,payout_gross_amount,payout_tax_amount,payout_provider_fee,payout_net_amount,provider_batch_id,provider_item_id")
           .eq("user_id", user.id)
           .order("created_at", { ascending: false })
           .limit(100),
@@ -249,7 +249,7 @@ export async function POST(request: Request) {
     });
 
     const { data, error } = await supabaseAdmin.rpc(
-      "cp_create_withdrawal_request_v22",
+      "cp_create_withdrawal_request_v23",
       {
         p_user_id: user.id,
         p_payout_account_id: payoutAccountId,

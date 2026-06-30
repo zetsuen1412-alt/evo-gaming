@@ -116,7 +116,6 @@ export async function PATCH(request: Request) {
         financialResult = await completeMarketplaceOrderAsAdmin({
           supabaseAdmin,
           orderId,
-          feeRate: Number(process.env.MARKETPLACE_FEE_RATE || 0.05),
         });
       } else {
         const { data, error } = await supabaseAdmin.rpc(

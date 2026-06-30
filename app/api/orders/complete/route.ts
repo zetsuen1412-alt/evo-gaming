@@ -5,11 +5,6 @@ import {
   requireAuthenticatedUser,
 } from "@/lib/serverSupabase";
 
-function clampFeeRate(value: number) {
-  if (!Number.isFinite(value)) return 0.05;
-  return Math.min(0.5, Math.max(0, value));
-}
-
 export async function POST(request: Request) {
   try {
     const buyer = await requireAuthenticatedUser(request);
@@ -21,16 +16,11 @@ export async function POST(request: Request) {
     }
 
     const supabaseAdmin = createSupabaseAdmin();
-    const feeRate = clampFeeRate(
-      Number(process.env.MARKETPLACE_FEE_RATE || 0.05)
-    );
-
     const { data, error: rpcError } = await supabaseAdmin.rpc(
-      "complete_order_and_release_escrow_v22",
+      "complete_order_and_release_escrow_v23",
       {
         p_order_id: orderId,
         p_buyer_id: buyer.id,
-        p_fee_rate: feeRate,
       }
     );
 
@@ -86,7 +76,7 @@ export async function POST(request: Request) {
                   )}% seller sales tax.`
                 : `${sellerEarning.toLocaleString(
                     "id-ID"
-                  )} IDR has been added after marketplace fee. This paid order predates V22, so no seller sales tax was applied retroactively.`,
+                  )} IDR has been added after marketplace fee. This historical paid order keeps the tax treatment captured before the current immutable pricing model.`,
             link_url: "/wallet",
             is_read: false,
           },

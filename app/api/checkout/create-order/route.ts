@@ -69,11 +69,6 @@ export async function POST(request: Request) {
       paymentMethod === "paypal"
         ? clampRate(Number(process.env.PAYPAL_CHECKOUT_FEE_RATE || 0.05))
         : 0;
-    const marketplaceFeeRate = Math.min(
-      0.5,
-      Math.max(0, Number(process.env.MARKETPLACE_FEE_RATE || 0.05))
-    );
-
     const { data, error } = await supabaseAdmin.rpc(
       "create_marketplace_order_v13",
       {
@@ -112,11 +107,10 @@ export async function POST(request: Request) {
     }
 
     const { data: sellerTaxQuote, error: taxError } = await supabaseAdmin.rpc(
-      "cp_apply_seller_tax_v22",
+      "cp_apply_seller_tax_v23",
       {
         p_order_id: createdOrderId,
         p_buyer_id: buyer.id,
-        p_fee_rate: Number.isFinite(marketplaceFeeRate) ? marketplaceFeeRate : 0.05,
       }
     );
     if (taxError) {

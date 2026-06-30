@@ -6,7 +6,15 @@ import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Dashboard = {
   metrics: Record<string, number>;
+  asOf: string;
   sellerTaxSettings: Record<string, unknown> | null;
+  marketplaceFeeSettings: Array<Record<string, unknown>>;
+  sellerTaxRates: Array<Record<string, unknown>>;
+  rateChangeRequests: Array<Record<string, unknown>>;
+  taxResidencies: Array<Record<string, unknown>>;
+  fxRates: Array<Record<string, unknown>>;
+  accountingPeriods: Array<Record<string, unknown>>;
+  taxStatements: Array<Record<string, unknown>>;
   withdrawalTaxRates: Array<Record<string, unknown>>;
   policyReviews: Array<Record<string, unknown>>;
   privacyRequests: Array<Record<string, unknown>>;
@@ -93,6 +101,73 @@ export default function AdminCompliancePage() {
     } finally { setBusy(""); }
   }
 
+  async function proposeRateChange(rateType: "marketplace_fee" | "seller_sales_tax") {
+    const ratePercent = window.prompt(rateType === "marketplace_fee" ? "New marketplace fee percentage:" : "New seller sales-tax percentage:", "5")?.trim();
+    if (ratePercent === undefined || ratePercent === null || ratePercent === "") return;
+    const sourceReference = window.prompt("Policy/legal source reference:")?.trim();
+    const reason = window.prompt("Reason for the rate change:")?.trim();
+    if (!sourceReference || !reason) return;
+    setBusy(`rate:${rateType}`); setError(""); setMessage("");
+    try {
+      await authenticatedFetchJson("/api/admin/compliance", { method: "POST", body: JSON.stringify({ action: "propose_rate_change", rateType, ratePercent: Number(ratePercent), fixedAmount: 0, effectiveFrom: new Date().toISOString(), sourceReference, reason }) });
+      setMessage("Rate change proposed. Two distinct admin approvals are required.");
+      await load();
+    } catch (actionError) { setError(actionError instanceof Error ? actionError.message : "Rate proposal failed."); }
+    finally { setBusy(""); }
+  }
+
+  async function reviewRateChange(requestId: string, decision: "approve" | "reject") {
+    const note = window.prompt(decision === "approve" ? "Approval note:" : "Rejection reason:")?.trim();
+    if (decision === "reject" && !note) return;
+    setBusy(`rate-review:${requestId}`); setError(""); setMessage("");
+    try {
+      await authenticatedFetchJson("/api/admin/compliance", { method: "POST", body: JSON.stringify({ action: "review_rate_change", requestId, decision, note }) });
+      setMessage(`Rate request ${decision === "approve" ? "approved" : "rejected"}.`);
+      await load();
+    } catch (actionError) { setError(actionError instanceof Error ? actionError.message : "Rate review failed."); }
+    finally { setBusy(""); }
+  }
+
+  async function addFxRate() {
+    const baseCurrency = window.prompt("Wallet/base currency:", "IDR")?.trim().toUpperCase();
+    const quoteCurrency = window.prompt("Payout/quote currency:", "USD")?.trim().toUpperCase();
+    const rate = window.prompt(`1 ${baseCurrency || "IDR"} equals how many ${quoteCurrency || "USD"}?`)?.trim();
+    const sourceReference = window.prompt("FX provider/source reference:")?.trim();
+    if (!baseCurrency || !quoteCurrency || !rate || !sourceReference) return;
+    setBusy("fx"); setError(""); setMessage("");
+    try {
+      await authenticatedFetchJson("/api/admin/compliance", { method: "POST", body: JSON.stringify({ action: "save_fx_rate", baseCurrency, quoteCurrency, rate: Number(rate), provider: "manual", sourceReference, validFrom: new Date().toISOString() }) });
+      setMessage("FX rate saved."); await load();
+    } catch (actionError) { setError(actionError instanceof Error ? actionError.message : "FX rate failed."); }
+    finally { setBusy(""); }
+  }
+
+  async function createAccountingPeriod() {
+    const periodKey = window.prompt("Accounting month (YYYY-MM):", new Date().toISOString().slice(0, 7))?.trim();
+    if (!periodKey) return;
+    setBusy("period-create"); setError(""); setMessage("");
+    try { await authenticatedFetchJson("/api/admin/compliance", { method: "POST", body: JSON.stringify({ action: "create_accounting_period", periodKey }) }); setMessage("Accounting period created."); await load(); }
+    catch (actionError) { setError(actionError instanceof Error ? actionError.message : "Accounting period failed."); }
+    finally { setBusy(""); }
+  }
+
+  async function closeAccountingPeriod(periodId: string) {
+    if (!window.confirm("Close this accounting period and freeze all seller tax statements?")) return;
+    setBusy(`period:${periodId}`); setError(""); setMessage("");
+    try { await authenticatedFetchJson("/api/admin/compliance", { method: "POST", body: JSON.stringify({ action: "close_accounting_period", periodId }) }); setMessage("Accounting period closed."); await load(); }
+    catch (actionError) { setError(actionError instanceof Error ? actionError.message : "Accounting close failed."); }
+    finally { setBusy(""); }
+  }
+
+  async function reviewResidency(sellerId: string, decision: "verified" | "rejected") {
+    const note = window.prompt(decision === "verified" ? "Verification note (optional):" : "Rejection reason:")?.trim() || "";
+    if (decision === "rejected" && !note) return;
+    setBusy(`residency:${sellerId}`); setError(""); setMessage("");
+    try { await authenticatedFetchJson("/api/admin/compliance", { method: "POST", body: JSON.stringify({ action: "review_tax_residency", sellerId, decision, note }) }); setMessage(`Tax residency ${decision}.`); await load(); }
+    catch (actionError) { setError(actionError instanceof Error ? actionError.message : "Residency review failed."); }
+    finally { setBusy(""); }
+  }
+
   async function createWithdrawalTaxRate() {
     const countryCode = window.prompt("Seller payout country code (for example ID):")?.trim().toUpperCase();
     if (!countryCode) return;
@@ -105,7 +180,9 @@ export default function AdminCompliancePage() {
     const currency = window.prompt("Currency code:", countryCode === "ID" ? "IDR" : "USD")?.trim().toUpperCase();
     if (!currency) return;
     const sourceReference = window.prompt("Legal/source reference and review date (required for active rules):")?.trim();
-    const activate = window.confirm("Activate this withdrawal tax rule immediately? Cancel creates it as draft.");
+    const activate = window.confirm("Request activation through dual approval? Cancel creates it as draft.");
+    const reason = activate ? window.prompt("Reason for this withdrawal-tax change:")?.trim() : "Draft withdrawal tax rule";
+    if (activate && !reason) return;
     setBusy("withdrawal-tax"); setError(""); setMessage("");
     try {
       await authenticatedFetchJson("/api/admin/compliance", {
@@ -119,10 +196,11 @@ export default function AdminCompliancePage() {
           currency,
           status: activate ? "active" : "draft",
           sourceReference,
+          reason,
           validFrom: new Date().toISOString(),
         }),
       });
-      setMessage("Withdrawal tax rule saved.");
+      setMessage(activate ? "Withdrawal tax change proposed for dual approval." : "Withdrawal tax draft saved.");
       await load();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Withdrawal tax rule failed.");
@@ -140,9 +218,9 @@ export default function AdminCompliancePage() {
       <section className="border-b border-cyan-400/20 px-4 py-12">
         <div className="mx-auto max-w-7xl">
           <Link href="/admin" className="font-black text-cyan-300">← Admin dashboard</Link>
-          <p className="mt-6 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">V22 Seller Tax & Compliance</p>
+          <p className="mt-6 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">V23 Finance Governance</p>
           <h1 className="mt-4 text-5xl font-black md:text-7xl">Post-launch control center</h1>
-          <p className="mt-4 max-w-3xl text-slate-400">Seller-borne 5% sales tax, country/method withdrawal withholding, prohibited-product reviews, privacy operations, provider settlements, fraud feedback, and commerce evidence.</p>
+          <p className="mt-4 max-w-3xl text-slate-400">Immutable order-rate snapshots, dual-approved fee changes, verified seller tax residency, FX evidence, accounting close, provider payout execution, and post-launch compliance.</p>
         </div>
       </section>
 
@@ -161,12 +239,38 @@ export default function AdminCompliancePage() {
         </div>
 
         <div className="mt-10 grid gap-8 xl:grid-cols-2">
-          <Panel title="Seller sales tax">
+          <Panel title="Governed marketplace fee" action={<button disabled={Boolean(busy)} onClick={() => proposeRateChange("marketplace_fee")} className="rounded-xl bg-cyan-400 px-4 py-2 font-black text-black">Propose change</button>}>
+            {(data.marketplaceFeeSettings || []).slice(0, 5).map((row) => <Card key={String(row.id)} title={`${n(row.rate_percent).toFixed(2)}% · ${row.status}`} meta={`Effective ${date(row.valid_from)} · ${String(row.source_reference || "No source")}`} />)}
+            {(data.marketplaceFeeSettings || []).length === 0 && <Empty text="No marketplace fee history." />}
+          </Panel>
+
+          <Panel title="Governed seller sales tax" action={<button disabled={Boolean(busy)} onClick={() => proposeRateChange("seller_sales_tax")} className="rounded-xl bg-cyan-400 px-4 py-2 font-black text-black">Propose change</button>}>
+            {(data.sellerTaxRates || []).slice(0, 5).map((row) => <Card key={String(row.id)} title={`${n(row.rate_percent).toFixed(2)}% · ${row.status}`} meta={`Effective ${date(row.valid_from)} · ${String(row.source_reference || "No source")}`} />)}
+            {(data.sellerTaxRates || []).length === 0 && <Empty text="No seller tax rate history." />}
+          </Panel>
+
+          <Panel title="Dual-approval rate requests">
+            {(data.rateChangeRequests || []).length === 0 ? <Empty text="No rate change requests." /> : data.rateChangeRequests.slice(0, 20).map((row) => <div key={String(row.id)} className="rounded-2xl border border-white/10 bg-black/30 p-4"><h3 className="font-black">{String(row.rate_type).replace(/_/g, " ")} · {n(row.proposed_rate_percent)}% · {String(row.status)}</h3><p className="mt-2 text-sm text-slate-400">Effective {date(row.effective_from)} · requested by {String(row.requested_by)}</p>{["pending","partially_approved"].includes(String(row.status)) && <div className="mt-3 flex gap-2"><button disabled={Boolean(busy)} onClick={() => reviewRateChange(String(row.id), "approve")} className="rounded-lg bg-emerald-300 px-3 py-2 font-black text-black">Approve</button><button disabled={Boolean(busy)} onClick={() => reviewRateChange(String(row.id), "reject")} className="rounded-lg bg-red-300 px-3 py-2 font-black text-black">Reject</button></div>}</div>)}
+          </Panel>
+
+          <Panel title="FX rates" action={<button disabled={Boolean(busy)} onClick={addFxRate} className="rounded-xl bg-cyan-400 px-4 py-2 font-black text-black">Add FX rate</button>}>
+            {(data.fxRates || []).length === 0 ? <Empty text="No FX rates configured." /> : data.fxRates.slice(0, 15).map((row) => <Card key={String(row.id)} title={`${row.base_currency} → ${row.quote_currency} · ${row.rate}`} meta={`${row.status} · ${row.provider} · from ${date(row.valid_from)}`} />)}
+          </Panel>
+
+          <Panel title="Accounting periods" action={<button disabled={Boolean(busy)} onClick={createAccountingPeriod} className="rounded-xl bg-cyan-400 px-4 py-2 font-black text-black">Open month</button>}>
+            {(data.accountingPeriods || []).length === 0 ? <Empty text="No accounting periods." /> : data.accountingPeriods.slice(0, 12).map((row) => <div key={String(row.id)} className="rounded-2xl border border-white/10 bg-black/30 p-4"><h3 className="font-black">{String(row.period_key)} · {String(row.status)}</h3><p className="mt-2 text-sm text-slate-400">{date(row.period_start)} → {date(row.period_end)}</p>{row.status === "open" && <button disabled={Boolean(busy)} onClick={() => closeAccountingPeriod(String(row.id))} className="mt-3 rounded-lg bg-yellow-300 px-3 py-2 font-black text-black">Close period</button>}</div>)}
+          </Panel>
+
+          <Panel title="Seller tax residency review">
+            {(data.taxResidencies || []).length === 0 ? <Empty text="No seller tax residency submissions." /> : data.taxResidencies.slice(0, 20).map((row) => <div key={String(row.seller_id)} className="rounded-2xl border border-white/10 bg-black/30 p-4"><h3 className="font-black">{String(row.legal_name)} · {String(row.country_code)} · {String(row.status)}</h3><p className="mt-2 text-sm text-slate-400">Tax ID ending {String(row.tax_identifier_last4 || "—")} · submitted {date(row.submitted_at)}</p>{row.status === "pending" && <div className="mt-3 flex gap-2"><button disabled={Boolean(busy)} onClick={() => reviewResidency(String(row.seller_id), "verified")} className="rounded-lg bg-emerald-300 px-3 py-2 font-black text-black">Verify</button><button disabled={Boolean(busy)} onClick={() => reviewResidency(String(row.seller_id), "rejected")} className="rounded-lg bg-red-300 px-3 py-2 font-black text-black">Reject</button></div>}</div>)}
+          </Panel>
+
+          <Panel title="Legacy tax compatibility">
             <Card
-              title="Global seller-borne sales tax"
+              title="V22 compatibility row"
               meta={`${n(data.sellerTaxSettings?.sales_tax_rate_percent || 5).toFixed(2)}% · ${String(data.sellerTaxSettings?.status || "active")} · buyer checkout tax disabled`}
             />
-            <p className="text-sm leading-6 text-slate-400">The 5% tax is deducted from seller gross proceeds when escrow is released. It is not added to the buyer total.</p>
+            <p className="text-sm leading-6 text-slate-400">V23 order settlement uses the effective version in seller_sales_tax_rates and freezes it per order. This row remains synchronized for legacy reporting paths.</p>
           </Panel>
 
           <Panel title="Withdrawal tax rules" action={<button disabled={Boolean(busy)} onClick={createWithdrawalTaxRate} className="rounded-xl bg-cyan-400 px-4 py-2 font-black text-black">Add rule</button>}>

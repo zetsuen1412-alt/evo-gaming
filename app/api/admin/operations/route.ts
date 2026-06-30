@@ -40,6 +40,9 @@ export async function GET(request: Request) {
       providerChecksResult,
       uptimeChecksResult,
       sellerTaxSettingsResult,
+      marketplaceFeeSettingsResult,
+      pendingRateChangesResult,
+      verifiedResidenciesResult,
       activeWithdrawalTaxRatesResult,
       criticalPolicyResult,
       overduePrivacyResult,
@@ -93,14 +96,37 @@ export async function GET(request: Request) {
         .order("checked_at", { ascending: false })
         .limit(5000),
       supabaseAdmin
-        .from("seller_tax_settings")
-        .select("setting_key,sales_tax_rate_percent,status")
+        .from("seller_sales_tax_rates")
+        .select("setting_key,rate_percent,status,valid_from,valid_to")
         .eq("setting_key", "global_seller_sales_tax")
+        .in("status", ["active", "scheduled"])
+        .lte("valid_from", new Date().toISOString())
+        .or(`valid_to.is.null,valid_to.gt.${new Date().toISOString()}`)
+        .order("valid_from", { ascending: false })
+        .limit(1)
         .maybeSingle(),
+      supabaseAdmin
+        .from("marketplace_fee_settings")
+        .select("setting_key,rate_percent,status,valid_from,valid_to")
+        .eq("setting_key", "global_marketplace_fee")
+        .in("status", ["active", "scheduled"])
+        .lte("valid_from", new Date().toISOString())
+        .or(`valid_to.is.null,valid_to.gt.${new Date().toISOString()}`)
+        .order("valid_from", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("rate_change_requests")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["pending", "partially_approved"]),
+      supabaseAdmin
+        .from("seller_tax_residencies")
+        .select("seller_id", { count: "exact", head: true })
+        .eq("status", "verified"),
       supabaseAdmin
         .from("withdrawal_tax_rates")
         .select("id", { count: "exact", head: true })
-        .eq("status", "active")
+        .in("status", ["active", "scheduled"])
         .lte("valid_from", new Date().toISOString())
         .or(`valid_to.is.null,valid_to.gt.${new Date().toISOString()}`),
       supabaseAdmin
@@ -133,6 +159,9 @@ export async function GET(request: Request) {
       providerChecksResult.error,
       uptimeChecksResult.error,
       sellerTaxSettingsResult.error,
+      marketplaceFeeSettingsResult.error,
+      pendingRateChangesResult.error,
+      verifiedResidenciesResult.error,
       activeWithdrawalTaxRatesResult.error,
       criticalPolicyResult.error,
       overduePrivacyResult.error,
@@ -150,6 +179,9 @@ export async function GET(request: Request) {
     const uptimeChecks = uptimeChecksResult.data || [];
     const latestSettlement = settlementResult.data || null;
     const sellerTaxSettings = sellerTaxSettingsResult.data || null;
+    const marketplaceFeeSettings = marketplaceFeeSettingsResult.data || null;
+    const pendingRateChangeCount = Number(pendingRateChangesResult.count || 0);
+    const verifiedTaxResidencyCount = Number(verifiedResidenciesResult.count || 0);
     const activeWithdrawalTaxRateCount = Number(activeWithdrawalTaxRatesResult.count || 0);
     const pendingCriticalPolicyReviews = Number(criticalPolicyResult.count || 0);
     const overduePrivacyRequests = (overduePrivacyResult.data || []).filter((row) => {
@@ -247,11 +279,25 @@ export async function GET(request: Request) {
         blocking: true,
       },
       {
-        key: "tax_configuration",
-        label: "Seller-borne sales tax is active at the fixed 5% rate",
+        key: "finance_rate_configuration",
+        label: "Marketplace fee and seller sales-tax histories have active governed rates",
         passed:
           String(sellerTaxSettings?.status || "").toLowerCase() === "active" &&
-          Number(sellerTaxSettings?.sales_tax_rate_percent || 0) === 5,
+          Number(sellerTaxSettings?.rate_percent || 0) >= 0 &&
+          String(marketplaceFeeSettings?.status || "").toLowerCase() === "active" &&
+          Number(marketplaceFeeSettings?.rate_percent || 0) >= 0,
+        blocking: true,
+      },
+      {
+        key: "rate_change_governance",
+        label: "No unfinished finance rate change awaits dual approval",
+        passed: pendingRateChangeCount === 0,
+        blocking: true,
+      },
+      {
+        key: "verified_tax_residency",
+        label: "At least one seller tax residency has been verified before provider payout",
+        passed: verifiedTaxResidencyCount > 0,
         blocking: true,
       },
       {
@@ -342,7 +388,10 @@ export async function GET(request: Request) {
           openCriticalReconciliationIssues: Number(criticalResult.count || 0),
           pendingSignoffs,
           providerFailures36h,
-          sellerSalesTaxRatePercent: Number(sellerTaxSettings?.sales_tax_rate_percent || 0),
+          sellerSalesTaxRatePercent: Number(sellerTaxSettings?.rate_percent || 0),
+          marketplaceFeeRatePercent: Number(marketplaceFeeSettings?.rate_percent || 0),
+          pendingRateChangeCount,
+          verifiedTaxResidencyCount,
           activeWithdrawalTaxRateCount,
           pendingCriticalPolicyReviews,
           overduePrivacyRequests,

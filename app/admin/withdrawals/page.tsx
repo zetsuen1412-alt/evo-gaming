@@ -28,6 +28,16 @@ type Withdrawal = {
   tax_source_reference?: string | null;
   net_amount: number | string;
   currency: string;
+  source_amount?: number | string | null;
+  source_currency?: string | null;
+  payout_currency?: string | null;
+  fx_rate?: number | string | null;
+  payout_gross_amount?: number | string | null;
+  payout_tax_amount?: number | string | null;
+  payout_net_amount?: number | string | null;
+  provider_batch_id?: string | null;
+  provider_item_id?: string | null;
+  payout_provider_fee?: number | string | null;
   payout_method: string;
   payout_account_name: string;
   payout_account_number: string;
@@ -89,6 +99,12 @@ const statuses = ["all", "pending", "approved", "processing", "paid", "rejected"
 function numberValue(value: unknown) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number : 0;
+}
+
+function currencyMoney(value: unknown, currency: unknown) {
+  const code = String(currency || "IDR").toUpperCase();
+  try { return new Intl.NumberFormat("id-ID", { style: "currency", currency: code, maximumFractionDigits: code === "IDR" ? 0 : 2 }).format(numberValue(value)); }
+  catch { return `${code} ${numberValue(value).toLocaleString("id-ID")}`; }
 }
 
 function formatDate(value?: string | null) {
@@ -190,6 +206,21 @@ export default function AdminWithdrawalManagementPage() {
     } finally {
       setUpdatingId(null);
     }
+  }
+
+  async function providerAction(item: Withdrawal, action: "execute_provider" | "sync_provider") {
+    const label = action === "execute_provider" ? "submit this payout to PayPal" : "synchronize this PayPal payout";
+    if (!confirm(`Confirm ${label} for withdrawal #${item.id}?`)) return;
+    setUpdatingId(item.id);
+    try {
+      await authenticatedFetchJson("/api/admin/withdrawals", {
+        method: "POST",
+        body: JSON.stringify({ withdrawalId: item.id, action }),
+      });
+      await loadWithdrawals();
+    } catch (actionError) {
+      alert(actionError instanceof Error ? actionError.message : "Provider payout action failed.");
+    } finally { setUpdatingId(null); }
   }
 
   async function process(item: Withdrawal, action: string) {
@@ -300,14 +331,16 @@ export default function AdminWithdrawalManagementPage() {
                     </div>
 
                     <p className="mt-4 text-4xl font-black text-emerald-300">{formatPrice(item.amount)}</p>
-                    <p className="mt-2 text-sm text-slate-400">Net {formatPrice(item.net_amount || item.amount)} · Withdrawal tax {formatPrice(item.tax_amount)} ({numberValue(item.tax_rate_percent).toFixed(2)}%) · Provider fee {formatPrice(item.fee_amount)}</p>
+                    <p className="mt-2 text-sm text-slate-400">Wallet debit {currencyMoney(item.source_amount || item.amount, item.source_currency || "IDR")} · payout gross {currencyMoney(item.payout_gross_amount || item.amount, item.payout_currency || item.currency)} · withdrawal tax {currencyMoney(item.payout_tax_amount || item.tax_amount, item.payout_currency || item.currency)} ({numberValue(item.tax_rate_percent).toFixed(2)}%) · seller receives {currencyMoney(item.payout_net_amount || item.net_amount, item.payout_currency || item.currency)}</p>
 
                     <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                       <Info label="Seller" value={displayName} subvalue={item.profiles?.email || item.user_id} />
                       <Info label="Method" value={pretty(item.payout_method)} subvalue={item.payout_accounts?.bank_name || item.payout_accounts?.label || ""} />
                       <Info label="Masked Account" value={item.payout_account_number || `****${item.payout_accounts?.account_last4 || ""}`} subvalue={item.payout_account_name} />
                       <Info label="Requested" value={formatDate(item.created_at)} />
-                      <Info label="Provider" value={item.payout_provider || "Not assigned"} subvalue={item.provider_status || "queued"} />
+                      <Info label="Provider" value={item.payout_provider || "Not assigned"} subvalue={`${item.provider_status || "queued"} · fee ${currencyMoney(item.payout_provider_fee || 0, item.payout_currency || item.currency)}`} />
+                      <Info label="FX snapshot" value={`${item.source_currency || "IDR"} → ${item.payout_currency || item.currency} @ ${numberValue(item.fx_rate || 1)}`} />
+                      <Info label="Provider batch" value={item.provider_batch_id || "Not submitted"} subvalue={item.provider_item_id || ""} />
                       <Info label="Reference" value={item.payout_reference || "Not settled"} />
                       <Info label="Tax jurisdiction" value={`${item.tax_country_code || "-"} · ${pretty(item.tax_payout_method)}`} subvalue={item.tax_source_reference || "No source reference"} />
                     </div>
@@ -348,6 +381,7 @@ export default function AdminWithdrawalManagementPage() {
 
                       {item.status === "approved" ? (
                         <>
+                          {String(item.tax_payout_method || item.payout_method).toLowerCase() === "paypal" ? <button disabled={updatingId === item.id} onClick={() => providerAction(item, "execute_provider")} className="rounded-xl bg-indigo-400 px-4 py-3 font-black text-black">Execute PayPal Payout</button> : null}
                           <button disabled={updatingId === item.id} onClick={() => process(item, "processing")} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-3 font-black"><FaSpinner /> Start Processing</button>
                           <button disabled={updatingId === item.id} onClick={() => process(item, "paid")} className="rounded-xl bg-emerald-500 px-4 py-3 font-black">Mark Paid</button>
                           <button disabled={updatingId === item.id} onClick={() => process(item, "reject")} className="rounded-xl bg-red-500 px-4 py-3 font-black">Reject & Refund</button>
@@ -356,6 +390,7 @@ export default function AdminWithdrawalManagementPage() {
 
                       {item.status === "processing" ? (
                         <>
+                          {item.provider_batch_id ? <button disabled={updatingId === item.id} onClick={() => providerAction(item, "sync_provider")} className="rounded-xl bg-indigo-400 px-4 py-3 font-black text-black">Sync PayPal Status</button> : null}
                           <button disabled={updatingId === item.id} onClick={() => process(item, "paid")} className="rounded-xl bg-emerald-500 px-4 py-3 font-black">Mark Paid</button>
                           <button disabled={updatingId === item.id} onClick={() => process(item, "fail")} className="rounded-xl bg-red-500 px-4 py-3 font-black">Mark Failed & Refund</button>
                         </>

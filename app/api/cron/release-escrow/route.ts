@@ -93,11 +93,10 @@ async function handleAutoComplete(request: Request) {
           if (!order.buyer_id || !order.seller_id) continue;
 
           const { data: rpcData, error: rpcError } = await supabaseAdmin.rpc(
-            "complete_order_and_release_escrow_v22",
+            "complete_order_and_release_escrow_v23",
             {
               p_order_id: order.id,
               p_buyer_id: order.buyer_id,
-              p_fee_rate: Number(process.env.MARKETPLACE_FEE_RATE || 0.05),
             }
           );
 

@@ -34,16 +34,16 @@ export async function GET(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Invoice access denied." }, { status: 403 });
     }
 
-    const [{ data: invoiceRow, error }, { data: sellerTaxSnapshot, error: snapshotError }] =
+    const [{ data: invoiceRow, error }, { data: pricingSnapshot, error: snapshotError }] =
       await Promise.all([
         supabaseAdmin
           .from("order_invoices")
-          .select("id,invoice_number,order_id,currency_code,subtotal_amount,discount_amount,payment_fee_amount,taxable_amount,tax_amount,total_amount,tax_country_code,tax_rate_percent,seller_gross_amount,seller_marketplace_fee_amount,seller_sales_tax_rate_percent,seller_sales_tax_amount,seller_net_amount,status,issued_at,voided_at,created_at,updated_at")
+          .select("id,invoice_number,order_id,currency_code,subtotal_amount,discount_amount,payment_fee_amount,taxable_amount,tax_amount,total_amount,tax_country_code,tax_rate_percent,seller_gross_amount,seller_marketplace_fee_amount,seller_marketplace_fee_rate_percent,seller_sales_tax_rate_percent,seller_sales_tax_amount,seller_net_amount,status,issued_at,voided_at,created_at,updated_at")
           .eq("order_id", orderId)
           .maybeSingle(),
         supabaseAdmin
-          .from("seller_sales_tax_snapshots")
-          .select("order_id")
+          .from("order_pricing_snapshots")
+          .select("id,order_id,marketplace_fee_rate_percent,seller_sales_tax_rate_percent,captured_at")
           .eq("order_id", orderId)
           .maybeSingle(),
       ]);
@@ -59,13 +59,14 @@ export async function GET(request: Request, context: RouteContext) {
     const {
       seller_gross_amount,
       seller_marketplace_fee_amount,
+      seller_marketplace_fee_rate_percent,
       seller_sales_tax_rate_percent,
       seller_sales_tax_amount,
       seller_net_amount,
       ...invoice
     } = invoiceRow;
 
-    const usesV22SellerTax = Boolean(sellerTaxSnapshot);
+    const usesV23Snapshot = Boolean(pricingSnapshot);
     const hasSellerSettlement =
       Number(seller_gross_amount || 0) > 0 || Number(seller_net_amount || 0) > 0;
 
@@ -73,19 +74,22 @@ export async function GET(request: Request, context: RouteContext) {
       invoice,
       order,
       viewerRole: isAdmin ? "admin" : isSeller ? "seller" : "buyer",
-      taxModel: usesV22SellerTax ? "seller_v22" : "legacy",
-      sellerSettlement: (isSeller || isAdmin) && (usesV22SellerTax || hasSellerSettlement)
+      taxModel: usesV23Snapshot ? "seller_v23" : "legacy",
+      sellerSettlement: (isSeller || isAdmin) && (usesV23Snapshot || hasSellerSettlement)
         ? {
             seller_gross_amount,
             seller_marketplace_fee_amount,
-            seller_sales_tax_rate_percent: usesV22SellerTax
-              ? Number(seller_sales_tax_rate_percent || 5)
-              : 0,
-            seller_sales_tax_amount: usesV22SellerTax
-              ? Number(seller_sales_tax_amount || 0)
-              : 0,
+            seller_marketplace_fee_rate_percent: usesV23Snapshot
+              ? Number(pricingSnapshot?.marketplace_fee_rate_percent || seller_marketplace_fee_rate_percent || 0)
+              : Number(seller_marketplace_fee_rate_percent || 0),
+            seller_sales_tax_rate_percent: usesV23Snapshot
+              ? Number(pricingSnapshot?.seller_sales_tax_rate_percent || seller_sales_tax_rate_percent || 0)
+              : Number(seller_sales_tax_rate_percent || 0),
+            seller_sales_tax_amount: Number(seller_sales_tax_amount || 0),
             seller_net_amount,
-            tax_bearer: usesV22SellerTax ? "seller" : "legacy",
+            pricing_snapshot_id: pricingSnapshot?.id || null,
+            pricing_captured_at: pricingSnapshot?.captured_at || null,
+            tax_bearer: usesV23Snapshot ? "seller" : "legacy",
           }
         : null,
     });

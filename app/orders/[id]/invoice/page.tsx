@@ -21,13 +21,14 @@ type InvoicePayload = {
   sellerSettlement?: {
     seller_gross_amount: number | string;
     seller_marketplace_fee_amount: number | string;
+    seller_marketplace_fee_rate_percent: number | string;
     seller_sales_tax_rate_percent: number | string;
     seller_sales_tax_amount: number | string;
     seller_net_amount: number | string;
     tax_bearer: string;
   } | null;
   viewerRole: "buyer" | "seller" | "admin";
-  taxModel: "seller_v22" | "legacy";
+  taxModel: "seller_v23" | "legacy";
   order: {
     id: number;
     product_title?: string | null;
@@ -93,7 +94,7 @@ export default function OrderInvoicePage() {
   }
 
   const { invoice, order, sellerSettlement } = payload;
-  const usesV22SellerTax = payload.taxModel === "seller_v22";
+  const usesV23SellerTax = payload.taxModel === "seller_v23";
   const currency = invoice.currency_code || "IDR";
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-10 text-white print:bg-white print:text-black">
@@ -133,8 +134,8 @@ export default function OrderInvoicePage() {
               <h2 className="font-black">Tax responsibility</h2>
               <p className="mt-2 text-slate-600">Buyer tax: {money(invoice.tax_amount, currency)}</p>
               <p className="text-slate-600">
-                {usesV22SellerTax
-                  ? "ComePlayers sales tax is borne by the seller and is not added to the buyer total."
+                {usesV23SellerTax
+                  ? "ComePlayers seller tax is withheld from seller proceeds using the immutable rate snapshot captured for this order."
                   : "This is a historical invoice and keeps the tax treatment recorded when the order was paid."}
               </p>
             </div>
@@ -159,7 +160,7 @@ export default function OrderInvoicePage() {
               <p className="mt-2 text-sm text-slate-600">Visible only to the seller and administrators.</p>
               <div className="mt-5 space-y-3">
                 <Row label="Seller gross proceeds" value={money(sellerSettlement.seller_gross_amount, currency)} />
-                <Row label="Marketplace fee" value={`-${money(sellerSettlement.seller_marketplace_fee_amount, currency)}`} />
+                <Row label={`Marketplace fee (${Number(sellerSettlement.seller_marketplace_fee_rate_percent ?? 0).toFixed(2)}%)`} value={`-${money(sellerSettlement.seller_marketplace_fee_amount, currency)}`} />
                 <Row label={`Seller sales tax (${Number(sellerSettlement.seller_sales_tax_rate_percent ?? 0).toFixed(2)}%)`} value={`-${money(sellerSettlement.seller_sales_tax_amount, currency)}`} />
                 <div className="flex justify-between border-t border-cyan-300 pt-3 font-black">
                   <span>Seller wallet credit</span>
@@ -170,8 +171,8 @@ export default function OrderInvoicePage() {
           ) : null}
 
           <footer className="border-t border-slate-200 pt-6 text-xs leading-5 text-slate-500">
-            {usesV22SellerTax
-              ? "Buyer tax is zero under the V22 seller-borne model. The seller sales tax is withheld from seller proceeds when escrow is released. Withdrawal taxes are calculated separately using the seller payout country, method, and currency."
+            {usesV23SellerTax
+              ? "Buyer tax is zero under the seller-borne model. Marketplace fee and seller sales-tax rates are frozen when the order is created, so later rate changes do not alter this settlement. Withdrawal taxes and FX are snapshotted separately when payout is requested."
               : "Historical invoices are not retroactively rewritten. Their original buyer-tax treatment remains part of the financial audit trail."}
           </footer>
         </article>

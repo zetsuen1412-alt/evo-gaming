@@ -133,7 +133,6 @@ export async function refundMarketplaceOrder(input: {
 export async function completeMarketplaceOrderAsAdmin(input: {
   supabaseAdmin: SupabaseClient;
   orderId: number;
-  feeRate: number;
 }) {
   const order = await getAdminOrder(input.supabaseAdmin, input.orderId);
 
@@ -142,11 +141,10 @@ export async function completeMarketplaceOrderAsAdmin(input: {
   }
 
   const { data, error } = await input.supabaseAdmin.rpc(
-    "complete_order_and_release_escrow_v22",
+    "complete_order_and_release_escrow_v23",
     {
       p_order_id: input.orderId,
       p_buyer_id: order.buyer_id,
-      p_fee_rate: input.feeRate,
     }
   );
 
