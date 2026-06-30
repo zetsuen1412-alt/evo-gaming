@@ -1,536 +1,267 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { User } from "@supabase/supabase-js";
+import { useEffect, useState } from "react";
+import {
+  FaBalanceScale,
+  FaBullhorn,
+  FaClipboardList,
+  FaChartLine,
+  FaCommentDots,
+  FaExclamationTriangle,
+  FaGamepad,
+  FaMoneyBillWave,
+  FaRocket,
+  FaShoppingBag,
+  FaShieldAlt,
+  FaStore,
+  FaTicketAlt,
+  FaUsers,
+  FaWallet,
+} from "react-icons/fa";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 
-type Profile = {
-  id: string;
-  email: string | null;
-  username: string | null;
-  role: string | null;
-  avatar_url: string | null;
-  seller_name: string | null;
+type Overview = {
+  profile: {
+    email?: string | null;
+    username?: string | null;
+  };
+  metrics: {
+    users: number;
+    products: number;
+    orders: number;
+    pendingSellerApplications: number;
+    activeDisputes: number;
+    pendingWithdrawals: number;
+    supportQueue: number;
+    grossVolume: number;
+    feeRevenue: number;
+  };
+  recentOrders: Array<{
+    id: number;
+    product_title?: string | null;
+    product?: string | null;
+    total_amount?: number | string | null;
+    total_price?: number | string | null;
+    status?: string | null;
+    payment_status?: string | null;
+    created_at?: string | null;
+  }>;
 };
 
-type Wallet = {
-  id: number;
-  user_id: string;
-  balance: string | number;
-  total_withdrawn: string | number;
-};
+const modules = [
+  { href: "/admin/orders", label: "Orders", icon: FaShoppingBag },
+  { href: "/admin/products", label: "Products", icon: FaStore },
+  { href: "/admin/users", label: "Users", icon: FaUsers },
+  { href: "/admin/seller-applications", label: "Seller Applications", icon: FaStore },
+  { href: "/admin/disputes", label: "Disputes", icon: FaExclamationTriangle },
+  { href: "/admin/risk", label: "Trust & Risk", icon: FaShieldAlt },
+  { href: "/admin/chat-moderation", label: "Chat Moderation", icon: FaCommentDots },
+  { href: "/admin/finance", label: "Finance", icon: FaChartLine },
+  { href: "/admin/reconciliation", label: "Reconciliation", icon: FaBalanceScale },
+  { href: "/admin/operations", label: "Launch Readiness", icon: FaRocket },
+  { href: "/admin/compliance", label: "Commerce Compliance", icon: FaShieldAlt },
+  { href: "/admin/wallet-topups", label: "Wallet Top Ups", icon: FaWallet },
+  { href: "/admin/withdrawals", label: "Withdrawals", icon: FaMoneyBillWave },
+  { href: "/admin/support", label: "Support", icon: FaTicketAlt },
+  { href: "/admin/games", label: "Game Catalog", icon: FaGamepad },
+  { href: "/admin/announcements", label: "Announcements", icon: FaBullhorn },
+  { href: "/admin/audit-logs", label: "Audit Logs", icon: FaClipboardList },
+];
 
-type Withdrawal = {
-  id: number;
-  user_id: string;
-  wallet_id: number;
-  amount: string | number;
-  payout_method: string;
-  payout_account_name: string;
-  payout_account_number: string;
-  payout_note: string | null;
-  status: string;
-  admin_note: string | null;
-  processed_at: string | null;
-  created_at: string;
-  profiles: Profile | null;
-  wallets: Wallet | null;
-};
-
-const statusFilters = ["all", "pending", "approved", "rejected", "cancelled"];
-
-function formatPrice(value: string | number | null) {
-  const price = Number(value || 0);
-  if (!Number.isFinite(price)) return "Rp 0";
-  return `Rp ${price.toLocaleString("id-ID")}`;
+function prettyStatus(value?: string | null) {
+  return String(value || "pending")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-function formatDate(value: string | null) {
+function formatDate(value?: string | null) {
   if (!value) return "-";
-  return new Date(value).toLocaleString("id-ID");
+  return new Intl.DateTimeFormat("id-ID", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
-function statusClass(status: string) {
-  if (status === "approved") return "border-green-400/20 bg-green-400/10 text-green-300";
-  if (status === "pending") return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
-  if (status === "rejected" || status === "cancelled") return "border-red-400/20 bg-red-400/10 text-red-300";
-  return "border-white/10 bg-white/[0.04] text-gray-300";
-}
-
-export default function AdminWithdrawalManagementV1Page() {
-  const { formatPrice, currency } = useCurrency();
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
+export default function AdminDashboardPage() {
+  const { formatPrice } = useCurrency();
+  const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeStatus, setActiveStatus] = useState("all");
-  const [search, setSearch] = useState("");
-  const [updatingId, setUpdatingId] = useState<number | null>(null);
-  const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
-
-  const isAdmin = profile?.role?.trim().toLowerCase() === "admin";
-
-  const filteredWithdrawals = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return withdrawals.filter((item) => {
-      const p = item.profiles;
-      const matchesStatus = activeStatus === "all" || item.status === activeStatus;
-      const matchesSearch =
-        !query ||
-        String(item.id).includes(query) ||
-        item.user_id.toLowerCase().includes(query) ||
-        item.payout_method.toLowerCase().includes(query) ||
-        item.payout_account_name.toLowerCase().includes(query) ||
-        item.payout_account_number.toLowerCase().includes(query) ||
-        (p?.email || "").toLowerCase().includes(query) ||
-        (p?.username || "").toLowerCase().includes(query) ||
-        (p?.seller_name || "").toLowerCase().includes(query);
-
-      return matchesStatus && matchesSearch;
-    });
-  }, [withdrawals, activeStatus, search]);
-
-  const pendingCount = withdrawals.filter((w) => w.status === "pending").length;
-  const approvedCount = withdrawals.filter((w) => w.status === "approved").length;
-  const rejectedCount = withdrawals.filter((w) => w.status === "rejected").length;
-  const totalAmount = withdrawals.reduce((sum, w) => sum + Number(w.amount || 0), 0);
-  const pendingAmount = withdrawals
-    .filter((w) => w.status === "pending")
-    .reduce((sum, w) => sum + Number(w.amount || 0), 0);
-
-  async function loadWithdrawals() {
-    const { data, error } = await supabase
-      .from("withdrawal_requests")
-      .select(
-        `
-        *,
-        profiles:user_id (
-          id,
-          email,
-          username,
-          role,
-          avatar_url,
-          seller_name
-        ),
-        wallets:wallet_id (
-          id,
-          user_id,
-          balance,
-          total_withdrawn
-        )
-      `
-      )
-      .order("id", { ascending: false });
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setWithdrawals((data || []) as unknown as Withdrawal[]);
-  }
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    async function init() {
-      setLoading(true);
+    async function loadOverview() {
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
 
-      const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (sessionError || !accessToken) {
+          throw new Error("Please login with an administrator account.");
+        }
 
-      if (userError) {
-        alert(userError.message);
+        const response = await fetch("/api/admin/overview", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          throw new Error(json.error || "Failed to load admin dashboard.");
+        }
+
+        setOverview(json);
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load admin dashboard."
+        );
+      } finally {
         setLoading(false);
-        return;
       }
-
-      if (!userData.user) {
-        setLoading(false);
-        return;
-      }
-
-      setUser(userData.user);
-
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("id,email,username,role,avatar_url,seller_name")
-        .eq("id", userData.user.id)
-        .maybeSingle();
-
-      if (profileError) {
-        alert(profileError.message);
-        setLoading(false);
-        return;
-      }
-
-      setProfile(profileData || null);
-
-      if (profileData?.role?.trim().toLowerCase() === "admin") {
-        await loadWithdrawals();
-      }
-
-      setLoading(false);
     }
 
-    init();
+    loadOverview();
   }, []);
-
-  async function approveWithdrawal(item: Withdrawal) {
-    if (item.status !== "pending") {
-      alert("Only pending withdrawal can be approved.");
-      return;
-    }
-
-    if (!confirm(`Approve withdrawal ${formatPrice(item.amount)}?`)) return;
-
-    setUpdatingId(item.id);
-
-    const note = adminNotes[item.id]?.trim() || "Withdrawal approved by admin.";
-
-    const { error: requestError } = await supabase
-      .from("withdrawal_requests")
-      .update({
-        status: "approved",
-        admin_note: note,
-        processed_at: new Date().toISOString(),
-      })
-      .eq("id", item.id);
-
-    if (requestError) {
-      alert(requestError.message);
-      setUpdatingId(null);
-      return;
-    }
-
-    await supabase
-      .from("wallet_transactions")
-      .update({
-        type: "withdraw_approved",
-        status: "completed",
-        description: note,
-      })
-      .eq("wallet_id", item.wallet_id)
-      .eq("user_id", item.user_id)
-      .eq("type", "withdraw_request")
-      .eq("amount", Number(item.amount))
-      .eq("status", "pending");
-
-    await loadWithdrawals();
-    setUpdatingId(null);
-  }
-
-  async function rejectWithdrawal(item: Withdrawal) {
-    if (item.status !== "pending") {
-      alert("Only pending withdrawal can be rejected.");
-      return;
-    }
-
-    const note = adminNotes[item.id]?.trim();
-
-    if (!note) {
-      alert("Admin note is required when rejecting withdrawal.");
-      return;
-    }
-
-    if (!confirm(`Reject and refund ${formatPrice(item.amount)}?`)) return;
-
-    setUpdatingId(item.id);
-
-    const currentBalance = Number(item.wallets?.balance || 0);
-    const amount = Number(item.amount || 0);
-    const balanceAfter = currentBalance + amount;
-
-    const { error: walletError } = await supabase
-      .from("wallets")
-      .update({
-        balance: balanceAfter,
-        total_withdrawn: Math.max(Number(item.wallets?.total_withdrawn || 0) - amount, 0),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", item.wallet_id);
-
-    if (walletError) {
-      alert(walletError.message);
-      setUpdatingId(null);
-      return;
-    }
-
-    const { error: requestError } = await supabase
-      .from("withdrawal_requests")
-      .update({
-        status: "rejected",
-        admin_note: note,
-        processed_at: new Date().toISOString(),
-      })
-      .eq("id", item.id);
-
-    if (requestError) {
-      alert(requestError.message);
-      setUpdatingId(null);
-      return;
-    }
-
-    await supabase.from("wallet_transactions").insert({
-      wallet_id: item.wallet_id,
-      user_id: item.user_id,
-      type: "withdraw_rejected",
-      amount,
-      balance_before: currentBalance,
-      balance_after: balanceAfter,
-      order_id: null,
-      description: `Withdrawal rejected and refunded. ${note}`,
-      status: "rejected",
-    });
-
-    await supabase
-      .from("wallet_transactions")
-      .update({
-        status: "rejected",
-        description: `Withdrawal request rejected. ${note}`,
-      })
-      .eq("wallet_id", item.wallet_id)
-      .eq("user_id", item.user_id)
-      .eq("type", "withdraw_request")
-      .eq("amount", amount)
-      .eq("status", "pending");
-
-    await loadWithdrawals();
-    setUpdatingId(null);
-  }
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">Loading withdrawals...</p>
+      <main className="min-h-screen bg-[#050816] px-4 py-24 text-center text-white">
+        Loading admin dashboard...
       </main>
     );
   }
 
-  if (!user || !isAdmin) {
+  if (!overview) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
-        <div className="max-w-md rounded-3xl border border-red-400/20 bg-red-400/10 p-8 text-center">
-          <h1 className="text-3xl font-black text-red-300">Access Denied</h1>
-          <p className="mt-4 text-gray-300">Only admin can access withdrawal management.</p>
-          <Link href="/" className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black">
-            Back to Home
-          </Link>
-        </div>
+      <main className="min-h-screen bg-[#050816] px-4 py-24 text-center text-white">
+        <h1 className="text-4xl font-black">Admin Dashboard Unavailable</h1>
+        <p className="mt-4 text-red-300">{error}</p>
+        <Link href="/" className="mt-8 inline-flex rounded-xl bg-cyan-400 px-6 py-4 font-black text-black">
+          Back Home
+        </Link>
       </main>
     );
   }
+
+  const metrics = overview.metrics;
 
   return (
-    <main className="min-h-screen bg-[#020617] text-white">
-      <section className="relative overflow-hidden border-b border-white/10 px-8 py-14">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.20),transparent_32%),radial-gradient(circle_at_top_right,rgba(34,197,94,.16),transparent_34%)]" />
-
-        <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
-          <div>
-            <p className="mb-4 inline-flex rounded-full border border-green-400/30 bg-green-400/10 px-4 py-2 text-sm font-black text-green-300">
-              Admin Withdrawal Management
-            </p>
-            <h1 className="text-5xl font-black md:text-7xl">Withdrawals</h1>
-            <p className="mt-5 max-w-3xl text-gray-300">
-              Review seller withdrawal requests, approve payouts, reject requests, and refund wallet balance.
-            </p>
-          </div>
-
-          <Link
-            href="/admin"
-            className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-          >
-            Admin Home
-          </Link>
+    <main className="min-h-screen bg-[#050816] text-white">
+      <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_38%)]">
+        <div className="mx-auto max-w-7xl px-4 py-14">
+          <p className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
+            ComePlayers Operations Center
+          </p>
+          <h1 className="mt-5 text-5xl font-black md:text-7xl">Admin Dashboard</h1>
+          <p className="mt-4 text-slate-300">
+            Marketplace health, risk queue, finance, sellers, products, and support.
+          </p>
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-8 py-10">
-        <div className="mb-8 grid gap-5 md:grid-cols-2 xl:grid-cols-5">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Total Requests</p>
-            <p className="mt-2 text-3xl font-black text-cyan-300">{withdrawals.length}</p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Pending</p>
-            <p className="mt-2 text-3xl font-black text-yellow-300">{pendingCount}</p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Approved</p>
-            <p className="mt-2 text-3xl font-black text-green-300">{approvedCount}</p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Rejected</p>
-            <p className="mt-2 text-3xl font-black text-red-300">{rejectedCount}</p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
-            <p className="text-sm text-gray-400">Pending Amount</p>
-            <p className="mt-2 text-2xl font-black text-green-300">{formatPrice(pendingAmount)}</p>
-          </div>
+      <section className="mx-auto max-w-7xl px-4 py-10">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Users" value={metrics.users.toLocaleString("id-ID")} />
+          <Metric label="Products" value={metrics.products.toLocaleString("id-ID")} />
+          <Metric label="Orders" value={metrics.orders.toLocaleString("id-ID")} />
+          <Metric label="Gross Volume" value={formatPrice(metrics.grossVolume)} />
+          <Metric label="Fee Revenue" value={formatPrice(metrics.feeRevenue)} />
+          <Metric label="Seller Applications" value={String(metrics.pendingSellerApplications)} attention />
+          <Metric label="Active Disputes" value={String(metrics.activeDisputes)} attention />
+          <Metric label="Support Queue" value={String(metrics.supportQueue)} attention />
         </div>
 
-        <div className="mb-8 grid gap-4 xl:grid-cols-[1fr_auto]">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search user, email, username, payout method, account number, or request ID..."
-            className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
-          />
+        <div className="mt-10 grid gap-8 xl:grid-cols-[1fr_380px]">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-2xl font-black">Recent Orders</h2>
+              <Link href="/admin/orders" className="font-black text-cyan-300">
+                View all →
+              </Link>
+            </div>
 
-          <div className="flex flex-wrap gap-3">
-            {statusFilters.map((item) => (
-              <button
-                key={item}
-                onClick={() => setActiveStatus(item)}
-                className={`rounded-full px-5 py-3 text-sm font-bold transition ${
-                  activeStatus === item
-                    ? "bg-cyan-400 text-black"
-                    : "border border-white/10 bg-white/[0.04] text-gray-300 hover:border-cyan-400 hover:text-white"
-                }`}
-              >
-                {item === "all" ? "All" : item}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="mb-8 rounded-3xl border border-white/10 bg-white/[0.035] p-6">
-          <p className="text-sm text-gray-400">Total Requested Amount</p>
-          <p className="mt-2 text-3xl font-black text-purple-300">{formatPrice(totalAmount)}</p>
-        </div>
-
-        {filteredWithdrawals.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-12 text-center">
-            <h2 className="text-3xl font-black">No withdrawal requests found.</h2>
-            <p className="mt-3 text-gray-400">Withdrawal requests from users will appear here.</p>
-          </div>
-        ) : (
-          <div className="grid gap-6">
-            {filteredWithdrawals.map((item) => {
-              const displayName =
-                item.profiles?.seller_name ||
-                item.profiles?.username ||
-                item.profiles?.email ||
-                "User";
-
-              return (
-                <div
-                  key={item.id}
-                  className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 shadow-2xl shadow-black/30"
-                >
-                  <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+            <div className="mt-6 space-y-3">
+              {overview.recentOrders.length === 0 ? (
+                <p className="rounded-2xl border border-white/10 bg-black/30 p-6 text-slate-400">
+                  No orders yet.
+                </p>
+              ) : (
+                overview.recentOrders.map((order) => (
+                  <Link
+                    key={order.id}
+                    href={`/orders/${order.id}`}
+                    className="grid gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 transition hover:border-cyan-400 md:grid-cols-[80px_1fr_auto]"
+                  >
+                    <span className="font-black text-cyan-300">#{order.id}</span>
                     <div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        <h2 className="text-2xl font-black">Withdrawal #{item.id}</h2>
-                        <span className={`rounded-full border px-3 py-1 text-xs font-black ${statusClass(item.status)}`}>
-                          {item.status}
-                        </span>
-                      </div>
-
-                      <p className="mt-4 text-4xl font-black text-green-300">
-                        {formatPrice(item.amount)}
+                      <p className="font-black">
+                        {order.product_title || order.product || "Product"}
                       </p>
-
-                      <div className="mt-6 grid gap-4 md:grid-cols-2">
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">User</p>
-                          <p className="mt-1 font-black">{displayName}</p>
-                          <p className="mt-1 break-words text-sm text-gray-400">{item.profiles?.email || item.user_id}</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Payout Method</p>
-                          <p className="mt-1 font-black">{item.payout_method}</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Account Name</p>
-                          <p className="mt-1 font-black">{item.payout_account_name}</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Account Number</p>
-                          <p className="mt-1 break-words font-black">{item.payout_account_number}</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Requested At</p>
-                          <p className="mt-1 font-black">{formatDate(item.created_at)}</p>
-                        </div>
-
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                          <p className="text-xs text-gray-500">Processed At</p>
-                          <p className="mt-1 font-black">{formatDate(item.processed_at)}</p>
-                        </div>
-                      </div>
-
-                      {item.payout_note && (
-                        <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4">
-                          <p className="text-sm font-black text-cyan-300">User Note</p>
-                          <p className="mt-2 text-sm text-gray-300">{item.payout_note}</p>
-                        </div>
-                      )}
-
-                      {item.admin_note && (
-                        <div className="mt-5 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4">
-                          <p className="text-sm font-black text-yellow-300">Admin Note</p>
-                          <p className="mt-2 text-sm text-gray-300">{item.admin_note}</p>
-                        </div>
-                      )}
+                      <p className="mt-1 text-xs text-slate-500">
+                        {formatDate(order.created_at)}
+                      </p>
                     </div>
-
-                    <div className="flex flex-col gap-3">
-                      <label className="text-sm font-bold text-gray-400">Admin Note</label>
-
-                      <textarea
-                        value={adminNotes[item.id] || ""}
-                        onChange={(event) =>
-                          setAdminNotes((prev) => ({
-                            ...prev,
-                            [item.id]: event.target.value,
-                          }))
-                        }
-                        placeholder="Write admin note..."
-                        rows={5}
-                        disabled={item.status !== "pending"}
-                        className="w-full resize-none rounded-2xl border border-white/10 bg-black px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400 disabled:opacity-60"
-                      />
-
-                      <button
-                        onClick={() => approveWithdrawal(item)}
-                        disabled={updatingId === item.id || item.status !== "pending"}
-                        className="rounded-2xl bg-green-500 px-5 py-3 font-black text-white hover:bg-green-400 disabled:opacity-60"
-                      >
-                        Approve Withdrawal
-                      </button>
-
-                      <button
-                        onClick={() => rejectWithdrawal(item)}
-                        disabled={updatingId === item.id || item.status !== "pending"}
-                        className="rounded-2xl bg-red-500 px-5 py-3 font-black text-white hover:bg-red-400 disabled:opacity-60"
-                      >
-                        Reject & Refund
-                      </button>
-
-                      <Link
-                        href={`/seller-profile/${item.user_id}`}
-                        className="rounded-2xl border border-cyan-400 px-5 py-3 text-center font-black text-cyan-300 hover:bg-cyan-400 hover:text-black"
-                      >
-                        View User Profile
-                      </Link>
-
-                      {updatingId === item.id && (
-                        <p className="text-center text-sm text-gray-400">Updating withdrawal...</p>
-                      )}
+                    <div className="text-left md:text-right">
+                      <p className="font-black">
+                        {formatPrice(order.total_amount || order.total_price)}
+                      </p>
+                      <p className="mt-1 text-xs text-emerald-300">
+                        {prettyStatus(order.payment_status || order.status)}
+                      </p>
                     </div>
-                  </div>
-                </div>
-              );
-            })}
+                  </Link>
+                ))
+              )}
+            </div>
           </div>
-        )}
+
+          <aside className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+            <h2 className="text-2xl font-black">Management</h2>
+            <div className="mt-5 grid gap-3">
+              {modules.map((module) => {
+                const Icon = module.icon;
+                return (
+                  <Link
+                    key={module.href}
+                    href={module.href}
+                    className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/30 px-4 py-3 font-black transition hover:border-cyan-400 hover:text-cyan-300"
+                  >
+                    <Icon className="text-cyan-300" />
+                    {module.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </aside>
+        </div>
       </section>
     </main>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  attention = false,
+}: {
+  label: string;
+  value: string;
+  attention?: boolean;
+}) {
+  return (
+    <div className={`rounded-3xl border p-5 ${
+      attention
+        ? "border-yellow-400/20 bg-yellow-400/10"
+        : "border-white/10 bg-white/[0.04]"
+    }`}>
+      <p className="text-sm text-slate-400">{label}</p>
+      <p className={`mt-2 text-3xl font-black ${
+        attention ? "text-yellow-300" : "text-cyan-300"
+      }`}>
+        {value}
+      </p>
+    </div>
   );
 }

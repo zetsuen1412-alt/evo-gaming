@@ -9,7 +9,6 @@ import {
   FaBoxOpen,
   FaCheckCircle,
   FaClock,
-  FaComments,
   FaGamepad,
   FaGem,
   FaShieldAlt,
@@ -22,10 +21,18 @@ import {
 } from "react-icons/fa";
 import MarketplaceBreadcrumbs from "@/components/marketplace/MarketplaceBreadcrumbs";
 import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTracker";
+import ProductVariantPurchase from "@/components/marketplace/ProductVariantPurchase";
 import RecentlyViewedTracker from "@/components/marketplace/RecentlyViewedTracker";
 import RecommendedProducts from "@/components/marketplace/RecommendedProducts";
 import { convertFromIdr, formatLocalizedPrice } from "@/lib/localization";
 import { calculateSellerReputation } from "@/lib/sellerReputation";
+import {
+  effectivePresence,
+  formatDeliveryEta,
+  serviceLevelClass,
+  serviceLevelDescription,
+  serviceLevelLabel,
+} from "@/lib/sellerServiceLevel";
 import { supabase } from "@/lib/supabase";
 
 type PageProps = {
@@ -67,16 +74,16 @@ function fallbackImage(title: string) {
   )}`;
 }
 
-function getCategoryIcon(category?: string | null) {
+function CategoryIcon({ category }: { category?: string | null }) {
   const value = (category || "").toLowerCase();
 
-  if (value.includes("coin")) return FaGem;
-  if (value.includes("account")) return FaGamepad;
-  if (value.includes("boost")) return FaBolt;
-  if (value.includes("top")) return FaWallet;
-  if (value.includes("item")) return FaBoxOpen;
+  if (value.includes("coin")) return <FaGem />;
+  if (value.includes("account")) return <FaGamepad />;
+  if (value.includes("boost")) return <FaBolt />;
+  if (value.includes("top")) return <FaWallet />;
+  if (value.includes("item")) return <FaBoxOpen />;
 
-  return FaTag;
+  return <FaTag />;
 }
 
 function slugify(value: string) {
@@ -172,7 +179,16 @@ export default async function ProductDetailPage({ params }: PageProps) {
       status,
       category_id,
       game_category_id,
-      game_name
+      game_name,
+      delivery_eta_minutes,
+      offer_region,
+      offer_platform,
+      offer_server,
+      offer_tags,
+      has_variants,
+      variant_count,
+      min_variant_price,
+      max_variant_price
     `);
 
   if (Number.isFinite(productId) && productId > 0) {
@@ -187,6 +203,16 @@ export default async function ProductDetailPage({ params }: PageProps) {
     notFound();
   }
 
+  const { data: productVariants } = product.has_variants
+    ? await supabase
+        .from("product_variants")
+        .select("id,sku,name,attributes,price,stock,status,sort_order")
+        .eq("product_id", product.id)
+        .eq("status", "active")
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+    : { data: [] };
+
   const [
     { data: sellerProfile },
     { data: sellerCompletedOrdersData },
@@ -197,7 +223,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
         supabase
           .from("profiles")
           .select(
-            "id,username,seller_name,seller_rating,seller_review_count,seller_status"
+            "id,username,seller_name,seller_rating,seller_review_count,seller_status,seller_presence_mode,seller_last_seen_at,seller_delivery_sla_minutes,seller_avg_delivery_minutes,seller_on_time_rate,seller_total_deliveries,seller_late_deliveries,seller_service_level"
           )
           .eq("id", product.seller_id)
           .maybeSingle(),
@@ -231,6 +257,19 @@ export default async function ProductDetailPage({ params }: PageProps) {
     activeProducts: sellerActiveProductsCount,
     sellerStatus: sellerProfile?.seller_status || null,
   });
+  const sellerPresence = effectivePresence(
+    sellerProfile?.seller_presence_mode,
+    sellerProfile?.seller_last_seen_at
+  );
+  const deliveryEtaMinutes = Number(
+    product.delivery_eta_minutes ||
+      sellerProfile?.seller_delivery_sla_minutes ||
+      60
+  );
+  const sellerOnTimeRate = Number(sellerProfile?.seller_on_time_rate || 100);
+  const sellerAverageDelivery = Number(
+    sellerProfile?.seller_avg_delivery_minutes || 0
+  );
 
   const gameSlug = product.game_name ? slugify(product.game_name) : "";
   const categorySlug = product.category ? slugify(product.category) : "";
@@ -395,7 +434,6 @@ export default async function ProductDetailPage({ params }: PageProps) {
     .sort((a: any, b: any) => b.related_score - a.related_score)
     .slice(0, 6);
 
-  const CategoryIcon = getCategoryIcon(product.category);
   const imageUrl = product.image_url || fallbackImage(product.title);
   const sellerName =
     sellerProfile?.seller_name ||
@@ -521,7 +559,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
                 <div className="absolute left-5 top-5 flex flex-wrap gap-2">
                   <span className="inline-flex items-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-xs font-black text-black">
-                    <CategoryIcon />
+                    <CategoryIcon category={product.category} />
                     {product.category || "Game Product"}
                   </span>
 
@@ -552,8 +590,22 @@ export default async function ProductDetailPage({ params }: PageProps) {
                   </span>
 
                   <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
-                    Fast Delivery
+                    Delivery ETA: {formatDeliveryEta(deliveryEtaMinutes)}
                   </span>
+
+                  <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
+                    Region: {product.offer_region || "Global"}
+                  </span>
+
+                  <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
+                    Platform: {product.offer_platform || "Any"}
+                  </span>
+
+                  {product.offer_server ? (
+                    <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
+                      Server: {product.offer_server}
+                    </span>
+                  ) : null}
 
                   <span className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-slate-300">
                     {currency}
@@ -564,31 +616,20 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
             <aside className="space-y-5">
               <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-6">
-                <p className="text-sm font-bold text-cyan-200">Total Price</p>
-
-                <p className="mt-2 text-4xl font-black text-cyan-300">
-                  {formatPrice(product.price)}
-                </p>
-
-                <div className="mt-6 space-y-3">
-                  <Link
-                    href={`/checkout/${product.id}`}
-                    className="flex w-full items-center justify-center gap-3 rounded-xl bg-cyan-400 px-5 py-4 font-black text-black transition hover:bg-cyan-300"
-                  >
-                    <FaShoppingCart />
-                    Buy Now
-                  </Link>
-
-                  <Link
-                    href={`/messages?seller=${product.seller_id || ""}&product=${
-                      product.id
-                    }`}
-                    className="flex w-full items-center justify-center gap-3 rounded-xl border border-white/10 bg-black/30 px-5 py-4 font-black text-white transition hover:border-cyan-400"
-                  >
-                    <FaComments />
-                    Chat Seller
-                  </Link>
-                </div>
+                <ProductVariantPurchase
+                  productId={Number(product.id)}
+                  sellerId={product.seller_id || null}
+                  basePrice={product.price}
+                  baseStock={Number(product.stock || 0)}
+                  variants={(productVariants || []).map((variant) => ({
+                    id: Number(variant.id),
+                    sku: String(variant.sku || ""),
+                    name: String(variant.name || "Variant"),
+                    attributes: (variant.attributes || {}) as Record<string, unknown>,
+                    price: variant.price,
+                    stock: Number(variant.stock || 0),
+                  }))}
+                />
 
                 <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
                   <div className="rounded-xl border border-white/10 bg-black/25 p-3">
@@ -598,7 +639,7 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
                   <div className="rounded-xl border border-white/10 bg-black/25 p-3">
                     <FaClock className="text-yellow-300" />
-                    <p className="mt-2 font-bold">Fast Delivery</p>
+                    <p className="mt-2 font-bold">{formatDeliveryEta(deliveryEtaMinutes)} ETA</p>
                   </div>
                 </div>
               </div>
@@ -615,7 +656,20 @@ export default async function ProductDetailPage({ params }: PageProps) {
                   </div>
 
                   <div>
-                    <p className="font-black">{sellerName}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-black">{sellerName}</p>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${
+                          sellerPresence === "online"
+                            ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                            : sellerPresence === "away"
+                              ? "border-yellow-400/40 bg-yellow-400/10 text-yellow-300"
+                              : "border-slate-400/30 bg-slate-400/10 text-slate-400"
+                        }`}
+                      >
+                        {sellerPresence}
+                      </span>
+                    </div>
                     <p className="mt-1 flex items-center gap-2 text-sm text-yellow-300">
                       <FaStar />
                       {sellerAverageRating > 0
@@ -652,6 +706,36 @@ export default async function ProductDetailPage({ params }: PageProps) {
 
                   <p className="mt-3 text-xs leading-5 text-slate-300">
                     {sellerReputation.description}
+                  </p>
+                </div>
+
+                <div className={`mt-5 rounded-2xl border p-4 ${serviceLevelClass(sellerProfile?.seller_service_level)}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-[0.18em] opacity-80">
+                        Delivery Service Level
+                      </p>
+                      <p className="mt-2 text-xl font-black">
+                        {serviceLevelLabel(sellerProfile?.seller_service_level)} Seller
+                      </p>
+                    </div>
+                    <FaAward className="text-2xl" />
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <p className="text-slate-400">Delivery Promise</p>
+                      <p className="mt-1 font-black text-white">{formatDeliveryEta(deliveryEtaMinutes)}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <p className="text-slate-400">On-Time Rate</p>
+                      <p className="mt-1 font-black text-white">{sellerOnTimeRate.toFixed(1)}%</p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-slate-300">
+                    {serviceLevelDescription(sellerProfile?.seller_service_level)}
+                    {sellerAverageDelivery > 0
+                      ? ` Average delivery: ${formatDeliveryEta(sellerAverageDelivery)}.`
+                      : ""}
                   </p>
                 </div>
 

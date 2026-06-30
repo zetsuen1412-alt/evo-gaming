@@ -23,6 +23,13 @@ type ProductRow = {
   game_name: string | null;
   seller_name: string | null;
   created_at: string;
+  min_variant_price?: number | string | null;
+  stock?: number | null;
+  delivery_eta_minutes?: number | null;
+  offer_region?: string | null;
+  offer_platform?: string | null;
+  offer_server?: string | null;
+  offer_tags?: string[] | null;
 };
 
 type CategoryRow = {
@@ -57,6 +64,15 @@ function scoreProduct(product: ProductRow, rawQuery: string, rawCategory: string
   const game = (product.game_name || "").toLowerCase();
   const category = (product.category || "").toLowerCase();
   const seller = (product.seller_name || "").toLowerCase();
+  const discovery = [
+    product.offer_region,
+    product.offer_platform,
+    product.offer_server,
+    ...(product.offer_tags || []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 
   let score = 0;
 
@@ -72,6 +88,7 @@ function scoreProduct(product: ProductRow, rawQuery: string, rawCategory: string
     if (category.includes(query)) score += 25;
 
     if (seller.includes(query)) score += 10;
+    if (discovery.includes(query)) score += 20;
   }
 
   if (categoryQuery) {
@@ -158,11 +175,11 @@ export async function GET(request: NextRequest) {
   let productsQuery = supabase
     .from("products")
     .select(
-      "id,title,slug,price,image_url,category,game_name,seller_name,created_at,category_id"
+      "id,title,slug,price,min_variant_price,image_url,category,game_name,seller_name,created_at,category_id,stock,delivery_eta_minutes,offer_region,offer_platform,offer_server,offer_tags"
     )
     .eq("status", "active")
     .or(
-      `title.ilike.%${searchText}%,description.ilike.%${searchText}%,game_name.ilike.%${searchText}%,category.ilike.%${searchText}%`
+      `title.ilike.%${searchText}%,description.ilike.%${searchText}%,game_name.ilike.%${searchText}%,category.ilike.%${searchText}%,offer_region.ilike.%${searchText}%,offer_platform.ilike.%${searchText}%,offer_server.ilike.%${searchText}%`
     )
     .order("created_at", { ascending: false })
     .limit(productFetchLimit);
@@ -212,6 +229,7 @@ export async function GET(request: NextRequest) {
   const products = ((productsResult.data || []) as ProductRow[])
     .map((product) => ({
       ...product,
+      price: product.min_variant_price || product.price,
       href: productHref(product),
       relevance_score: scoreProduct(product, rawQuery, rawCategory),
     }))

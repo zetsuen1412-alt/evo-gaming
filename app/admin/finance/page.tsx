@@ -610,6 +610,13 @@ export default function AdminFinanceDashboardPage() {
 
               <div className="mt-5 grid gap-3">
                 <Link
+                  href="/admin/reconciliation"
+                  className="rounded-2xl border border-violet-400 px-5 py-3 text-center font-black text-violet-300 transition hover:bg-violet-400 hover:text-black"
+                >
+                  Financial Reconciliation
+                </Link>
+
+                <Link
                   href="/admin/withdrawals"
                   className="rounded-2xl border border-yellow-400 px-5 py-3 text-center font-black text-yellow-300 transition hover:bg-yellow-400 hover:text-black"
                 >

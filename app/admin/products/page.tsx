@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -138,19 +139,18 @@ export default function AdminProductManagementV1Page() {
   async function updateProductStatus(productId: number, status: string) {
     setUpdatingProductId(productId);
 
-    const { error } = await supabase
-      .from("products")
-      .update({ status })
-      .eq("id", productId);
+    try {
+      await authenticatedFetchJson("/api/admin/products", {
+        method: "PATCH",
+        body: JSON.stringify({ productId, status }),
+      });
 
-    if (error) {
-      alert(error.message);
+      await loadProducts();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update product status.");
+    } finally {
       setUpdatingProductId(null);
-      return;
     }
-
-    await loadProducts();
-    setUpdatingProductId(null);
   }
 
   async function deleteProduct(productId: number) {
@@ -158,16 +158,18 @@ export default function AdminProductManagementV1Page() {
 
     setUpdatingProductId(productId);
 
-    const { error } = await supabase.from("products").delete().eq("id", productId);
+    try {
+      await authenticatedFetchJson("/api/admin/products", {
+        method: "DELETE",
+        body: JSON.stringify({ productId }),
+      });
 
-    if (error) {
-      alert(error.message);
+      await loadProducts();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to delete product.");
+    } finally {
       setUpdatingProductId(null);
-      return;
     }
-
-    await loadProducts();
-    setUpdatingProductId(null);
   }
 
   if (loading) {

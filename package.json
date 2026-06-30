@@ -6,7 +6,26 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run typecheck:e2e && npm run lint && npm run test",
+    "check:full": "npm run check && npm run test:e2e:smoke && npm run build",
+    "migrate:delivery-vault": "tsx scripts/migrate-delivery-vault.ts",
+    "test": "tsx --test tests/**/*.test.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test e2e/public-smoke.spec.ts",
+    "test:e2e:critical": "playwright test e2e/critical-journeys.spec.ts",
+    "e2e:auth": "node scripts/create-e2e-storage-state.mjs",
+    "test:load": "node load-tests/marketplace-load.mjs",
+    "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
+    "typecheck:v19": "node scripts/typecheck.mjs tsconfig.v19.json",
+    "fixtures:seed": "node scripts/seed-staging-fixtures.mjs",
+    "fixtures:cleanup": "node scripts/cleanup-staging-fixtures.mjs",
+    "fixtures:load-env": "node scripts/export-e2e-load-env.mjs",
+    "test:load:mutations": "node load-tests/marketplace-load.mjs",
+    "typecheck:v20": "node scripts/typecheck.mjs tsconfig.v20.json",
+    "typecheck:v21": "node scripts/typecheck.mjs tsconfig.v21.json",
+    "typecheck:v22": "node scripts/typecheck.mjs tsconfig.v22.json"
   },
   "dependencies": {
     "@paypal/react-paypal-js": "^10.0.0",
@@ -19,6 +38,7 @@
     "react-phone-number-input": "^3.4.17"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

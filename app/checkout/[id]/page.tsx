@@ -32,6 +32,17 @@ type Product = {
   status?: string | null;
   game_name?: string | null;
   slug?: string | null;
+  has_variants?: boolean | null;
+};
+
+type ProductVariant = {
+  id: number;
+  sku: string;
+  name: string;
+  attributes: Record<string, unknown> | null;
+  price: string | number;
+  stock: number;
+  status: string;
 };
 
 type Coupon = {
@@ -84,8 +95,11 @@ export default function CheckoutPage() {
 
   const routeProductId = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const productId = searchParams.get("product") || routeProductId || "";
+  const requestedVariantId = Number(searchParams.get("variant") || 0);
 
   const [product, setProduct] = useState<Product | null>(null);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const [selectedVariantId, setSelectedVariantId] = useState<number | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("wallet");
@@ -99,7 +113,8 @@ export default function CheckoutPage() {
   const [couponData, setCouponData] = useState<Coupon | null>(null);
   const [discountAmount, setDiscountAmount] = useState(0);
 
-  const unitPrice = numberPrice(product?.price);
+  const selectedVariant = variants.find((variant) => variant.id === selectedVariantId) || null;
+  const unitPrice = numberPrice(selectedVariant?.price ?? product?.price);
   const subtotal = useMemo(() => unitPrice * quantity, [unitPrice, quantity]);
 
   const totalBeforePaymentFee = useMemo(
@@ -118,7 +133,7 @@ export default function CheckoutPage() {
     [paypalFee, totalBeforePaymentFee]
   );
 
-  const stock = Number(product?.stock ?? 1);
+  const stock = Number(selectedVariant?.stock ?? product?.stock ?? 1);
   const sellerName =
     product?.seller_name || product?.seller || "Verified Seller";
 
@@ -152,7 +167,8 @@ export default function CheckoutPage() {
           stock,
           status,
           game_name,
-          slug
+          slug,
+          has_variants
         `
         )
         .eq("id", Number(productId))
@@ -164,7 +180,39 @@ export default function CheckoutPage() {
         return;
       }
 
+      let loadedVariants: ProductVariant[] = [];
+      let initialVariantId: number | null = null;
+
+      if (data.has_variants) {
+        const { data: variantRows, error: variantError } = await supabase
+          .from("product_variants")
+          .select("id,sku,name,attributes,price,stock,status")
+          .eq("product_id", data.id)
+          .eq("status", "active")
+          .order("sort_order", { ascending: true })
+          .order("id", { ascending: true });
+
+        if (variantError) {
+          setError(variantError.message);
+          setLoading(false);
+          return;
+        }
+
+        loadedVariants = (variantRows || []) as ProductVariant[];
+        const requested = loadedVariants.find((variant) => variant.id === requestedVariantId);
+        const firstAvailable = loadedVariants.find((variant) => Number(variant.stock || 0) > 0);
+        initialVariantId = requested?.id || firstAvailable?.id || loadedVariants[0]?.id || null;
+
+        if (!initialVariantId) {
+          setError("Produk ini belum memiliki varian aktif.");
+          setLoading(false);
+          return;
+        }
+      }
+
       setProduct(data);
+      setVariants(loadedVariants);
+      setSelectedVariantId(initialVariantId);
       setCouponCode("");
       setCouponError("");
       setCouponData(null);
@@ -187,7 +235,7 @@ export default function CheckoutPage() {
     }
 
     loadCheckout();
-  }, [productId]);
+  }, [productId, requestedVariantId]);
 
   useEffect(() => {
     if (!couponData) return;
@@ -289,63 +337,46 @@ export default function CheckoutPage() {
     setCreating(true);
     setError("");
 
-    const orderPayload = {
-      buyer_id: userId,
-      seller_id: product.seller_id,
-      product_id: product.id,
-      quantity,
-      total_price: total,
-      price: String(total),
-      status: "pending",
-      payment_status: "unpaid",
-      product_title: product.title,
-      seller_name: sellerName,
-      game_name: product.game_name,
-      category: product.category,
-    };
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
 
-    const { data, error } = await supabase
-      .from("orders")
-      .insert(orderPayload)
-      .select("id")
-      .single();
-
-    if (error) {
-      const fallbackPayload = {
-        buyer_id: userId,
-        seller_id: product.seller_id,
-        product_id: product.id,
-        quantity,
-        total_price: total,
-        status: "pending",
-      };
-
-      const retry = await supabase
-        .from("orders")
-        .insert(fallbackPayload)
-        .select("id")
-        .single();
-
-      if (retry.error) {
-        setError(retry.error.message);
-        setCreating(false);
-        return;
+      if (sessionError || !accessToken) {
+        throw new Error("Please login again before checkout.");
       }
 
-      router.push(`/payment/${retry.data.id}?method=${paymentMethod}`);
-      return;
-    }
+      const response = await fetch("/api/checkout/create-order", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          productId: product.id,
+          variantId: selectedVariant?.id || null,
+          quantity,
+          paymentMethod,
+          couponCode: couponData?.code || null,
+        }),
+      });
 
-    if (couponData) {
-      await supabase
-        .from("coupons")
-        .update({
-          used_count: Number(couponData.used_count || 0) + 1,
-        })
-        .eq("id", couponData.id);
-    }
+      const json = await response.json();
 
-    router.push(`/payment/${data.id}?method=${paymentMethod}`);
+      if (!response.ok || !json.order?.id) {
+        throw new Error(json.error || "Failed to create marketplace order.");
+      }
+
+      // The API recalculates product price, stock, coupon, and payment fee on
+      // the server. Client totals are only a checkout preview.
+      router.push(`/payment/${json.order.id}?method=${paymentMethod}`);
+    } catch (checkoutError) {
+      setError(
+        checkoutError instanceof Error
+          ? checkoutError.message
+          : "Failed to create marketplace order."
+      );
+      setCreating(false);
+    }
   }
 
   if (loading) {
@@ -411,6 +442,35 @@ export default function CheckoutPage() {
               <div className="flex-1">
                 <h3 className="text-2xl font-black">{product?.title}</h3>
 
+                {variants.length > 0 ? (
+                  <div className="mt-4">
+                    <label className="mb-2 block text-sm font-black text-slate-300">Selected Variant</label>
+                    <select
+                      value={selectedVariantId || ""}
+                      onChange={(event) => {
+                        setSelectedVariantId(Number(event.target.value));
+                        setQuantity(1);
+                        removeCoupon();
+                      }}
+                      className="w-full rounded-xl border border-cyan-400/30 bg-black px-4 py-3 text-white outline-none focus:border-cyan-400"
+                    >
+                      {variants.map((variant) => (
+                        <option key={variant.id} value={variant.id} disabled={Number(variant.stock || 0) <= 0}>
+                          {variant.name} · {variant.sku} · {formatPrice(variant.price)} · Stock {variant.stock}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedVariant ? (
+                      <p className="mt-2 text-sm text-violet-300">
+                        SKU {selectedVariant.sku}
+                        {selectedVariant.attributes && Object.keys(selectedVariant.attributes).length > 0
+                          ? ` · ${Object.entries(selectedVariant.attributes).map(([key, value]) => `${key}: ${String(value)}`).join(" · ")}`
+                          : ""}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="mt-4 flex flex-wrap gap-2">
                   <span className="rounded-full bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200">
                     {product?.category || "Game Product"}
@@ -428,7 +488,7 @@ export default function CheckoutPage() {
                 </div>
 
                 <p className="mt-5 text-3xl font-black text-cyan-300">
-                  {formatPrice(product?.price)}
+                  {formatPrice(selectedVariant?.price ?? product?.price)}
                 </p>
 
                 <div className="mt-6 flex items-center gap-3">
@@ -507,7 +567,7 @@ export default function CheckoutPage() {
             <div className="mt-6 space-y-4 text-sm">
               <div className="flex justify-between border-b border-white/10 pb-3">
                 <span className="text-slate-300">Item Price</span>
-                <span className="font-bold">{formatPrice(product?.price)}</span>
+                <span className="font-bold">{formatPrice(selectedVariant?.price ?? product?.price)}</span>
               </div>
 
               <div className="flex justify-between border-b border-white/10 pb-3">

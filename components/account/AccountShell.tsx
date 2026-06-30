@@ -12,6 +12,8 @@ const menuItems = [
   { href: "/account", label: "Account", icon: "👤" },
   { href: "/account/connects", label: "Social Connect", icon: "🔗" },
   { href: "/account/security", label: "Privacy & Security", icon: "🛡️" },
+  { href: "/account/billing", label: "Billing & Invoice", icon: "🧾" },
+  { href: "/account/privacy", label: "Data & Deletion", icon: "🗂️" },
   { href: "/account/verification", label: "Verification", icon: "✅" },
 ];
 

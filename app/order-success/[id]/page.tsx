@@ -1,4 +1,8 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
   FaCheckCircle,
   FaClock,
@@ -8,47 +12,35 @@ import {
   FaShoppingBag,
   FaStore,
 } from "react-icons/fa";
-import MarketplaceEventTracker from "@/components/marketplace/MarketplaceEventTracker";
+import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
-
-type PageProps = {
-  params: Promise<{
-    id: string;
-  }>;
-};
 
 type Order = {
   id: number;
-  created_at?: string | null;
-  product?: string | null;
-  buyer?: string | null;
-  price?: string | number | null;
   status?: string | null;
-  payment_proof?: string | null;
+  payment_status?: string | null;
+  payment_method?: string | null;
+  product?: string | null;
+  product_title?: string | null;
   product_id?: number | null;
-  buyer_id?: string | null;
-  seller_id?: string | null;
+  seller_name?: string | null;
   quantity?: number | null;
   total_amount?: string | number | null;
   total_price?: string | number | null;
-  payment_status?: string | null;
-  product_title?: string | null;
-  seller_name?: string | null;
+  price?: string | number | null;
   game_name?: string | null;
   category?: string | null;
+  escrow_status?: string | null;
 };
 
 type Product = {
   id: number;
   title?: string | null;
   price?: string | number | null;
-  image_url?: string | null;
   seller?: string | null;
   seller_name?: string | null;
-  seller_id?: string | null;
   game_name?: string | null;
   category?: string | null;
-  slug?: string | null;
 };
 
 function numberPrice(value: string | number | null | undefined) {
@@ -57,96 +49,99 @@ function numberPrice(value: string | number | null | undefined) {
   return Number(String(value).replace(/[^\d]/g, "") || 0);
 }
 
-function formatPrice(value: string | number | null | undefined) {
-  const amount = numberPrice(value);
-
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(amount);
+function prettyStatus(value?: string | null) {
+  return String(value || "pending")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
+export default function OrderSuccessPage() {
+  const params = useParams();
+  const orderId = Number(params?.id || 0);
+  const { formatPrice } = useCurrency();
+  const [order, setOrder] = useState<Order | null>(null);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-function getTotal(order: Order | null, product: Product | null) {
-  return (
-    numberPrice(order?.total_amount) ||
-    numberPrice(order?.total_price) ||
-    numberPrice(order?.price) ||
-    numberPrice(product?.price)
+  useEffect(() => {
+    async function loadOrder() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
+
+        if (sessionError || !accessToken) {
+          throw new Error("Please login again to view this order.");
+        }
+
+        const response = await fetch(`/api/orders/${orderId}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          throw new Error(json.error || "Failed to load order.");
+        }
+
+        setOrder(json.order as Order);
+        setProduct((json.product || null) as Product | null);
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error ? loadError.message : "Failed to load order."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (orderId > 0) loadOrder();
+  }, [orderId]);
+
+  const total = useMemo(
+    () =>
+      numberPrice(order?.total_amount) ||
+      numberPrice(order?.total_price) ||
+      numberPrice(order?.price) ||
+      numberPrice(product?.price),
+    [order, product]
   );
-}
 
-export default async function OrderSuccessPage({ params }: PageProps) {
-  const { id } = await params;
-  const orderId = Number(id);
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-[#050816] px-4 py-20 text-center text-white">
+        Loading order confirmation...
+      </main>
+    );
+  }
 
-  const { data: order } = await supabase
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .maybeSingle();
-
-  let product: Product | null = null;
-
-  if (order?.product_id) {
-    const { data: productData } = await supabase
-      .from("products")
-      .select(
-        `
-        id,
-        title,
-        price,
-        image_url,
-        seller,
-        seller_name,
-        seller_id,
-        game_name,
-        category,
-        slug
-      `
-      )
-      .eq("id", Number(order.product_id))
-      .maybeSingle();
-
-    product = productData || null;
+  if (!order) {
+    return (
+      <main className="min-h-screen bg-[#050816] px-4 py-20 text-center text-white">
+        <h1 className="text-4xl font-black">Order Confirmation Unavailable</h1>
+        <p className="mt-4 text-red-300">{error || "Order not found."}</p>
+        <Link
+          href="/my-orders"
+          className="mt-8 inline-flex rounded-xl bg-cyan-400 px-6 py-4 font-black text-black"
+        >
+          My Orders
+        </Link>
+      </main>
+    );
   }
 
   const productTitle =
-    order?.product_title || order?.product || product?.title || "Product";
+    order.product_title || order.product || product?.title || "Product";
   const sellerName =
-    order?.seller_name ||
-    product?.seller_name ||
-    product?.seller ||
-    "Verified Seller";
-  const gameName = order?.game_name || product?.game_name || "-";
-  const category = order?.category || product?.category || "Game Product";
-  const quantity = Number(order?.quantity || 1);
-  const total = getTotal(order, product);
-  const paymentStatus = order?.payment_status || "-";
-  const orderStatus = order?.status || "-";
-  const eventGameName = order?.game_name || product?.game_name || null;
-  const eventCategoryName = order?.category || product?.category || null;
+    order.seller_name || product?.seller_name || product?.seller || "Seller";
+  const gameName = order.game_name || product?.game_name || "-";
+  const category = order.category || product?.category || "Game Product";
 
   return (
     <main className="min-h-screen bg-[#050816] text-white">
-      <MarketplaceEventTracker
-        event_type="order_complete"
-        order_id={order?.id || orderId}
-        product_id={order?.product_id || product?.id || null}
-        seller_id={order?.seller_id || product?.seller_id || null}
-        game_slug={eventGameName ? slugify(eventGameName) : null}
-        game_name={eventGameName}
-        category_slug={eventCategoryName ? slugify(eventCategoryName) : null}
-        category_name={eventCategoryName}
-      />
-
       <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top,rgba(34,211,238,.18),transparent_38%)]">
         <div className="mx-auto max-w-5xl px-4 py-14 text-center">
           <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-400/10">
@@ -154,16 +149,14 @@ export default async function OrderSuccessPage({ params }: PageProps) {
           </div>
 
           <h1 className="mt-8 text-5xl font-black md:text-6xl">
-            Order Created
+            Payment Successful
           </h1>
-
           <p className="mx-auto mt-4 max-w-2xl text-slate-300">
-            Your order has been recorded successfully. Keep all communication
-            and delivery inside ComePlayers for safer trading.
+            Payment is recorded and held in escrow. The seller can now deliver
+            your digital product securely inside ComePlayers.
           </p>
-
           <div className="mt-6 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-5 py-2 text-sm font-black text-cyan-200">
-            Order #{order?.id || orderId}
+            Order #{order.id}
           </div>
         </div>
       </section>
@@ -172,24 +165,20 @@ export default async function OrderSuccessPage({ params }: PageProps) {
         <div className="space-y-6">
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
             <h2 className="flex items-center gap-3 text-2xl font-black">
-              <FaReceipt className="text-cyan-300" />
-              Order Summary
+              <FaReceipt className="text-cyan-300" /> Order Summary
             </h2>
 
             <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-5">
               <h3 className="text-2xl font-black">{productTitle}</h3>
-
               <div className="mt-4 flex flex-wrap gap-2">
                 <span className="rounded-full bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200">
                   {category}
                 </span>
-
                 <span className="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-300">
                   {gameName}
                 </span>
-
                 <span className="rounded-full border border-white/10 px-4 py-2 text-sm text-slate-300">
-                  Qty: {quantity}
+                  Qty: {Number(order.quantity || 1)}
                 </span>
               </div>
 
@@ -198,7 +187,6 @@ export default async function OrderSuccessPage({ params }: PageProps) {
                   <p className="text-sm text-slate-400">Seller</p>
                   <p className="mt-1 font-black">{sellerName}</p>
                 </div>
-
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
                   <p className="text-sm text-slate-400">Total Paid</p>
                   <p className="mt-1 text-2xl font-black text-cyan-300">
@@ -211,31 +199,22 @@ export default async function OrderSuccessPage({ params }: PageProps) {
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
             <h2 className="text-2xl font-black">What Happens Next?</h2>
-
             <div className="mt-6 grid gap-4 md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <FaCheckCircle className="text-3xl text-emerald-300" />
-                <h3 className="mt-4 font-black">1. Payment Recorded</h3>
-                <p className="mt-2 text-sm text-slate-400">
-                  Your payment/order status has been updated.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <FaStore className="text-3xl text-cyan-300" />
-                <h3 className="mt-4 font-black">2. Seller Processes</h3>
-                <p className="mt-2 text-sm text-slate-400">
-                  Seller prepares delivery for your digital item.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <FaShieldAlt className="text-3xl text-yellow-300" />
-                <h3 className="mt-4 font-black">3. Complete Safely</h3>
-                <p className="mt-2 text-sm text-slate-400">
-                  Confirm delivery only after everything is received.
-                </p>
-              </div>
+              <Step
+                icon={<FaCheckCircle />}
+                title="1. Payment Held"
+                text="Payment is secured in marketplace escrow."
+              />
+              <Step
+                icon={<FaStore />}
+                title="2. Seller Delivers"
+                text="The seller sends the account, key, or digital item."
+              />
+              <Step
+                icon={<FaShieldAlt />}
+                title="3. Confirm Safely"
+                text="Check delivery before releasing payment to the seller."
+              />
             </div>
           </div>
         </div>
@@ -243,58 +222,75 @@ export default async function OrderSuccessPage({ params }: PageProps) {
         <aside className="space-y-6">
           <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-6">
             <h3 className="text-xl font-black">Status</h3>
-
             <div className="mt-5 space-y-4 text-sm">
-              <div className="flex justify-between border-b border-white/10 pb-3">
-                <span className="text-slate-300">Order Status</span>
-                <span className="font-black text-cyan-300">{orderStatus}</span>
-              </div>
-
-              <div className="flex justify-between border-b border-white/10 pb-3">
-                <span className="text-slate-300">Payment Status</span>
-                <span className="font-black text-emerald-300">
-                  {paymentStatus}
-                </span>
-              </div>
-
-              <div className="flex justify-between">
-                <span className="text-slate-300">Order ID</span>
-                <span className="font-black">#{order?.id || orderId}</span>
-              </div>
+              <StatusRow label="Order" value={prettyStatus(order.status)} />
+              <StatusRow
+                label="Payment"
+                value={prettyStatus(order.payment_status)}
+              />
+              <StatusRow
+                label="Escrow"
+                value={prettyStatus(order.escrow_status)}
+              />
+              <StatusRow
+                label="Method"
+                value={prettyStatus(order.payment_method)}
+              />
             </div>
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
             <h3 className="flex items-center gap-2 text-xl font-black">
-              <FaClock className="text-yellow-300" />
-              Keep Updated
+              <FaClock className="text-yellow-300" /> Track Delivery
             </h3>
-
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              You can check your order progress from My Orders. Seller delivery
-              and confirmation should stay inside ComePlayers.
+              Open the order detail page to receive delivery information and
+              confirm completion.
             </p>
-
             <div className="mt-6 space-y-3">
               <Link
-                href="/my-orders"
+                href={`/orders/${order.id}`}
                 className="flex items-center justify-center gap-3 rounded-xl bg-cyan-400 px-5 py-4 font-black text-black hover:bg-cyan-300"
               >
-                <FaShoppingBag />
-                View My Orders
+                <FaShoppingBag /> Open Order
               </Link>
-
               <Link
                 href="/games"
                 className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-black/30 px-5 py-4 font-black text-white hover:border-cyan-400"
               >
-                <FaHome />
-                Browse More Games
+                <FaHome /> Browse More Games
               </Link>
             </div>
           </div>
         </aside>
       </section>
     </main>
+  );
+}
+
+function StatusRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4 border-b border-white/10 pb-3 last:border-0 last:pb-0">
+      <span className="text-slate-300">{label}</span>
+      <span className="text-right font-black text-cyan-200">{value}</span>
+    </div>
+  );
+}
+
+function Step({
+  icon,
+  title,
+  text,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  text: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
+      <div className="text-3xl text-emerald-300">{icon}</div>
+      <h3 className="mt-4 font-black">{title}</h3>
+      <p className="mt-2 text-sm text-slate-400">{text}</p>
+    </div>
   );
 }

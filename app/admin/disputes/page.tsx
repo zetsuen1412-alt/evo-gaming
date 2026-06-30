@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -129,7 +130,7 @@ function readableDisputeStatus(status: string) {
 }
 
 export default function AdminDisputesV2Page() {
-  const { formatPrice, currency } = useCurrency();
+  const { formatPrice } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [disputes, setDisputes] = useState<Dispute[]>([]);
@@ -241,30 +242,12 @@ export default function AdminDisputesV2Page() {
     initializePage();
   }, []);
 
-  async function notifyUser(userId: string | null, title: string, message: string, linkUrl: string) {
-    if (!userId) return;
-
-    const { error } = await supabase.from("notifications").insert({
-      user_id: userId,
-      type: "dispute",
-      title,
-      message,
-      link_url: linkUrl,
-      is_read: false,
-    });
-
-    if (error) {
-      console.error("Dispute notification error:", error.message);
-    }
-  }
-
   async function updateDisputeStatus(
     dispute: Dispute,
     newStatus: "investigating" | "buyer_win" | "seller_win" | "closed"
   ) {
     if (!user || !isAdmin) return;
 
-    const order = dispute.orders;
     const note =
       adminNotes[dispute.id]?.trim() ||
       (newStatus === "investigating"
@@ -272,125 +255,41 @@ export default function AdminDisputesV2Page() {
         : `Dispute resolved as ${readableDisputeStatus(newStatus)}.`);
 
     if (newStatus === "buyer_win") {
-      if (!confirm("Resolve this dispute as BUYER WINS? Order will be marked Refunded.")) return;
+      if (!confirm("Resolve this dispute as BUYER WINS and refund the buyer?")) return;
     } else if (newStatus === "seller_win") {
-      if (!confirm("Resolve this dispute as SELLER WINS? Order will be marked Completed.")) return;
+      if (!confirm("Resolve as SELLER WINS? Escrow is released only when delivery is complete.")) return;
     } else if (newStatus === "closed") {
-      if (!confirm("Close this dispute without changing order status?")) return;
-    } else if (newStatus === "investigating") {
-      if (!confirm("Mark this dispute as Investigating?")) return;
+      if (!confirm("Close this dispute without changing the financial result?")) return;
+    } else if (!confirm("Mark this dispute as investigating?")) {
+      return;
+    }
+
+    let manualReference: string | undefined;
+    if (newStatus === "buyer_win") {
+      const paymentMethod = String(dispute.orders?.payment_proof || "").toLowerCase();
+      if (!paymentMethod.includes("paypal") && !paymentMethod.includes("wallet")) {
+        manualReference =
+          prompt("Enter the bank/QRIS/manual refund reference if required:")?.trim() ||
+          undefined;
+      }
     }
 
     try {
       setUpdatingDisputeId(dispute.id);
-
-      const disputeUpdate: Record<string, string | null> = {
-        status: newStatus,
-        admin_note: note,
-      };
-
-      if (["buyer_win", "seller_win", "closed"].includes(newStatus)) {
-        disputeUpdate.resolved_by = user.id;
-        disputeUpdate.resolved_at = new Date().toISOString();
-      }
-
-      const { error: disputeError } = await supabase
-        .from("disputes")
-        .update(disputeUpdate)
-        .eq("id", dispute.id);
-
-      if (disputeError) {
-        alert(disputeError.message);
-        setUpdatingDisputeId(null);
-        return;
-      }
-
-      if (order) {
-        let orderStatus: string | null = null;
-
-        if (newStatus === "investigating") orderStatus = "Disputed";
-        if (newStatus === "buyer_win") orderStatus = "Refunded";
-        if (newStatus === "seller_win") orderStatus = "Completed";
-
-        if (orderStatus) {
-          const { error: orderError } = await supabase
-            .from("orders")
-            .update({ status: orderStatus })
-            .eq("id", order.id);
-
-          if (orderError) {
-            alert(orderError.message);
-            setUpdatingDisputeId(null);
-            return;
-          }
-        }
-      }
-
-      if (newStatus === "investigating") {
-        await notifyUser(
-          dispute.buyer_id,
-          "Dispute Under Investigation",
-          `Your dispute for order #${dispute.order_id} is now under admin investigation.`,
-          `/order/${dispute.order_id}`
-        );
-        await notifyUser(
-          dispute.seller_id,
-          "Dispute Under Investigation",
-          `Dispute for order #${dispute.order_id} is now under admin investigation.`,
-          `/order/${dispute.order_id}`
-        );
-      }
-
-      if (newStatus === "buyer_win") {
-        await notifyUser(
-          dispute.buyer_id,
-          "Dispute Resolved: Buyer Wins",
-          `Your dispute for order #${dispute.order_id} has been approved by admin.`,
-          `/order/${dispute.order_id}`
-        );
-        await notifyUser(
-          dispute.seller_id,
-          "Dispute Resolved: Buyer Wins",
-          `Dispute for order #${dispute.order_id} was resolved in buyer's favor.`,
-          `/order/${dispute.order_id}`
-        );
-      }
-
-      if (newStatus === "seller_win") {
-        await notifyUser(
-          dispute.buyer_id,
-          "Dispute Resolved: Seller Wins",
-          `Dispute for order #${dispute.order_id} was resolved in seller's favor.`,
-          `/order/${dispute.order_id}`
-        );
-        await notifyUser(
-          dispute.seller_id,
-          "Dispute Resolved: Seller Wins",
-          `Dispute for order #${dispute.order_id} was resolved in your favor.`,
-          `/order/${dispute.order_id}`
-        );
-      }
-
-      if (newStatus === "closed") {
-        await notifyUser(
-          dispute.buyer_id,
-          "Dispute Closed",
-          `Your dispute for order #${dispute.order_id} has been closed by admin.`,
-          `/order/${dispute.order_id}`
-        );
-        await notifyUser(
-          dispute.seller_id,
-          "Dispute Closed",
-          `Dispute for order #${dispute.order_id} has been closed by admin.`,
-          `/order/${dispute.order_id}`
-        );
-      }
+      await authenticatedFetchJson("/api/admin/disputes", {
+        method: "PATCH",
+        body: JSON.stringify({
+          disputeId: dispute.id,
+          action: newStatus,
+          note,
+          manualReference,
+        }),
+      });
 
       await loadDisputes();
-      setUpdatingDisputeId(null);
     } catch (error) {
-      console.error("Update dispute error:", error);
-      alert("Failed to update dispute.");
+      alert(error instanceof Error ? error.message : "Failed to update dispute.");
+    } finally {
       setUpdatingDisputeId(null);
     }
   }
@@ -434,7 +333,7 @@ export default function AdminDisputesV2Page() {
         <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-orange-400/30 bg-orange-400/10 px-4 py-2 text-sm font-black text-orange-300">
-              Admin Dispute Center V2
+              Admin Dispute Center V3
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">Disputes</h1>
@@ -717,7 +616,14 @@ export default function AdminDisputesV2Page() {
                       </button>
 
                       <Link
-                        href={`/order/${dispute.order_id}`}
+                        href={`/resolution-center/${dispute.id}`}
+                        className="rounded-2xl bg-orange-400 px-5 py-3 text-center font-black text-black transition hover:bg-orange-300"
+                      >
+                        Open Full Case File
+                      </Link>
+
+                      <Link
+                        href={`/orders/${dispute.order_id}`}
                         className="rounded-2xl border border-orange-400/40 px-5 py-3 text-center font-black text-orange-300 transition hover:bg-orange-400 hover:text-black"
                       >
                         View Order Detail

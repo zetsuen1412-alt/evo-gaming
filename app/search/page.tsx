@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { headers } from "next/headers";
 import MarketplaceSearch from "@/components/marketplace/MarketplaceSearch";
-import { useCurrency } from "@/components/CurrencyProvider";
+import { formatDeliveryEta } from "@/lib/sellerServiceLevel";
 import { supabase } from "@/lib/supabase";
 
 type SearchGame = {
@@ -21,6 +21,10 @@ type SearchProduct = {
   category: string | null;
   game_name: string | null;
   relevance_score?: number;
+  offer_region?: string | null;
+  offer_platform?: string | null;
+  delivery_eta_minutes?: number | null;
+  stock?: number | null;
 };
 
 type SearchCategory = {
@@ -253,6 +257,20 @@ export default async function MarketplaceSearchPage({ searchParams }: PageProps)
                           {product.game_name || "Game"}
                           {product.category ? ` • ${product.category}` : ""}
                         </p>
+
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
+                          <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1">
+                            {product.offer_region || "Global"}
+                          </span>
+                          <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1">
+                            {product.offer_platform || "Any platform"}
+                          </span>
+                          {product.delivery_eta_minutes ? (
+                            <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1">
+                              {formatDeliveryEta(product.delivery_eta_minutes)} delivery
+                            </span>
+                          ) : null}
+                        </div>
 
                         <p className="mt-4 text-xl font-black text-cyan-300">
                           {formatPrice(product.price)}

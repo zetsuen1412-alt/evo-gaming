@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -154,26 +155,20 @@ export default function AdminUserManagementV1Page() {
   async function updateRole(profileId: string, role: string) {
     if (!isAdmin) return;
 
-    if (profileId === user?.id && role !== "admin") {
-      alert("You cannot remove admin role from your own account.");
-      return;
-    }
-
     setUpdatingUserId(profileId);
 
-    const { error } = await supabase
-      .from("profiles")
-      .update({ role })
-      .eq("id", profileId);
+    try {
+      await authenticatedFetchJson("/api/admin/users", {
+        method: "PATCH",
+        body: JSON.stringify({ profileId, role }),
+      });
 
-    if (error) {
-      alert(error.message);
+      await loadProfiles();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update user role.");
+    } finally {
       setUpdatingUserId(null);
-      return;
     }
-
-    await loadProfiles();
-    setUpdatingUserId(null);
   }
 
   async function updateSellerStatus(profile: Profile, sellerStatus: string) {
@@ -181,35 +176,18 @@ export default function AdminUserManagementV1Page() {
 
     setUpdatingUserId(profile.id);
 
-    const nextRole =
-      sellerStatus === "approved"
-        ? profile.role === "admin"
-          ? "admin"
-          : "seller"
-        : profile.role === "admin"
-        ? "admin"
-        : "user";
+    try {
+      await authenticatedFetchJson("/api/admin/users", {
+        method: "PATCH",
+        body: JSON.stringify({ profileId: profile.id, sellerStatus }),
+      });
 
-    const { error } = await supabase
-      .from("profiles")
-      .update({
-        seller_status: sellerStatus,
-        role: nextRole,
-        seller_name:
-          sellerStatus === "approved"
-            ? profile.seller_name || profile.username || profile.email
-            : profile.seller_name,
-      })
-      .eq("id", profile.id);
-
-    if (error) {
-      alert(error.message);
+      await loadProfiles();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update seller status.");
+    } finally {
       setUpdatingUserId(null);
-      return;
     }
-
-    await loadProfiles();
-    setUpdatingUserId(null);
   }
 
   async function quickApproveSeller(profile: Profile) {

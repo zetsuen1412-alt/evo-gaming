@@ -5,9 +5,17 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { useCurrency } from "@/components/CurrencyProvider";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 import { supabase } from "@/lib/supabase";
 import { createNotification } from "@/lib/createNotification";
 import { calculateSellerReputation } from "@/lib/sellerReputation";
+import {
+  effectivePresence,
+  formatDeliveryEta,
+  serviceLevelClass,
+  serviceLevelDescription,
+  serviceLevelLabel,
+} from "@/lib/sellerServiceLevel";
 
 type SellerProfile = {
   id: string;
@@ -19,6 +27,17 @@ type SellerProfile = {
   bio: string | null;
   discord: string | null;
   created_at: string;
+  seller_presence_mode?: string | null;
+  seller_last_seen_at?: string | null;
+  seller_delivery_sla_minutes?: number | null;
+  seller_avg_delivery_minutes?: number | string | null;
+  seller_on_time_rate?: number | string | null;
+  seller_total_deliveries?: number | null;
+  seller_late_deliveries?: number | null;
+  seller_service_level?: string | null;
+  store_slug?: string | null;
+  store_name?: string | null;
+  store_is_published?: boolean | null;
 };
 
 type Product = {
@@ -39,8 +58,18 @@ type Review = {
   product_id: number | null;
   seller_id: string;
   buyer_id: string;
+  title?: string | null;
   rating: number;
+  communication_rating?: number | null;
+  delivery_rating?: number | null;
+  accuracy_rating?: number | null;
+  value_rating?: number | null;
   review_text: string | null;
+  status?: string | null;
+  is_verified_purchase?: boolean | null;
+  seller_response?: string | null;
+  seller_responded_at?: string | null;
+  helpful_count?: number | null;
   created_at: string;
 };
 
@@ -91,6 +120,7 @@ export default function SellerProfileV3NotificationFollowerPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [followRow, setFollowRow] = useState<FollowRow | null>(null);
   const [followersCount, setFollowersCount] = useState(0);
+  const [reviewActionId, setReviewActionId] = useState<number | null>(null);
 
   const sellerDisplayName = useMemo(() => {
     return seller?.seller_name || seller?.username || seller?.email || "Seller";
@@ -190,6 +220,7 @@ export default function SellerProfileV3NotificationFollowerPage() {
       .from("seller_reviews")
       .select("*")
       .eq("seller_id", sellerId)
+      .eq("status", "published")
       .order("id", { ascending: false });
 
     if (reviewError) {
@@ -232,6 +263,60 @@ export default function SellerProfileV3NotificationFollowerPage() {
     }
 
     setLoading(false);
+  }
+
+  async function toggleHelpful(reviewId: number) {
+    if (!currentUser) {
+      alert("Please login before voting on a review.");
+      return;
+    }
+
+    setReviewActionId(reviewId);
+    try {
+      const result = await authenticatedFetchJson<{
+        helpful: boolean;
+        helpfulCount: number;
+      }>(`/api/reviews/${reviewId}/helpful`, { method: "POST" });
+
+      setReviews((current) =>
+        current.map((review) =>
+          review.id === reviewId
+            ? { ...review, helpful_count: result.helpfulCount }
+            : review
+        )
+      );
+      alert(result.helpful ? "Marked as helpful." : "Helpful vote removed.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to vote on review.");
+    } finally {
+      setReviewActionId(null);
+    }
+  }
+
+  async function reportReview(reviewId: number) {
+    if (!currentUser) {
+      alert("Please login before reporting a review.");
+      return;
+    }
+
+    const reason = window.prompt(
+      "Report reason: spam, abusive, personal_information, fake_review, off_platform_contact, or other"
+    );
+    if (!reason) return;
+    const details = window.prompt("Add optional details (maximum 500 characters):") || "";
+
+    setReviewActionId(reviewId);
+    try {
+      await authenticatedFetchJson(`/api/reviews/${reviewId}/report`, {
+        method: "POST",
+        body: JSON.stringify({ reason, details }),
+      });
+      alert("Review report submitted to ComePlayers moderation.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to report review.");
+    } finally {
+      setReviewActionId(null);
+    }
   }
 
   async function toggleFollow() {
@@ -327,6 +412,11 @@ export default function SellerProfileV3NotificationFollowerPage() {
 
   const roundedRating =
     averageRating > 0 ? Math.round(averageRating * 10) / 10 : 0;
+  const sellerPresence = effectivePresence(
+    seller.seller_presence_mode,
+    seller.seller_last_seen_at
+  );
+  const sellerServiceLevel = serviceLevelLabel(seller.seller_service_level);
 
   return (
     <main className="min-h-screen bg-[#020617] text-white">
@@ -364,6 +454,26 @@ export default function SellerProfileV3NotificationFollowerPage() {
                     {seller.seller_status === "approved"
                       ? "Verified Seller"
                       : "Seller"}
+                  </span>
+
+                  <span
+                    className={`rounded-full border px-4 py-2 text-sm font-black capitalize ${
+                      sellerPresence === "online"
+                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                        : sellerPresence === "away"
+                          ? "border-yellow-400/30 bg-yellow-400/10 text-yellow-300"
+                          : "border-slate-400/30 bg-slate-400/10 text-slate-300"
+                    }`}
+                  >
+                    {sellerPresence}
+                  </span>
+
+                  <span
+                    className={`rounded-full border px-4 py-2 text-sm font-black ${serviceLevelClass(
+                      seller.seller_service_level
+                    )}`}
+                  >
+                    {sellerServiceLevel} Service
                   </span>
 
                   <span
@@ -416,6 +526,15 @@ export default function SellerProfileV3NotificationFollowerPage() {
                 </button>
               )}
 
+              {seller.store_slug && seller.store_is_published !== false && (
+                <Link
+                  href={`/store/${seller.store_slug}`}
+                  className="inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black transition hover:bg-cyan-300"
+                >
+                  Visit Storefront
+                </Link>
+              )}
+
               <Link
                 href="/following"
                 className="inline-flex h-12 items-center justify-center rounded-full border border-cyan-400 px-6 font-bold text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
@@ -445,6 +564,39 @@ export default function SellerProfileV3NotificationFollowerPage() {
                 <p className="mt-3 text-sm text-gray-300">
                   {sellerReputation.description}
                 </p>
+              </div>
+
+              <div
+                className={`rounded-2xl border p-5 ${serviceLevelClass(
+                  seller.seller_service_level
+                )}`}
+              >
+                <p className="text-sm opacity-80">Delivery Service Level</p>
+                <div className="mt-2 flex items-end justify-between gap-3">
+                  <p className="text-3xl font-black text-white">
+                    {sellerServiceLevel}
+                  </p>
+                  <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-black">
+                    {Number(seller.seller_on_time_rate || 100).toFixed(1)}% on time
+                  </span>
+                </div>
+                <p className="mt-3 text-sm text-gray-300">
+                  {serviceLevelDescription(seller.seller_service_level)}
+                </p>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-gray-400">Promise</p>
+                    <p className="mt-1 font-black text-white">
+                      {formatDeliveryEta(seller.seller_delivery_sla_minutes || 60)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <p className="text-gray-400">Average</p>
+                    <p className="mt-1 font-black text-white">
+                      {formatDeliveryEta(seller.seller_avg_delivery_minutes || 0)}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
@@ -561,13 +713,54 @@ export default function SellerProfileV3NotificationFollowerPage() {
                       </p>
                     </div>
 
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {review.is_verified_purchase ? (
+                        <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[11px] font-black text-emerald-300">
+                          Verified Purchase
+                        </span>
+                      ) : null}
+                      <span className="text-xs text-gray-500">
+                        Order #{review.order_id}
+                      </span>
+                    </div>
+
+                    {review.title ? (
+                      <p className="mt-3 font-black text-white">{review.title}</p>
+                    ) : null}
+
                     <p className="mt-3 text-sm leading-6 text-gray-300">
                       {review.review_text || "No written review."}
                     </p>
 
-                    <p className="mt-3 text-xs text-gray-500">
-                      Order #{review.order_id}
-                    </p>
+                    {review.seller_response ? (
+                      <div className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+                        <p className="text-xs font-black uppercase tracking-wider text-cyan-300">
+                          Seller response
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-gray-200">
+                          {review.seller_response}
+                        </p>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleHelpful(review.id)}
+                        disabled={reviewActionId === review.id}
+                        className="rounded-lg border border-white/10 px-3 py-2 text-xs font-black text-gray-300 hover:border-cyan-400 hover:text-cyan-300 disabled:opacity-50"
+                      >
+                        Helpful ({Number(review.helpful_count || 0)})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => reportReview(review.id)}
+                        disabled={reviewActionId === review.id}
+                        className="rounded-lg border border-red-400/20 px-3 py-2 text-xs font-black text-red-300 hover:bg-red-400/10 disabled:opacity-50"
+                      >
+                        Report
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

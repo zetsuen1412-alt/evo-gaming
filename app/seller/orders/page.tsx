@@ -15,7 +15,12 @@ import {
   FaWallet,
 } from "react-icons/fa";
 import { useCurrency } from "@/components/CurrencyProvider";
-import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
+import {
+  deliverySlaState,
+  formatRemainingDuration,
+  serviceLevelLabel,
+} from "@/lib/sellerServiceLevel";
 
 type Order = {
   id: number;
@@ -36,6 +41,20 @@ type Order = {
   seller_name?: string | null;
   game_name?: string | null;
   category?: string | null;
+  escrow_status?: string | null;
+  delivered_at?: string | null;
+  completed_at?: string | null;
+  seller_gross_amount?: string | number | null;
+  marketplace_fee_amount?: string | number | null;
+  seller_sales_tax_rate_percent?: string | number | null;
+  seller_sales_tax_amount?: string | number | null;
+  seller_earning_amount?: string | number | null;
+  seller_payout_status?: string | null;
+  delivery_sla_minutes?: number | null;
+  delivery_due_at?: string | null;
+  delivery_late_at?: string | null;
+  delivery_sla_status?: string | null;
+  seller_service_level_snapshot?: string | null;
 };
 
 type Product = {
@@ -54,7 +73,10 @@ const FILTERS = [
   { label: "Pending", value: "pending" },
   { label: "Waiting Payment", value: "waiting_payment" },
   { label: "Paid", value: "paid" },
+  { label: "Delivered", value: "delivered" },
   { label: "Completed", value: "completed" },
+  { label: "Late Delivery", value: "late" },
+  { label: "Disputed", value: "disputed" },
   { label: "Cancelled", value: "cancelled" },
 ];
 
@@ -122,87 +144,57 @@ function fallbackImage(title: string) {
 }
 
 export default function SellerOrdersPage() {
-  const { formatPrice, currency } = useCurrency();
+  const { formatPrice } = useCurrency();
   const [sellerId, setSellerId] = useState<string | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<ProductMap>({});
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [now, setNow] = useState(() => Date.now());
 
   async function loadSellerOrders() {
     setLoading(true);
     setError("");
 
-    const { data: authData } = await supabase.auth.getUser();
-    const currentUser = authData.user;
+    try {
+      const result = await authenticatedFetchJson<{
+        userId: string;
+        orders: Order[];
+        products: Product[];
+      }>("/api/orders?scope=seller&limit=200");
 
-    if (!currentUser) {
+      setSellerId(result.userId);
+      setOrders(result.orders || []);
+
+      const map: ProductMap = {};
+      (result.products || []).forEach((product) => {
+        map[product.id] = product;
+      });
+      setProducts(map);
+    } catch (loadError) {
       setSellerId(null);
       setOrders([]);
       setProducts({});
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load seller orders."
+      );
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setSellerId(currentUser.id);
-
-    const { data: orderData, error: orderError } = await supabase
-      .from("orders")
-      .select("*")
-      .eq("seller_id", currentUser.id)
-      .order("created_at", { ascending: false });
-
-    if (orderError) {
-      setError(orderError.message);
-      setOrders([]);
-      setProducts({});
-      setLoading(false);
-      return;
-    }
-
-    const safeOrders = orderData || [];
-    setOrders(safeOrders);
-
-    const productIds = Array.from(
-      new Set(
-        safeOrders
-          .map((order) => order.product_id)
-          .filter((id): id is number => typeof id === "number")
-      )
-    );
-
-    if (productIds.length > 0) {
-      const { data: productData } = await supabase
-        .from("products")
-        .select(`
-          id,
-          title,
-          image_url,
-          price,
-          game_name,
-          category
-        `)
-        .in("id", productIds);
-
-      const map: ProductMap = {};
-
-      (productData || []).forEach((product) => {
-        map[product.id] = product;
-      });
-
-      setProducts(map);
-    } else {
-      setProducts({});
-    }
-
-    setLoading(false);
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadSellerOrders();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const stats = useMemo(() => {
@@ -218,14 +210,23 @@ export default function SellerOrdersPage() {
     const completed = orders.filter((order) =>
       normalizeStatus(order.status).includes("completed")
     ).length;
+    const late = orders.filter((order) =>
+      deliverySlaState({
+        dueAt: order.delivery_due_at,
+        deliveredAt: order.delivered_at,
+        storedStatus: order.delivery_sla_status,
+        now,
+      }).late
+    ).length;
     const revenue = orders.reduce((sum, order) => {
-      const product = order.product_id ? products[order.product_id] : null;
-      const isPaid =
-        normalizeStatus(order.status).includes("paid") ||
-        normalizeStatus(order.payment_status).includes("paid") ||
-        normalizeStatus(order.status).includes("completed");
+      const completed = normalizeStatus(order.status) === "completed";
+      if (!completed) return sum;
 
-      return isPaid ? sum + getOrderTotal(order, product) : sum;
+      const earning = numberPrice(order.seller_earning_amount);
+      if (earning > 0) return sum + earning;
+
+      const product = order.product_id ? products[order.product_id] : null;
+      return sum + getOrderTotal(order, product);
     }, 0);
 
     return {
@@ -233,9 +234,10 @@ export default function SellerOrdersPage() {
       pending,
       paid,
       completed,
+      late,
       revenue,
     };
-  }, [orders, products]);
+  }, [orders, products, now]);
 
   const filteredOrders = useMemo(() => {
     let list = [...orders];
@@ -245,7 +247,21 @@ export default function SellerOrdersPage() {
         const orderStatus = normalizeStatus(order.status);
         const paymentStatus = normalizeStatus(order.payment_status);
 
-        return orderStatus === filter || paymentStatus === filter;
+        const escrowStatus = normalizeStatus(order.escrow_status);
+        const sla = deliverySlaState({
+          dueAt: order.delivery_due_at,
+          deliveredAt: order.delivered_at,
+          storedStatus: order.delivery_sla_status,
+          now,
+        });
+
+        if (filter === "late") return sla.late;
+
+        return (
+          orderStatus === filter ||
+          paymentStatus === filter ||
+          escrowStatus === filter
+        );
       });
     }
 
@@ -266,28 +282,8 @@ export default function SellerOrdersPage() {
     }
 
     return list;
-  }, [orders, products, filter, query]);
+  }, [orders, products, filter, query, now]);
 
-  async function markCompleted(orderId: number) {
-    setUpdatingId(orderId);
-    setError("");
-
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({
-        status: "completed",
-      })
-      .eq("id", orderId);
-
-    if (updateError) {
-      setError(updateError.message);
-      setUpdatingId(null);
-      return;
-    }
-
-    await loadSellerOrders();
-    setUpdatingId(null);
-  }
 
   if (loading) {
     return (
@@ -340,7 +336,7 @@ export default function SellerOrdersPage() {
       </section>
 
       <section className="mx-auto max-w-7xl px-4 py-10">
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
             <FaReceipt className="text-3xl text-cyan-300" />
             <p className="mt-4 text-sm text-slate-400">Total Orders</p>
@@ -365,9 +361,19 @@ export default function SellerOrdersPage() {
             <p className="mt-1 text-3xl font-black">{stats.completed}</p>
           </div>
 
+          <div className={`rounded-3xl border p-5 ${
+            stats.late > 0
+              ? "border-red-400/30 bg-red-400/10"
+              : "border-white/10 bg-white/[0.04]"
+          }`}>
+            <FaClock className={`text-3xl ${stats.late > 0 ? "text-red-300" : "text-slate-300"}`} />
+            <p className="mt-4 text-sm text-slate-400">Late Delivery</p>
+            <p className="mt-1 text-3xl font-black">{stats.late}</p>
+          </div>
+
           <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-5">
             <FaWallet className="text-3xl text-cyan-300" />
-            <p className="mt-4 text-sm text-slate-300">Revenue</p>
+            <p className="mt-4 text-sm text-slate-300">Net Released Revenue</p>
             <p className="mt-1 text-2xl font-black text-cyan-300">
               {formatPrice(stats.revenue)}
             </p>
@@ -436,15 +442,17 @@ export default function SellerOrdersPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1000px] text-left">
+              <table className="w-full min-w-[1320px] text-left">
                 <thead className="border-b border-white/10 bg-black/30 text-sm text-slate-400">
                   <tr>
                     <th className="px-5 py-4">Order</th>
                     <th className="px-5 py-4">Product</th>
                     <th className="px-5 py-4">Buyer</th>
                     <th className="px-5 py-4">Game</th>
-                    <th className="px-5 py-4">Total</th>
+                    <th className="px-5 py-4">Buyer Total</th>
+                    <th className="px-5 py-4">Seller Net</th>
                     <th className="px-5 py-4">Status</th>
+                    <th className="px-5 py-4">Delivery SLA</th>
                     <th className="px-5 py-4">Created</th>
                     <th className="px-5 py-4 text-right">Action</th>
                   </tr>
@@ -462,6 +470,12 @@ export default function SellerOrdersPage() {
                     const buyer = order.buyer || order.buyer_id || "-";
                     const game = order.game_name || product?.game_name || "-";
                     const total = getOrderTotal(order, product);
+                    const sla = deliverySlaState({
+                      dueAt: order.delivery_due_at,
+                      deliveredAt: order.delivered_at,
+                      storedStatus: order.delivery_sla_status,
+                      now,
+                    });
 
                     return (
                       <tr
@@ -511,6 +525,24 @@ export default function SellerOrdersPage() {
                           <p className="font-black text-cyan-300">
                             {formatPrice(total)}
                           </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Buyer charge
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-5">
+                          <p className="font-black text-emerald-300">
+                            {formatPrice(
+                              numberPrice(order.seller_earning_amount) ||
+                                numberPrice(order.seller_gross_amount)
+                            )}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            Tax {formatPrice(numberPrice(order.seller_sales_tax_amount))}
+                            {numberPrice(order.marketplace_fee_amount) > 0
+                              ? ` · Fee ${formatPrice(numberPrice(order.marketplace_fee_amount))}`
+                              : ""}
+                          </p>
                         </td>
 
                         <td className="px-5 py-5">
@@ -534,6 +566,38 @@ export default function SellerOrdersPage() {
                         </td>
 
                         <td className="px-5 py-5">
+                          {order.delivery_due_at ? (
+                            <div>
+                              <span
+                                className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${
+                                  sla.late
+                                    ? "border-red-400/40 bg-red-400/10 text-red-300"
+                                    : sla.completed
+                                      ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                                      : "border-yellow-400/40 bg-yellow-400/10 text-yellow-300"
+                                }`}
+                              >
+                                {sla.completed
+                                  ? sla.late
+                                    ? "Delivered Late"
+                                    : "Delivered On Time"
+                                  : sla.late
+                                    ? `${formatRemainingDuration(sla.remainingMs)} late`
+                                    : `${formatRemainingDuration(sla.remainingMs)} left`}
+                              </span>
+                              <p className="mt-2 text-xs text-slate-500">
+                                Due {formatDate(order.delivery_due_at)}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {serviceLevelLabel(order.seller_service_level_snapshot)} snapshot
+                              </p>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-500">Starts after payment</span>
+                          )}
+                        </td>
+
+                        <td className="px-5 py-5">
                           <p className="text-sm text-slate-400">
                             {formatDate(order.created_at)}
                           </p>
@@ -542,24 +606,21 @@ export default function SellerOrdersPage() {
                         <td className="px-5 py-5">
                           <div className="flex justify-end gap-2">
                             <Link
-                              href={`/order-success/${order.id}`}
+                              href={`/orders/${order.id}`}
                               className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-black/30 text-cyan-300 hover:border-cyan-400"
                               title="View Order"
                             >
                               <FaEye />
                             </Link>
 
-                            {!normalizeStatus(order.status).includes("completed") ? (
-                              <button
-                                onClick={() => markCompleted(order.id)}
-                                disabled={updatingId === order.id}
-                                className="inline-flex items-center justify-center rounded-xl bg-emerald-400 px-4 py-2 text-sm font-black text-black hover:bg-emerald-300 disabled:opacity-60"
-                              >
-                                {updatingId === order.id
-                                  ? "Updating..."
-                                  : "Complete"}
-                              </button>
-                            ) : null}
+                            <Link
+                              href={`/orders/${order.id}`}
+                              className="inline-flex items-center justify-center rounded-xl bg-cyan-400 px-4 py-2 text-sm font-black text-black hover:bg-cyan-300"
+                            >
+                              {normalizeStatus(order.status) === "paid"
+                                ? "Deliver"
+                                : "Manage"}
+                            </Link>
                           </div>
                         </td>
                       </tr>

@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -43,6 +44,7 @@ const orderStatuses = [
   "Processing",
   "Completed",
   "Cancelled",
+  "Refund Pending",
   "Refunded",
   "Disputed",
 ];
@@ -53,6 +55,7 @@ const statusOptions = [
   "Processing",
   "Completed",
   "Cancelled",
+  "Refund Pending",
   "Refunded",
   "Disputed",
 ];
@@ -65,6 +68,7 @@ function normalizeStatus(status: string | null) {
   if (status === "Diproses") return "Processing";
   if (status === "Selesai") return "Completed";
   if (status === "Dibatalkan") return "Cancelled";
+  if (status === "refund_pending") return "Refund Pending";
   return status || "Pending Payment";
 }
 
@@ -81,6 +85,10 @@ function getStatusClass(status: string | null) {
 
   if (normalizedStatus === "Cancelled") {
     return "border-red-400/20 bg-red-400/10 text-red-300";
+  }
+
+  if (normalizedStatus === "Refund Pending") {
+    return "border-yellow-400/20 bg-yellow-400/10 text-yellow-300";
   }
 
   if (normalizedStatus === "Refunded") {
@@ -100,7 +108,7 @@ function getStatusClass(status: string | null) {
 
 
 export default function AdminOrderManagementV1Page() {
-  const { formatPrice, currency } = useCurrency();
+  const { formatPrice } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -218,49 +226,75 @@ export default function AdminOrderManagementV1Page() {
     initializePage();
   }, []);
 
-  async function updateOrderStatus(orderId: number, newStatus: string) {
+  async function updateOrderStatus(
+    orderId: number,
+    action: "status" | "confirm_payment" | "complete" | "refund",
+    status?: string
+  ) {
     if (!isAdmin) return;
 
-    setUpdatingOrderId(orderId);
+    let note = "";
+    let manualReference: string | undefined;
 
-    const { error } = await supabase
-      .from("orders")
-      .update({
-        status: newStatus,
-      })
-      .eq("id", orderId);
-
-    if (error) {
-      alert(error.message);
-      setUpdatingOrderId(null);
-      return;
+    if (action === "refund") {
+      note = prompt("Refund reason:")?.trim() || "";
+      if (!note) return;
+      manualReference =
+        prompt("Bank/QRIS/manual refund reference (leave blank for PayPal or wallet):")?.trim() ||
+        undefined;
+    } else if (status === "cancelled" || status === "disputed") {
+      note = prompt(`Admin note for ${status}:`)?.trim() || "";
+      if (!note) return;
     }
 
-    await loadOrders();
-    setUpdatingOrderId(null);
+    try {
+      setUpdatingOrderId(orderId);
+      await authenticatedFetchJson("/api/admin/orders", {
+        method: "PATCH",
+        body: JSON.stringify({ orderId, action, status, note, manualReference }),
+      });
+      await loadOrders();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update order.");
+    } finally {
+      setUpdatingOrderId(null);
+    }
   }
 
   async function confirmPayment(orderId: number) {
-    await updateOrderStatus(orderId, "Processing");
+    await updateOrderStatus(orderId, "confirm_payment");
   }
 
   async function markCompleted(orderId: number) {
-    await updateOrderStatus(orderId, "Completed");
+    if (!confirm("Complete this delivered order and release escrow to the seller?")) return;
+    await updateOrderStatus(orderId, "complete");
   }
 
   async function cancelOrder(orderId: number) {
-    if (!confirm("Cancel this order?")) return;
-    await updateOrderStatus(orderId, "Cancelled");
+    if (!confirm("Cancel this unpaid order?")) return;
+    await updateOrderStatus(orderId, "status", "cancelled");
   }
 
   async function refundOrder(orderId: number) {
-    if (!confirm("Mark this order as refunded?")) return;
-    await updateOrderStatus(orderId, "Refunded");
+    if (!confirm("Refund this order? This can trigger a real PayPal refund.")) return;
+    await updateOrderStatus(orderId, "refund");
   }
 
   async function disputeOrder(orderId: number) {
     if (!confirm("Mark this order as disputed?")) return;
-    await updateOrderStatus(orderId, "Disputed");
+    await updateOrderStatus(orderId, "status", "disputed");
+  }
+
+  async function handleStatusSelect(orderId: number, selectedStatus: string) {
+    const normalized = selectedStatus.trim().toLowerCase();
+
+    if (normalized === "processing") return confirmPayment(orderId);
+    if (normalized === "completed") return markCompleted(orderId);
+    if (normalized === "cancelled") return cancelOrder(orderId);
+    if (normalized === "refunded") return refundOrder(orderId);
+    if (normalized === "disputed") return disputeOrder(orderId);
+
+    alert("Use the payment workflow to change this order to a payment state.");
   }
 
   if (loading) {
@@ -576,7 +610,7 @@ export default function AdminOrderManagementV1Page() {
                       <select
                         value={normalizedStatus}
                         onChange={(event) =>
-                          updateOrderStatus(order.id, event.target.value)
+                          handleStatusSelect(order.id, event.target.value)
                         }
                         disabled={updatingOrderId === order.id}
                         className="rounded-2xl border border-white/10 bg-black px-4 py-3 font-bold text-white outline-none focus:border-cyan-400 disabled:opacity-60"

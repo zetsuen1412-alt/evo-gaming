@@ -6,6 +6,7 @@ import type { User } from "@supabase/supabase-js";
 import { PayPalButtons, PayPalScriptProvider } from "@paypal/react-paypal-js";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Wallet = {
   id: number;
@@ -85,7 +86,7 @@ function createSafeFileName(fileName: string) {
 }
 
 export default function WalletTopUpPageV1() {
-  const { formatPrice, currency } = useCurrency();
+  const { formatPrice } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [topups, setTopups] = useState<WalletTopup[]>([]);
@@ -116,37 +117,14 @@ export default function WalletTopUpPageV1() {
     return topups.filter((item) => item.status === "approved");
   }, [topups]);
 
-  async function loadWalletAndTopups(currentUser: User) {
-    const { data: walletData, error: walletError } = await supabase
-      .from("wallets")
-      .select("*")
-      .eq("user_id", currentUser.id)
-      .maybeSingle();
+  async function loadWalletAndTopups() {
+    const result = await authenticatedFetchJson<{
+      wallet: Wallet;
+      topups: WalletTopup[];
+    }>("/api/wallet/topups");
 
-    if (walletError) {
-      alert(walletError.message);
-      return;
-    }
-
-    setWallet(walletData || null);
-
-    if (!walletData) {
-      setTopups([]);
-      return;
-    }
-
-    const { data: topupData, error: topupError } = await supabase
-      .from("wallet_topups")
-      .select("*")
-      .eq("user_id", currentUser.id)
-      .order("id", { ascending: false });
-
-    if (topupError) {
-      alert(topupError.message);
-      return;
-    }
-
-    setTopups(topupData || []);
+    setWallet(result.wallet || null);
+    setTopups(result.topups || []);
   }
 
   useEffect(() => {
@@ -168,7 +146,7 @@ export default function WalletTopUpPageV1() {
       }
 
       setUser(userData.user);
-      await loadWalletAndTopups(userData.user);
+      await loadWalletAndTopups();
       setLoading(false);
     }
 
@@ -188,24 +166,19 @@ export default function WalletTopUpPageV1() {
 
     setCreatingWallet(true);
 
-    const { error } = await supabase.from("wallets").insert({
-      user_id: user.id,
-      balance: 0,
-      pending_balance: 0,
-      total_earned: 0,
-      total_spent: 0,
-      total_withdrawn: 0,
-      status: "active",
-    });
-
-    if (error) {
-      alert(error.message);
+    try {
+      await authenticatedFetchJson("/api/wallet/topups", {
+        method: "POST",
+        body: JSON.stringify({ action: "ensure-wallet" }),
+      });
+      await loadWalletAndTopups();
+    } catch (createError) {
+      alert(
+        createError instanceof Error ? createError.message : "Failed to create wallet."
+      );
+    } finally {
       setCreatingWallet(false);
-      return;
     }
-
-    await loadWalletAndTopups(user);
-    setCreatingWallet(false);
   }
 
   function handleProofFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -297,23 +270,17 @@ export default function WalletTopUpPageV1() {
 
       const uploadedProofUrl = await uploadTopupProof(proofFile, user);
 
-      const { error } = await supabase.from("wallet_topups").insert({
-        user_id: user.id,
-        wallet_id: wallet.id,
-        amount: topupAmount,
-        payment_method: paymentMethod,
-        sender_name: senderName.trim(),
-        sender_account: senderAccount.trim() || null,
-        payment_note: paymentNote.trim() || null,
-        payment_image: uploadedProofUrl,
-        status: "pending",
+      await authenticatedFetchJson("/api/wallet/topups", {
+        method: "POST",
+        body: JSON.stringify({
+          amount: topupAmount,
+          paymentMethod,
+          senderName: senderName.trim(),
+          senderAccount: senderAccount.trim() || null,
+          paymentNote: paymentNote.trim() || null,
+          paymentImage: uploadedProofUrl,
+        }),
       });
-
-      if (error) {
-        alert(error.message);
-        setSubmitting(false);
-        return;
-      }
 
       setAmount("");
       setPaymentMethod("Bank Transfer");
@@ -323,7 +290,7 @@ export default function WalletTopUpPageV1() {
       setProofFile(null);
       setProofPreviewUrl("");
 
-      await loadWalletAndTopups(user);
+      await loadWalletAndTopups();
 
       alert("Top up request submitted. Waiting for admin approval.");
       setSubmitting(false);
@@ -551,7 +518,7 @@ export default function WalletTopUpPageV1() {
                       return;
                     }
 
-                    await loadWalletAndTopups(user);
+                    await loadWalletAndTopups();
 
                     alert(
                       `PayPal top up berhasil. Saldo bertambah ${formatPrice(

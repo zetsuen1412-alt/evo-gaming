@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import {
+  FaBalanceScale,
   FaBell,
   FaBullhorn,
   FaCommentDots,
@@ -19,6 +20,7 @@ import { FcGoogle } from "react-icons/fc";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
 import MarketplaceSearch from "@/components/marketplace/MarketplaceSearch";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 
 function getUsernameFromEmail(email?: string | null) {
@@ -177,29 +179,20 @@ export default function MainHeader() {
     return latestAnnouncements.filter(isVisibleAnnouncement).slice(0, 4);
   }, [latestAnnouncements]);
 
-  async function createInitialWallet(userId: string) {
-    const { error } = await supabase.from("wallets").upsert(
-      {
-        user_id: userId,
-        balance: 0,
-        pending_balance: 0,
-        total_earned: 0,
-        total_spent: 0,
-        total_withdrawn: 0,
-        status: "active",
-      },
-      {
-        onConflict: "user_id",
-        ignoreDuplicates: true,
-      }
-    );
-
-    if (error) {
-      console.error("Create initial wallet error:", error.message);
+  async function createInitialWallet() {
+    try {
+      await authenticatedFetchJson("/api/wallet/topups", {
+        method: "POST",
+        body: JSON.stringify({ action: "ensure-wallet" }),
+      });
+      return true;
+    } catch (error) {
+      console.error(
+        "Create initial wallet error:",
+        error instanceof Error ? error.message : error
+      );
       return false;
     }
-
-    return true;
   }
 
   async function ensureOAuthProfile(currentUser: User) {
@@ -215,7 +208,7 @@ export default function MainHeader() {
 
     // Profile is created automatically by Supabase trigger.
     // Never insert/upsert profile from client header.
-    await createInitialWallet(currentUser.id);
+    await createInitialWallet();
 
     if (!existingProfile) {
       console.warn("Profile row is not ready yet. Fallback username will use auth email.");
@@ -287,23 +280,19 @@ export default function MainHeader() {
     }
   }
 
-  async function loadUnreadMessages(userId: string) {
-    const { count, error } = await supabase
-      .from("chat_messages")
-      .select("*", {
-        count: "exact",
-        head: true,
-      })
-      .eq("receiver_id", userId)
-      .eq("is_read", false);
-
-    if (error) {
-      console.error("Unread message count error:", error.message);
+  async function loadUnreadMessages() {
+    try {
+      const data = await authenticatedFetchJson<{ count: number }>(
+        "/api/messages/unread"
+      );
+      setUnreadMessageCount(Number(data.count || 0));
+    } catch (error) {
+      console.error(
+        "Unread message count error:",
+        error instanceof Error ? error.message : error
+      );
       setUnreadMessageCount(0);
-      return;
     }
-
-    setUnreadMessageCount(count || 0);
   }
 
   function playChatSound() {
@@ -402,13 +391,13 @@ export default function MainHeader() {
 
   async function loadUserHeaderData(currentUser: User) {
     await ensureOAuthProfile(currentUser);
-    await createInitialWallet(currentUser.id);
+    await createInitialWallet();
 
     await Promise.all([
       loadUserProfile(currentUser.id),
       loadWallet(currentUser.id),
       loadNotifications(currentUser.id),
-      loadUnreadMessages(currentUser.id),
+      loadUnreadMessages(),
       loadAnnouncements(currentUser.id),
     ]);
   }
@@ -497,7 +486,7 @@ export default function MainHeader() {
           filter: `receiver_id=eq.${user.id}`,
         },
         async (payload) => {
-          await loadUnreadMessages(user.id);
+          await loadUnreadMessages();
 
           if (payload.eventType === "INSERT") {
             const newMessage = payload.new as {
@@ -697,7 +686,7 @@ export default function MainHeader() {
         return;
       }
 
-      const walletCreated = await createInitialWallet(userId);
+      const walletCreated = await createInitialWallet();
 
       if (!walletCreated) {
         alert(
@@ -1047,6 +1036,15 @@ export default function MainHeader() {
                     >
                       <FaShoppingBag className="text-gray-300" />
                       My Orders
+                    </Link>
+
+                    <Link
+                      href="/resolution-center"
+                      onClick={() => setShowProfileDropdown(false)}
+                      className="flex items-center gap-3 rounded-xl px-4 py-3 font-bold text-gray-200 transition hover:bg-white/10 hover:text-white"
+                    >
+                      <FaBalanceScale className="text-gray-300" />
+                      Resolution Center
                     </Link>
 
                     <button

@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -56,7 +57,7 @@ function normalizeCouponCode(value: string) {
 }
 
 export default function AdminCouponManagerV1Page() {
-  const { formatPrice, currency } = useCurrency();
+  const { formatPrice } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
@@ -228,99 +229,73 @@ export default function AdminCouponManagerV1Page() {
     event.preventDefault();
 
     const finalCode = normalizeCouponCode(code);
-
-    if (!finalCode) {
-      alert("Coupon code is required.");
-      return;
-    }
-
-    if (!name.trim()) {
-      alert("Coupon name is required.");
-      return;
-    }
-
+    if (!finalCode) return alert("Coupon code is required.");
+    if (!name.trim()) return alert("Coupon name is required.");
     if (Number(discountValue || 0) <= 0) {
-      alert("Discount value must be greater than 0.");
-      return;
+      return alert("Discount value must be greater than 0.");
     }
-
     if (discountType === "percent" && Number(discountValue) > 100) {
-      alert("Percent discount cannot be more than 100.");
-      return;
+      return alert("Percent discount cannot be more than 100.");
     }
-
     if (usageLimit && Number(usageLimit) <= 0) {
-      alert("Usage limit must be empty or greater than 0.");
-      return;
+      return alert("Usage limit must be empty or greater than 0.");
     }
 
-    setSaving(true);
+    try {
+      setSaving(true);
+      const payload = buildPayload();
 
-    const payload = buildPayload();
+      await authenticatedFetchJson("/api/admin/coupons", {
+        method: editingId ? "PATCH" : "POST",
+        body: JSON.stringify(
+          editingId ? { couponId: editingId, ...payload } : payload
+        ),
+      });
 
-    if (editingId) {
-      const { error } = await supabase
-        .from("coupons")
-        .update(payload)
-        .eq("id", editingId);
-
-      if (error) {
-        alert(error.message);
-        setSaving(false);
-        return;
-      }
-
-      alert("Coupon updated successfully.");
-    } else {
-      const { error } = await supabase.from("coupons").insert(payload);
-
-      if (error) {
-        alert(error.message);
-        setSaving(false);
-        return;
-      }
-
-      alert("Coupon created successfully.");
+      alert(editingId ? "Coupon updated successfully." : "Coupon created successfully.");
+      await loadCoupons();
+      resetForm();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to save coupon.");
+    } finally {
+      setSaving(false);
     }
-
-    await loadCoupons();
-    resetForm();
-    setSaving(false);
   }
 
   async function quickStatus(couponId: number, nextStatus: "active" | "inactive") {
-    setUpdatingCouponId(couponId);
-
-    const { error } = await supabase
-      .from("coupons")
-      .update({ status: nextStatus })
-      .eq("id", couponId);
-
-    if (error) {
-      alert(error.message);
+    try {
+      setUpdatingCouponId(couponId);
+      await authenticatedFetchJson("/api/admin/coupons", {
+        method: "PATCH",
+        body: JSON.stringify({
+          couponId,
+          action: "status",
+          status: nextStatus,
+        }),
+      });
+      await loadCoupons();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update coupon.");
+    } finally {
       setUpdatingCouponId(null);
-      return;
     }
-
-    await loadCoupons();
-    setUpdatingCouponId(null);
   }
 
   async function deleteCoupon(coupon: Coupon) {
     if (!confirm(`Delete coupon ${coupon.code}?`)) return;
 
-    setUpdatingCouponId(coupon.id);
-
-    const { error } = await supabase.from("coupons").delete().eq("id", coupon.id);
-
-    if (error) {
-      alert(error.message);
+    try {
+      setUpdatingCouponId(coupon.id);
+      await authenticatedFetchJson("/api/admin/coupons", {
+        method: "DELETE",
+        body: JSON.stringify({ couponId: coupon.id }),
+      });
+      await loadCoupons();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to delete coupon.");
+    } finally {
       setUpdatingCouponId(null);
-      return;
     }
-
-    await loadCoupons();
-    setUpdatingCouponId(null);
   }
 
   if (loading) {

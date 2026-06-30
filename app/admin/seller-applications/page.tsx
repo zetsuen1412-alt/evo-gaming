@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -147,176 +148,75 @@ export default function SellerApplicationsAdminPage() {
     initializePage();
   }, []);
 
-  async function notifySeller(
-    userId: string,
-    type: string,
-    title: string,
-    message: string,
-    linkUrl: string
-  ) {
-    const { error } = await supabase.from("notifications").insert({
-      user_id: userId,
-      type,
-      title,
-      message,
-      link_url: linkUrl,
-      is_read: false,
-    });
-
-    if (error) {
-      console.warn("Failed to notify seller:", error.message);
-    }
-  }
-
   async function approveApplication(application: SellerApplication) {
     if (!confirm(`Approve ${application.seller_name} as a seller?`)) return;
 
     setUpdatingApplicationId(application.id);
 
-    const { error: applicationError } = await supabase
-      .from("seller_applications")
-      .update({
-        status: "approved",
-        notes: "Seller application approved.",
-      })
-      .eq("id", application.id);
+    try {
+      await authenticatedFetchJson("/api/admin/seller-applications", {
+        method: "PATCH",
+        body: JSON.stringify({ applicationId: application.id, action: "approve" }),
+      });
 
-    if (applicationError) {
-      alert(applicationError.message);
+      await loadApplications();
+      alert("Seller application approved successfully.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to approve seller application.");
+    } finally {
       setUpdatingApplicationId(null);
-      return;
     }
-
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .update({
-        seller_status: "approved",
-        seller_name: application.seller_name,
-        discord: application.discord,
-        bio: "Verified ComePlayers marketplace seller.",
-      })
-      .eq("id", application.user_id);
-
-    if (profileError) {
-      alert(profileError.message);
-      setUpdatingApplicationId(null);
-      return;
-    }
-
-    await notifySeller(
-      application.user_id,
-      "seller_approved",
-      "🎉 Seller Application Approved",
-      "Congratulations! Your seller application has been approved. You can now access the Seller Dashboard.",
-      "/seller"
-    );
-
-    await loadApplications();
-    setUpdatingApplicationId(null);
-    alert("Seller application approved successfully.");
   }
 
   async function rejectApplication(application: SellerApplication) {
     const rejectionNote = prompt(
-      `Reject ${application.seller_name}? Add an optional note:`,
+      `Reject ${application.seller_name}? Add a required note:`,
       "Seller application rejected."
     );
 
     if (rejectionNote === null) return;
+    const note = rejectionNote.trim();
 
-    const finalNote = rejectionNote || "Seller application rejected.";
+    if (!note) {
+      alert("A rejection note is required.");
+      return;
+    }
 
     setUpdatingApplicationId(application.id);
 
-    const { error: applicationError } = await supabase
-      .from("seller_applications")
-      .update({
-        status: "rejected",
-        notes: finalNote,
-      })
-      .eq("id", application.id);
+    try {
+      await authenticatedFetchJson("/api/admin/seller-applications", {
+        method: "PATCH",
+        body: JSON.stringify({ applicationId: application.id, action: "reject", note }),
+      });
 
-    if (applicationError) {
-      alert(applicationError.message);
+      await loadApplications();
+      alert("Seller application rejected.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to reject seller application.");
+    } finally {
       setUpdatingApplicationId(null);
-      return;
     }
-
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .update({
-        seller_status: "rejected",
-        bio: "Seller application rejected. Please contact support for more information.",
-      })
-      .eq("id", application.user_id);
-
-    if (profileError) {
-      alert(profileError.message);
-      setUpdatingApplicationId(null);
-      return;
-    }
-
-    await notifySeller(
-      application.user_id,
-      "seller_rejected",
-      "⚠️ Seller Application Rejected",
-      finalNote,
-      "/seller/apply"
-    );
-
-    await loadApplications();
-    setUpdatingApplicationId(null);
-    alert("Seller application rejected.");
   }
 
   async function resetApplication(application: SellerApplication) {
-    if (!confirm(`Reset ${application.seller_name} application to pending?`)) {
-      return;
-    }
+    if (!confirm(`Reset ${application.seller_name} application to pending?`)) return;
 
     setUpdatingApplicationId(application.id);
 
-    const { error: applicationError } = await supabase
-      .from("seller_applications")
-      .update({
-        status: "pending",
-        notes: "Seller application reset to pending review.",
-      })
-      .eq("id", application.id);
+    try {
+      await authenticatedFetchJson("/api/admin/seller-applications", {
+        method: "PATCH",
+        body: JSON.stringify({ applicationId: application.id, action: "reset" }),
+      });
 
-    if (applicationError) {
-      alert(applicationError.message);
+      await loadApplications();
+      alert("Seller application reset to pending.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to reset seller application.");
+    } finally {
       setUpdatingApplicationId(null);
-      return;
     }
-
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .update({
-        seller_status: "pending",
-        seller_name: application.seller_name,
-        discord: application.discord,
-        bio: "Seller application submitted. Waiting for approval.",
-      })
-      .eq("id", application.user_id);
-
-    if (profileError) {
-      alert(profileError.message);
-      setUpdatingApplicationId(null);
-      return;
-    }
-
-    await notifySeller(
-      application.user_id,
-      "seller_pending",
-      "🟡 Seller Application Reset",
-      "Your seller application has been reset to pending review.",
-      "/seller/verification"
-    );
-
-    await loadApplications();
-    setUpdatingApplicationId(null);
-    alert("Seller application reset to pending.");
   }
 
   const filteredApplications = applications.filter((application) => {

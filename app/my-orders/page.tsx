@@ -14,7 +14,7 @@ import {
   FaStore,
 } from "react-icons/fa";
 import { useCurrency } from "@/components/CurrencyProvider";
-import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Order = {
   id: number;
@@ -51,6 +51,7 @@ const FILTERS = [
   { label: "All Orders", value: "all" },
   { label: "Pending", value: "pending" },
   { label: "Paid", value: "paid" },
+  { label: "Delivered", value: "delivered" },
   { label: "Completed", value: "completed" },
   { label: "Cancelled", value: "cancelled" },
 ];
@@ -137,62 +138,31 @@ export default function MyOrdersPage() {
       setLoading(true);
       setError("");
 
-      const { data: authData } = await supabase.auth.getUser();
-      const currentUser = authData.user;
+      try {
+        const result = await authenticatedFetchJson<{
+          userId: string;
+          orders: Order[];
+          products: Product[];
+        }>("/api/orders?scope=buyer&limit=200");
 
-      if (!currentUser) {
+        setUserId(result.userId);
+        setOrders(result.orders || []);
+
+        const map: ProductMap = {};
+        (result.products || []).forEach((product) => {
+          map[product.id] = product;
+        });
+        setProducts(map);
+      } catch (loadError) {
         setUserId(null);
         setOrders([]);
         setProducts({});
+        setError(
+          loadError instanceof Error ? loadError.message : "Failed to load orders."
+        );
+      } finally {
         setLoading(false);
-        return;
       }
-
-      setUserId(currentUser.id);
-
-      const { data: orderData, error: orderError } = await supabase
-        .from("orders")
-        .select("*")
-        .or(`buyer_id.eq.${currentUser.id},buyer.eq.${currentUser.email}`)
-        .order("created_at", { ascending: false });
-
-      if (orderError) {
-        setError(orderError.message);
-        setOrders([]);
-        setProducts({});
-        setLoading(false);
-        return;
-      }
-
-      const safeOrders = (orderData || []) as Order[];
-      setOrders(safeOrders);
-
-      const productIds = Array.from(
-        new Set(
-          safeOrders
-            .map((order) => order.product_id)
-            .filter((id): id is number => typeof id === "number")
-        )
-      );
-
-      if (productIds.length > 0) {
-        const { data: productData } = await supabase
-          .from("products")
-          .select("id,title,image_url,price,game_name,category,seller_name")
-          .in("id", productIds);
-
-        const map: ProductMap = {};
-
-        ((productData || []) as Product[]).forEach((product) => {
-          map[product.id] = product;
-        });
-
-        setProducts(map);
-      } else {
-        setProducts({});
-      }
-
-      setLoading(false);
     }
 
     loadOrders();

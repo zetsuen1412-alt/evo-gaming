@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
-import { createNotification } from "@/lib/createNotification";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -217,86 +217,26 @@ export default function AdminWalletTopUpManagementV1Page() {
       return;
     }
 
-    if (!item.wallets) {
-      alert("Wallet not found.");
-      return;
-    }
-
-    if (item.wallets.status !== "active") {
-      alert("User wallet is frozen.");
-      return;
-    }
-
     if (!confirm(`Approve top up ${formatPrice(item.amount)}?`)) return;
 
     setUpdatingId(item.id);
 
-    const amount = Number(item.amount || 0);
-    const balanceBefore = Number(item.wallets.balance || 0);
-    const balanceAfter = balanceBefore + amount;
-    const note =
-      adminNotes[item.id]?.trim() || "Wallet top up approved by admin.";
-
-    const { error: walletError } = await supabase
-      .from("wallets")
-      .update({
-        balance: balanceAfter,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", item.wallet_id)
-      .eq("user_id", item.user_id);
-
-    if (walletError) {
-      alert(walletError.message);
-      setUpdatingId(null);
-      return;
-    }
-
-    const { error: topupError } = await supabase
-      .from("wallet_topups")
-      .update({
-        status: "approved",
-        admin_note: note,
-        processed_at: new Date().toISOString(),
-      })
-      .eq("id", item.id);
-
-    if (topupError) {
-      alert(topupError.message);
-      setUpdatingId(null);
-      return;
-    }
-
-    const { error: transactionError } = await supabase
-      .from("wallet_transactions")
-      .insert({
-        wallet_id: item.wallet_id,
-        user_id: item.user_id,
-        type: "deposit",
-        amount,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        order_id: null,
-        description: `Wallet top up approved. ${note}`,
-        status: "completed",
+    try {
+      await authenticatedFetchJson("/api/admin/wallet-topups", {
+        method: "PATCH",
+        body: JSON.stringify({
+          topupId: item.id,
+          action: "approve",
+          note: adminNotes[item.id]?.trim() || "Wallet top up approved by admin.",
+        }),
       });
 
-    if (transactionError) {
-      alert(transactionError.message);
+      await loadTopups();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to approve wallet top-up.");
+    } finally {
       setUpdatingId(null);
-      return;
     }
-
-    await createNotification({
-      userId: item.user_id,
-      type: "payment",
-      title: "Wallet Top Up Approved",
-      message: `${formatPrice(amount)} has been added to your wallet.`,
-      linkUrl: "/wallet",
-    });
-
-    await loadTopups();
-    setUpdatingId(null);
   }
 
   async function rejectTopup(item: WalletTopup) {
@@ -316,45 +256,18 @@ export default function AdminWalletTopUpManagementV1Page() {
 
     setUpdatingId(item.id);
 
-    const { error: topupError } = await supabase
-      .from("wallet_topups")
-      .update({
-        status: "rejected",
-        admin_note: note,
-        processed_at: new Date().toISOString(),
-      })
-      .eq("id", item.id);
+    try {
+      await authenticatedFetchJson("/api/admin/wallet-topups", {
+        method: "PATCH",
+        body: JSON.stringify({ topupId: item.id, action: "reject", note }),
+      });
 
-    if (topupError) {
-      alert(topupError.message);
+      await loadTopups();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to reject wallet top-up.");
+    } finally {
       setUpdatingId(null);
-      return;
     }
-
-    await supabase.from("wallet_transactions").insert({
-      wallet_id: item.wallet_id,
-      user_id: item.user_id,
-      type: "adjustment",
-      amount: Number(item.amount || 0),
-      balance_before: Number(item.wallets?.balance || 0),
-      balance_after: Number(item.wallets?.balance || 0),
-      order_id: null,
-      description: `Wallet top up rejected. ${note}`,
-      status: "rejected",
-    });
-
-    await createNotification({
-      userId: item.user_id,
-      type: "payment",
-      title: "Wallet Top Up Rejected",
-      message: `Your wallet top up request of ${formatPrice(
-        item.amount
-      )} was rejected. Reason: ${note}`,
-      linkUrl: "/wallet/topup",
-    });
-
-    await loadTopups();
-    setUpdatingId(null);
   }
 
   if (loading) {

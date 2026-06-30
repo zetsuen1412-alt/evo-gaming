@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -77,7 +78,7 @@ function toInputDateTime(value: string | null | undefined) {
 }
 
 export default function AdminFlashSaleManagerV1Page() {
-  const { formatPrice, currency } = useCurrency();
+  const { formatPrice } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
 
@@ -106,9 +107,6 @@ export default function AdminFlashSaleManagerV1Page() {
 
   const isAdmin = adminProfile?.role?.trim().toLowerCase() === "admin";
 
-  const selectedProduct = useMemo(() => {
-    return products.find((item) => String(item.id) === productId) || null;
-  }, [products, productId]);
 
   const filteredProducts = useMemo(() => {
     const query = productSearch.trim().toLowerCase();
@@ -244,12 +242,6 @@ export default function AdminFlashSaleManagerV1Page() {
     initializePage();
   }, []);
 
-  useEffect(() => {
-    if (!selectedProduct || editingId) return;
-
-    setOriginalPrice(String(selectedProduct.price || ""));
-    setTitle(`${selectedProduct.title || "Product"} Flash Sale`);
-  }, [selectedProduct, editingId]);
 
   function resetForm() {
     setEditingId(null);
@@ -301,121 +293,76 @@ export default function AdminFlashSaleManagerV1Page() {
   async function saveFlashSale(event: React.FormEvent) {
     event.preventDefault();
 
-    if (!productId) {
-      alert("Please select product.");
-      return;
+    if (!productId) return alert("Please choose a product.");
+    if (!title.trim()) return alert("Flash sale title is required.");
+    if (Number(originalPrice || 0) <= 0) return alert("Original price is invalid.");
+    if (Number(flashPrice || 0) <= 0) return alert("Flash price is invalid.");
+    if (Number(flashPrice) >= Number(originalPrice)) {
+      return alert("Flash price must be lower than original price.");
     }
-
-    if (!title.trim()) {
-      alert("Flash sale title is required.");
-      return;
-    }
-
-    if (Number(originalPrice || 0) <= 0) {
-      alert("Original price must be greater than 0.");
-      return;
-    }
-
-    if (Number(flashPrice || 0) < 0) {
-      alert("Flash price cannot be negative.");
-      return;
-    }
-
-    if (Number(flashPrice || 0) > Number(originalPrice || 0)) {
-      alert("Flash price cannot be higher than original price.");
-      return;
-    }
-
-    if (!startAt || !endAt) {
-      alert("Start date and end date are required.");
-      return;
-    }
-
+    if (!startAt || !endAt) return alert("Start date and end date are required.");
     if (new Date(endAt).getTime() <= new Date(startAt).getTime()) {
-      alert("End date must be after start date.");
-      return;
+      return alert("End date must be after start date.");
     }
-
     if (stockLimit && Number(stockLimit) <= 0) {
-      alert("Stock limit must be empty or greater than 0.");
-      return;
+      return alert("Stock limit must be empty or greater than 0.");
     }
+    if (Number(soldCount || 0) < 0) return alert("Sold count cannot be negative.");
 
-    if (Number(soldCount || 0) < 0) {
-      alert("Sold count cannot be negative.");
-      return;
+    try {
+      setSaving(true);
+      const payload = buildPayload();
+      await authenticatedFetchJson("/api/admin/flash-sales", {
+        method: editingId ? "PATCH" : "POST",
+        body: JSON.stringify(
+          editingId ? { flashSaleId: editingId, ...payload } : payload
+        ),
+      });
+
+      alert(editingId ? "Flash sale updated." : "Flash sale created.");
+      await loadData();
+      resetForm();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to save flash sale.");
+    } finally {
+      setSaving(false);
     }
-
-    setSaving(true);
-
-    const payload = buildPayload();
-
-    if (editingId) {
-      const { error } = await supabase
-        .from("flash_sales")
-        .update(payload)
-        .eq("id", editingId);
-
-      if (error) {
-        alert(error.message);
-        setSaving(false);
-        return;
-      }
-
-      alert("Flash sale updated.");
-    } else {
-      const { error } = await supabase.from("flash_sales").insert(payload);
-
-      if (error) {
-        alert(error.message);
-        setSaving(false);
-        return;
-      }
-
-      alert("Flash sale created.");
-    }
-
-    await loadData();
-    resetForm();
-    setSaving(false);
   }
 
   async function quickStatus(item: FlashSale, nextStatus: "active" | "inactive") {
-    setUpdatingId(item.id);
-
-    const { error } = await supabase
-      .from("flash_sales")
-      .update({ status: nextStatus })
-      .eq("id", item.id);
-
-    if (error) {
-      alert(error.message);
+    try {
+      setUpdatingId(item.id);
+      await authenticatedFetchJson("/api/admin/flash-sales", {
+        method: "PATCH",
+        body: JSON.stringify({
+          flashSaleId: item.id,
+          action: "status",
+          status: nextStatus,
+        }),
+      });
+      await loadData();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update flash sale.");
+    } finally {
       setUpdatingId(null);
-      return;
     }
-
-    await loadData();
-    setUpdatingId(null);
   }
 
   async function deleteFlashSale(item: FlashSale) {
     if (!confirm(`Delete flash sale "${item.title}"?`)) return;
 
-    setUpdatingId(item.id);
-
-    const { error } = await supabase
-      .from("flash_sales")
-      .delete()
-      .eq("id", item.id);
-
-    if (error) {
-      alert(error.message);
+    try {
+      setUpdatingId(item.id);
+      await authenticatedFetchJson("/api/admin/flash-sales", {
+        method: "DELETE",
+        body: JSON.stringify({ flashSaleId: item.id }),
+      });
+      await loadData();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to delete flash sale.");
+    } finally {
       setUpdatingId(null);
-      return;
     }
-
-    await loadData();
-    setUpdatingId(null);
   }
 
   if (loading) {

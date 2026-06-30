@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useCurrency } from "@/components/CurrencyProvider";
-import { supabase } from "@/lib/supabase";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type SellerProfile = {
   id: string;
@@ -23,14 +24,17 @@ type Product = {
   category_name: string | null;
   category: string | null;
   created_at: string;
+  has_variants?: boolean | null;
+  variant_count?: number | null;
+  min_variant_price?: string | number | null;
+  max_variant_price?: string | number | null;
 };
 
 type FilterMode = "all" | "active" | "inactive" | "out-of-stock";
 
-function formatPrice(value: string | number | null) {
-  const amount = Number(String(value ?? 0).replace(/[^\d]/g, "") || 0);
 
-  return `Rp ${amount.toLocaleString("id-ID")}`;
+function productImageLoader({ src }: { src: string }) {
+  return src;
 }
 
 function getProductStatus(product: Product) {
@@ -57,7 +61,7 @@ function getProductStatus(product: Product) {
 }
 
 export default function SellerProductsPage() {
-  const { formatPrice, currency } = useCurrency();
+  const { formatPrice } = useCurrency();
   const [loading, setLoading] = useState(true);
   const [seller, setSeller] = useState<SellerProfile | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -72,91 +76,62 @@ export default function SellerProductsPage() {
   async function loadProducts() {
     try {
       setLoading(true);
+      const data = await authenticatedFetchJson<{
+        profile: SellerProfile;
+        products: Product[];
+      }>("/api/seller/catalog");
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        window.location.href = "/";
-        return;
-      }
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("email", user.email)
-        .maybeSingle();
-
-      if (profileError) {
-        alert(profileError.message);
-        return;
-      }
-
-      if (!profile) {
-        alert("Profile not found.");
-        return;
-      }
-
-      setSeller(profile);
-
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .eq("seller_id", profile.id)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        alert(error.message);
-        return;
-      }
-
-      setProducts(data || []);
+      setSeller(data.profile);
+      setProducts(data.products || []);
     } catch (error) {
-      console.error(error);
-      alert("Failed to load products.");
+      alert(error instanceof Error ? error.message : "Failed to load products.");
     } finally {
       setLoading(false);
     }
   }
 
   async function deleteProduct(id: number) {
-    if (!confirm("Delete this product?")) return;
+    if (!confirm("Delete or archive this product?")) return;
 
     setUpdatingId(id);
+    try {
+      const result = await authenticatedFetchJson<{ archived?: boolean }>(
+        "/api/seller/catalog",
+        {
+          method: "DELETE",
+          body: JSON.stringify({ productId: id }),
+        }
+      );
 
-    const { error } = await supabase.from("products").delete().eq("id", id);
-
-    if (error) {
-      alert(error.message);
+      if (result.archived) {
+        alert("This product has order history, so it was safely deactivated instead of deleted.");
+      }
+      await loadProducts();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to remove product.");
+    } finally {
       setUpdatingId(null);
-      return;
     }
-
-    await loadProducts();
-    setUpdatingId(null);
   }
 
   async function toggleStatus(product: Product) {
     setUpdatingId(product.id);
 
-    const nextStatus = product.status === "active" ? "inactive" : "active";
-
-    const { error } = await supabase
-      .from("products")
-      .update({
-        status: nextStatus,
-      })
-      .eq("id", product.id);
-
-    if (error) {
-      alert(error.message);
+    try {
+      await authenticatedFetchJson("/api/seller/catalog", {
+        method: "PATCH",
+        body: JSON.stringify({
+          productId: product.id,
+          action: "status",
+          status: product.status === "active" ? "inactive" : "active",
+        }),
+      });
+      await loadProducts();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update product status.");
+    } finally {
       setUpdatingId(null);
-      return;
     }
-
-    await loadProducts();
-    setUpdatingId(null);
   }
 
   const activeProducts = products.filter(
@@ -223,7 +198,7 @@ export default function SellerProductsPage() {
         <div className="relative z-10 flex flex-col justify-between gap-8 lg:flex-row lg:items-start">
           <div>
             <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Seller Products V2
+              Seller Products V17
             </p>
 
             <h1 className="text-5xl font-black md:text-7xl">My Products</h1>
@@ -245,6 +220,20 @@ export default function SellerProductsPage() {
               className="rounded-full border border-white/10 px-5 py-2 font-bold text-gray-300 transition hover:bg-white hover:text-black"
             >
               Dashboard
+            </Link>
+
+            <Link
+              href="/seller/inventory"
+              className="rounded-full border border-cyan-400/40 px-5 py-2 font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
+            >
+              Bulk Inventory
+            </Link>
+
+            <Link
+              href="/seller/products/import"
+              className="rounded-full border border-violet-400/40 px-5 py-2 font-black text-violet-300 transition hover:bg-violet-400 hover:text-black"
+            >
+              Bulk Listings
             </Link>
 
             <Link
@@ -386,12 +375,16 @@ export default function SellerProductsPage() {
                   className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] shadow-2xl shadow-black/30"
                 >
                   <div className="grid gap-0 lg:grid-cols-[280px_1fr]">
-                    <div className="flex h-64 items-center justify-center bg-black/50 lg:h-full">
+                    <div className="relative flex h-64 items-center justify-center overflow-hidden bg-black/50 lg:h-full">
                       {product.image_url ? (
-                        <img
+                        <Image
+                          loader={productImageLoader}
+                          unoptimized
+                          fill
+                          sizes="(min-width: 1024px) 280px, 100vw"
                           src={product.image_url}
                           alt={product.title}
-                          className="h-full w-full object-cover"
+                          className="object-cover"
                         />
                       ) : (
                         <span className="text-6xl">🎮</span>
@@ -418,6 +411,12 @@ export default function SellerProductsPage() {
                               product.category ||
                               "Game Product"}
                           </p>
+
+                          {product.has_variants ? (
+                            <p className="mt-2 text-sm font-bold text-violet-300">
+                              {Number(product.variant_count || 0)} SKU variants · {formatPrice(product.min_variant_price || product.price)} – {formatPrice(product.max_variant_price || product.price)}
+                            </p>
+                          ) : null}
 
                           <p className="mt-4 line-clamp-3 max-w-3xl text-gray-400">
                             {product.description || "No description provided."}
@@ -462,6 +461,13 @@ export default function SellerProductsPage() {
                           className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-black transition hover:bg-cyan-300"
                         >
                           Edit
+                        </Link>
+
+                        <Link
+                          href={`/seller/products/${product.id}/variants`}
+                          className="rounded-xl border border-violet-400/40 px-5 py-3 font-black text-violet-300 transition hover:bg-violet-400 hover:text-black"
+                        >
+                          Manage Variants
                         </Link>
 
                         <Link

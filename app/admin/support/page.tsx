@@ -3,9 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
-import { useCurrency } from "@/components/CurrencyProvider";
 import { supabase } from "@/lib/supabase";
-import { dispatchNotificationEvent } from "@/lib/notification-event-helper";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 
 type Profile = {
   id: string;
@@ -61,7 +60,6 @@ function getDisplayName(profile: Profile | null, fallback: string) {
 }
 
 export default function AdminSupportTicketManagementNotificationV1Page() {
-  const { formatPrice, currency } = useCurrency();
   const [user, setUser] = useState<User | null>(null);
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
@@ -164,68 +162,20 @@ export default function AdminSupportTicketManagementNotificationV1Page() {
 
   async function updateTicketStatus(ticket: SupportTicket, nextStatus: string) {
     if (!user) return;
-
-    const systemMessage =
-      nextStatus === "resolved"
-        ? `Your support ticket #${ticket.id} has been marked as resolved.`
-        : nextStatus === "closed"
-        ? `Your support ticket #${ticket.id} has been closed.`
-        : `Your support ticket #${ticket.id} status changed to ${nextStatus}.`;
-
     if (!confirm(`Change ticket #${ticket.id} to ${nextStatus}?`)) return;
 
-    setUpdatingId(ticket.id);
-
-    const { error: ticketError } = await supabase
-      .from("support_tickets")
-      .update({
-        status: nextStatus,
-        last_message: systemMessage,
-        last_message_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", ticket.id);
-
-    if (ticketError) {
-      alert(ticketError.message);
+    try {
+      setUpdatingId(ticket.id);
+      await authenticatedFetchJson("/api/admin/support", {
+        method: "PATCH",
+        body: JSON.stringify({ ticketId: ticket.id, status: nextStatus }),
+      });
+      await loadTickets();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to update support ticket.");
+    } finally {
       setUpdatingId(null);
-      return;
     }
-
-    await supabase.from("support_ticket_messages").insert({
-      ticket_id: ticket.id,
-      sender_id: user.id,
-      sender_role: "system",
-      message: systemMessage,
-      attachment_url: null,
-    });
-
-    await dispatchNotificationEvent(
-      {
-        event_key: "support.ticket.replied_by_admin",
-        actor_id: user.id,
-        target_user_id: ticket.user_id,
-        related_ticket_id: ticket.id,
-        payload: {
-          ticket_id: ticket.id,
-          status: nextStatus,
-          subject: ticket.subject,
-        },
-      },
-      {
-        title:
-          nextStatus === "resolved"
-            ? "Support Ticket Resolved"
-            : nextStatus === "closed"
-            ? "Support Ticket Closed"
-            : "Support Ticket Updated",
-        message: systemMessage,
-        link: `/support/${ticket.id}`,
-      }
-    );
-
-    await loadTickets();
-    setUpdatingId(null);
   }
 
   if (loading) {

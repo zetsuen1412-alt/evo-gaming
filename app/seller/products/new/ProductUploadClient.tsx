@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
-import { useCurrency } from "@/components/CurrencyProvider";
+import { formatDeliveryEta, SELLER_SLA_OPTIONS } from "@/lib/sellerServiceLevel";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
@@ -14,6 +15,7 @@ type Profile = {
   role: string | null;
   seller_status: string | null;
   seller_name: string | null;
+  seller_delivery_sla_minutes?: number | null;
 };
 
 type Category = {
@@ -46,11 +48,14 @@ type ExistingProduct = {
   image_url: string | null;
   slug: string | null;
   status: string | null;
+  delivery_eta_minutes?: number | null;
+  offer_region?: string | null;
+  offer_platform?: string | null;
+  offer_server?: string | null;
+  offer_tags?: string[] | null;
 };
 
-type WishlistUser = {
-  user_id: string;
-};
+
 
 function createSlug(value: string) {
   return value
@@ -61,20 +66,9 @@ function createSlug(value: string) {
     .replace(/-+/g, "-");
 }
 
-function numberPrice(value: string | number | null | undefined) {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === "number") return value;
-  return Number(String(value).replace(/[^\d]/g, "") || 0);
-}
 
-function formatRupiah(value: string | number | null | undefined) {
-  const amount = numberPrice(value);
-
-  return `Rp ${amount.toLocaleString("id-ID")}`;
-}
 
 export default function ProductUploadClient() {
-  const { currency } = useCurrency();
   const searchParams = useSearchParams();
   const params = useParams();
 
@@ -102,8 +96,13 @@ export default function ProductUploadClient() {
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("1");
+  const [deliveryEtaMinutes, setDeliveryEtaMinutes] = useState("60");
   const [description, setDescription] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [offerRegion, setOfferRegion] = useState("Global");
+  const [offerPlatform, setOfferPlatform] = useState("Any");
+  const [offerServer, setOfferServer] = useState("");
+  const [offerTags, setOfferTags] = useState("");
 
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [selectedGameId, setSelectedGameId] = useState("");
@@ -128,6 +127,7 @@ export default function ProductUploadClient() {
   }, [existingProduct?.slug, isEditMode, selectedGame, title]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability
     initializePage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -178,6 +178,7 @@ export default function ProductUploadClient() {
       }
 
       setProfile(profileData);
+      setDeliveryEtaMinutes(String(profileData.seller_delivery_sla_minutes || 60));
 
       const [categoryResult, gameResult] = await Promise.all([
         supabase.from("categories").select("*").order("id", { ascending: true }),
@@ -239,6 +240,17 @@ export default function ProductUploadClient() {
         setStock(String(product.stock ?? 0));
         setDescription(product.description || "");
         setImageUrl(product.image_url || "");
+        setDeliveryEtaMinutes(
+          String(
+            product.delivery_eta_minutes ||
+              profileData.seller_delivery_sla_minutes ||
+              60
+          )
+        );
+        setOfferRegion(product.offer_region || "Global");
+        setOfferPlatform(product.offer_platform || "Any");
+        setOfferServer(product.offer_server || "");
+        setOfferTags((product.offer_tags || []).join(", "));
 
         if (product.category_id) {
           setSelectedCategoryId(String(product.category_id));
@@ -298,84 +310,6 @@ export default function ProductUploadClient() {
     }
   }
 
-  async function notifyWishlistUsersAfterEdit(
-    productId: number,
-    oldProduct: ExistingProduct,
-    nextPrice: number,
-    nextStock: number,
-    nextTitle: string
-  ) {
-    const oldPrice = numberPrice(oldProduct.price);
-    const oldStock = Number(oldProduct.stock ?? 0);
-    const productPath = `/product/${oldProduct.slug || productId}`;
-
-    const shouldNotifyPriceDrop = oldPrice > 0 && nextPrice < oldPrice;
-    const shouldNotifyBackInStock = oldStock <= 0 && nextStock > 0;
-
-    if (!shouldNotifyPriceDrop && !shouldNotifyBackInStock) {
-      return;
-    }
-
-    const { data: wishlistUsers, error } = await supabase
-      .from("wishlists")
-      .select("user_id")
-      .eq("product_id", productId);
-
-    if (error) {
-      console.warn("Wishlist alert lookup failed:", error.message);
-      return;
-    }
-
-    const userIds = Array.from(
-      new Set(
-        ((wishlistUsers || []) as WishlistUser[])
-          .map((row) => row.user_id)
-          .filter(Boolean)
-      )
-    );
-
-    if (userIds.length === 0) return;
-
-    const notifications = [];
-
-    if (shouldNotifyPriceDrop) {
-      notifications.push(
-        ...userIds.map((userId) => ({
-          user_id: userId,
-          type: "wishlist_price_drop",
-          title: "🔥 Wishlist Price Drop",
-          message: `${nextTitle} turun dari ${formatRupiah(
-            oldPrice
-          )} menjadi ${formatRupiah(nextPrice)}.`,
-          link_url: productPath,
-          is_read: false,
-        }))
-      );
-    }
-
-    if (shouldNotifyBackInStock) {
-      notifications.push(
-        ...userIds.map((userId) => ({
-          user_id: userId,
-          type: "wishlist_back_in_stock",
-          title: "📦 Back In Stock",
-          message: `${nextTitle} tersedia kembali. Stok sekarang ${nextStock}.`,
-          link_url: productPath,
-          is_read: false,
-        }))
-      );
-    }
-
-    if (notifications.length > 0) {
-      const { error: notificationError } = await supabase
-        .from("notifications")
-        .insert(notifications);
-
-      if (notificationError) {
-        console.warn("Wishlist notification insert failed:", notificationError.message);
-      }
-    }
-  }
 
   async function submitProduct(event: React.FormEvent) {
     event.preventDefault();
@@ -429,111 +363,73 @@ export default function ProductUploadClient() {
       return;
     }
 
+    const parsedDeliveryEta = Math.round(Number(deliveryEtaMinutes));
+
+    if (
+      !Number.isFinite(parsedDeliveryEta) ||
+      parsedDeliveryEta < 15 ||
+      parsedDeliveryEta > 10080
+    ) {
+      alert("Delivery ETA must be between 15 minutes and 7 days.");
+      return;
+    }
+
     setSubmitting(true);
 
-    const sellerDisplayName =
-      profile.seller_name || profile.username || user.email || "Seller";
-
-    if (isEditMode && editingId) {
-      if (!existingProduct) {
-        alert("Existing product data not found.");
-        setSubmitting(false);
-        return;
-      }
-
-      const { data: updatedProduct, error } = await supabase
-        .from("products")
-        .update({
-          title: title.trim(),
-          description: description.trim(),
-          price: parsedPrice,
-          stock: parsedStock,
-          category: selectedCategory.name,
-          category_id: selectedCategory.id,
-          game_name: selectedGame.name,
-          game_category_id: selectedGame.id,
-          seller_name: sellerDisplayName,
-          image_url: imageUrl.trim() || selectedGame.image_url || null,
-          status: parsedStock > 0 ? "active" : existingProduct.status || "active",
-        })
-        .eq("id", editingId)
-        .eq("seller_id", profile.id)
-        .select("id")
-        .single();
-
-      if (error) {
-        alert(`Database Error: ${error.message}`);
-        setSubmitting(false);
-        return;
-      }
-
-      if (updatedProduct?.id) {
-        await notifyWishlistUsersAfterEdit(
-          updatedProduct.id,
-          existingProduct,
-          parsedPrice,
-          parsedStock,
-          title.trim()
-        );
-      }
-
-      alert("Product updated successfully.");
-      window.location.href = "/seller/products";
-      return;
-    }
-
-    const { data: createdProduct, error } = await supabase
-      .from("products")
-      .insert({
-        title: title.trim(),
-        description: description.trim(),
-        price: parsedPrice,
-        stock: parsedStock,
-
-        category: selectedCategory.name,
-        category_id: selectedCategory.id,
-
-        game_name: selectedGame.name,
-        game_category_id: selectedGame.id,
-
-        seller: sellerDisplayName,
-        seller_id: profile.id,
-        seller_name: sellerDisplayName,
-
-        image_url: imageUrl.trim() || selectedGame.image_url || null,
-        slug: productSlug || createSlug(title),
-
-        status: "active",
-      })
-      .select("id")
-      .single();
-
-    if (error) {
-      alert(`Database Error: ${error.message}`);
-      setSubmitting(false);
-      return;
-    }
+    const payload = {
+      title: title.trim(),
+      description: description.trim(),
+      price: parsedPrice,
+      stock: parsedStock,
+      deliveryEtaMinutes: parsedDeliveryEta,
+      category: selectedCategory.name,
+      categoryId: selectedCategory.id,
+      gameName: selectedGame.name,
+      gameId: selectedGame.id,
+      imageUrl: imageUrl.trim() || selectedGame.image_url || "",
+      offerRegion: offerRegion.trim() || "Global",
+      offerPlatform: offerPlatform.trim() || "Any",
+      offerServer: offerServer.trim(),
+      offerTags: offerTags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      slug: productSlug || createSlug(title),
+    };
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData.session?.access_token;
+      if (isEditMode && editingId) {
+        await authenticatedFetchJson<{ product: { id: number } }>(
+          "/api/seller/catalog",
+          {
+            method: "PATCH",
+            body: JSON.stringify({ productId: editingId, ...payload }),
+          }
+        );
 
-      if (createdProduct?.id && accessToken) {
-        await fetch("/api/sellers/followers/notify-new-product", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({ productId: createdProduct.id }),
-        });
+        alert("Product updated successfully.");
+        window.location.href = "/seller/products";
+        return;
       }
-    } catch (notificationError) {
-      console.error("Followed seller notification error:", notificationError);
-    }
 
-    alert("Product created successfully.");
-    window.location.href = `/games/${selectedGame.slug}/offers?category=${encodeURIComponent(selectedCategory.name)}`;
+      const result = await authenticatedFetchJson<{ product: { id: number } }>(
+        "/api/seller/catalog",
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }
+      );
+
+      alert("Product created successfully.");
+      window.location.href = `/seller/products/${result.product.id}/variants`;
+    } catch (submitError) {
+      alert(
+        submitError instanceof Error
+          ? submitError.message
+          : "Failed to save product."
+      );
+      setSubmitting(false);
+    }
   }
 
   if (loading) {
@@ -683,16 +579,89 @@ export default function ProductUploadClient() {
 
             <div>
               <label className="mb-2 block text-sm font-bold text-gray-300">
-                Product Image URL
+                Delivery ETA
               </label>
 
-              <input
-                value={imageUrl}
-                onChange={(event) => setImageUrl(event.target.value)}
-                placeholder="https://example.com/product-image.jpg"
-                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
-              />
+              <select
+                value={deliveryEtaMinutes}
+                onChange={(event) => setDeliveryEtaMinutes(event.target.value)}
+                className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none focus:border-cyan-400"
+              >
+                {SELLER_SLA_OPTIONS.map((minutes) => (
+                  <option key={minutes} value={minutes}>
+                    {formatDeliveryEta(minutes)}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-2 text-xs text-gray-500">
+                This product-specific promise overrides your seller default for new paid orders.
+              </p>
             </div>
+          </div>
+
+          <div className="mt-7 rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.06] p-5">
+            <div>
+              <h3 className="text-xl font-black text-cyan-200">Offer Discovery</h3>
+              <p className="mt-1 text-sm text-gray-400">
+                These fields power marketplace filters and help buyers compare compatible offers.
+              </p>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-3">
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">Region</label>
+                <input
+                  value={offerRegion}
+                  onChange={(event) => setOfferRegion(event.target.value)}
+                  placeholder="Global, Asia, Europe, Indonesia"
+                  className="w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">Platform</label>
+                <input
+                  value={offerPlatform}
+                  onChange={(event) => setOfferPlatform(event.target.value)}
+                  placeholder="PC, PlayStation, Xbox, Mobile"
+                  className="w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-bold text-gray-300">Server / Realm</label>
+                <input
+                  value={offerServer}
+                  onChange={(event) => setOfferServer(event.target.value)}
+                  placeholder="Optional, e.g. SEA-1"
+                  className="w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-2 block text-sm font-bold text-gray-300">Search Tags</label>
+              <input
+                value={offerTags}
+                onChange={(event) => setOfferTags(event.target.value)}
+                placeholder="instant, cheap, ranked, premium (comma separated)"
+                className="w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+              />
+              <p className="mt-2 text-xs text-gray-500">Up to 12 tags. Do not include phone numbers or external contact details.</p>
+            </div>
+          </div>
+
+          <div className="mt-5">
+            <label className="mb-2 block text-sm font-bold text-gray-300">
+              Product Image URL
+            </label>
+
+            <input
+              value={imageUrl}
+              onChange={(event) => setImageUrl(event.target.value)}
+              placeholder="https://example.com/product-image.jpg"
+              className="w-full rounded-2xl border border-white/10 bg-black px-5 py-4 text-white outline-none placeholder:text-gray-500 focus:border-cyan-400"
+            />
           </div>
 
           <div className="mt-5">
@@ -779,7 +748,7 @@ export default function ProductUploadClient() {
               </p>
 
               <p className="mt-2 text-sm text-gray-400">
-                Stock: {stock || "0"}
+                Stock: {stock || "0"} · Delivery: {formatDeliveryEta(deliveryEtaMinutes)}
               </p>
 
               <p className="mt-4 line-clamp-4 text-sm text-gray-300">

@@ -1,11 +1,10 @@
 import { redirect } from "next/navigation";
 
-type Props = {
-  params: {
-    id: string;
-  };
+type PageProps = {
+  params: Promise<{ id: string }>;
 };
 
-export default function MyOrderDetailRedirect({ params }: Props) {
-  redirect(`/order/${params.id}`);
+export default async function MyOrderDetailRedirect({ params }: PageProps) {
+  const { id } = await params;
+  redirect(`/orders/${id}`);
 }

@@ -1,115 +1,200 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  effectiveProductPrice,
+  median,
+  normalizeFacet,
+  rankOffer,
+  type OfferProduct,
+  type OfferProfile,
+  type OfferVariant,
+  type RankedOffer,
+} from "@/lib/offerRanking";
 import { supabase } from "@/lib/supabase";
+
+type FacetItem = {
+  value: string;
+  label: string;
+  count: number;
+};
+
+function numberParam(value: string | null, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function booleanParam(value: string | null, fallback = false) {
+  if (value === null) return fallback;
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+function containsNormalized(values: string[], selected: string) {
+  if (!selected) return true;
+  const target = normalizeFacet(selected);
+  return values.some((value) => normalizeFacet(value) === target);
+}
+
+function buildFacet(values: string[]) {
+  const map = new Map<string, FacetItem>();
+
+  for (const rawValue of values) {
+    const label = String(rawValue || "").trim();
+    const value = normalizeFacet(label);
+    if (!value) continue;
+
+    const existing = map.get(value);
+    if (existing) existing.count += 1;
+    else map.set(value, { value, label, count: 1 });
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.label.localeCompare(b.label);
+  });
+}
+
+function matchesQuery(offer: RankedOffer, query: string) {
+  const search = query.trim().toLowerCase();
+  if (!search) return true;
+
+  return [
+    offer.title,
+    offer.category,
+    offer.game_name,
+    offer.seller_display_name,
+    ...offer.regions,
+    ...offer.platforms,
+    ...offer.servers,
+    ...offer.searchable_tags,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes(search);
+}
+
+function sortOffers(offers: RankedOffer[], sort: string) {
+  const list = [...offers];
+
+  switch (sort) {
+    case "price_asc":
+      return list.sort((a, b) => a.effective_price - b.effective_price);
+    case "price_desc":
+      return list.sort((a, b) => b.effective_price - a.effective_price);
+    case "delivery_asc":
+      return list.sort((a, b) => {
+        if (a.delivery_eta !== b.delivery_eta) return a.delivery_eta - b.delivery_eta;
+        return b.ranking_score - a.ranking_score;
+      });
+    case "rating_desc":
+      return list.sort((a, b) => {
+        if (a.seller_rating !== b.seller_rating) return b.seller_rating - a.seller_rating;
+        return b.seller_review_count - a.seller_review_count;
+      });
+    case "orders_desc":
+      return list.sort((a, b) => b.seller_completed_orders - a.seller_completed_orders);
+    case "newest":
+      return list.sort(
+        (a, b) =>
+          Date.parse(b.created_at || "1970-01-01") -
+          Date.parse(a.created_at || "1970-01-01")
+      );
+    case "stock_desc":
+      return list.sort((a, b) => b.effective_stock - a.effective_stock);
+    default:
+      return list.sort((a, b) => {
+        if (a.ranking_score !== b.ranking_score) return b.ranking_score - a.ranking_score;
+        return a.effective_price - b.effective_price;
+      });
+  }
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-
-  const gameSlug = searchParams.get("game") || "";
+  const gameSlug = searchParams.get("game")?.trim() || "";
   const categoryParam = searchParams.get("category")?.trim() || "";
-  const limit = Math.min(Number(searchParams.get("limit") || 100), 100);
+  const query = searchParams.get("q")?.trim() || "";
+  const region = searchParams.get("region")?.trim() || "";
+  const platform = searchParams.get("platform")?.trim() || "";
+  const serviceLevel = searchParams.get("serviceLevel")?.trim() || "";
+  const sort = searchParams.get("sort")?.trim() || "recommended";
+  const minPrice = Math.max(0, numberParam(searchParams.get("minPrice"), 0));
+  const maxPrice = Math.max(0, numberParam(searchParams.get("maxPrice"), 0));
+  const minRating = Math.max(0, Math.min(5, numberParam(searchParams.get("minRating"), 0)));
+  const maxDelivery = Math.max(0, numberParam(searchParams.get("maxDelivery"), 0));
+  const onlineOnly = booleanParam(searchParams.get("onlineOnly"));
+  const inStockOnly = booleanParam(searchParams.get("inStockOnly"), true);
+  const page = Math.max(1, Math.floor(numberParam(searchParams.get("page"), 1)));
+  const pageSize = Math.min(
+    48,
+    Math.max(8, Math.floor(numberParam(searchParams.get("pageSize") || searchParams.get("limit"), 24)))
+  );
 
   if (!gameSlug) {
-    return NextResponse.json({ products: [] });
+    return NextResponse.json({
+      products: [],
+      facets: { categories: [], regions: [], platforms: [], serviceLevels: [] },
+      pagination: { page: 1, pageSize, total: 0, totalPages: 0 },
+    });
   }
 
-  const { data: gameData } = await supabase
+  const { data: gameData, error: gameError } = await supabase
     .from("game_master")
-    .select("id, name, slug")
+    .select("id,name,slug")
     .eq("slug", gameSlug)
+    .eq("status", "active")
+    .eq("is_active", true)
     .maybeSingle();
 
-  const gameId = gameData?.id ? Number(gameData.id) : null;
-  const gameName = gameData?.name || gameSlug;
-
-  const normalizedCategory = categoryParam
-    ? decodeURIComponent(categoryParam)
-        .trim()
-        .toLowerCase()
-        .replace(/&/g, "and")
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-    : "";
-
-  let categoryId: number | null = null;
-  let categoryValues: string[] = [];
-
-  if (normalizedCategory) {
-    const categoryNameCandidate = normalizedCategory.replace(/-/g, " ");
-
-    const { data: categoryData, error: categoryError } = await supabase
-      .from("categories")
-      .select("id,name,slug")
-      .or(`slug.eq.${normalizedCategory},name.ilike.${categoryNameCandidate}`)
-      .maybeSingle();
-
-    if (categoryError) {
-      return NextResponse.json(
-        { products: [], error: categoryError.message },
-        { status: 500 }
-      );
-    }
-
-    if (!categoryData) {
-      return NextResponse.json({ products: [] });
-    }
-
-    categoryId = Number(categoryData.id);
-    categoryValues = Array.from(
-      new Set(
-        [
-          categoryData.name,
-          categoryData.slug,
-          normalizedCategory,
-          categoryNameCandidate,
-        ].filter(Boolean)
-      )
-    );
+  if (gameError) {
+    return NextResponse.json({ error: gameError.message }, { status: 500 });
   }
 
-  let query = supabase
+  if (!gameData) {
+    return NextResponse.json({ error: "Game not found." }, { status: 404 });
+  }
+
+  let productQuery = supabase
     .from("products")
     .select(`
       id,
       title,
       slug,
       price,
+      min_variant_price,
+      max_variant_price,
       image_url,
       category,
       status,
       seller_id,
       seller_name,
       created_at,
+      updated_at,
       game_name,
-      game_category_id
+      game_category_id,
+      stock,
+      delivery_eta_minutes,
+      has_variants,
+      variant_count,
+      offer_region,
+      offer_platform,
+      offer_server,
+      offer_tags
     `)
     .eq("status", "active")
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(500);
 
-  if (gameId) {
-    query = query.eq("game_category_id", gameId);
-  } else {
-    query = query.ilike("game_name", gameName);
+  if (gameData.id) productQuery = productQuery.eq("game_category_id", Number(gameData.id));
+  else productQuery = productQuery.ilike("game_name", gameData.name);
+
+  const { data: productRows, error: productError } = await productQuery;
+
+  if (productError) {
+    return NextResponse.json({ error: productError.message }, { status: 500 });
   }
 
-  if (categoryId) {
-    const categoryValueList = categoryValues
-      .map((value) => `"${String(value).replace(/"/g, '\"')}"`)
-      .join(",");
-
-    query = query.or(`category_id.eq.${categoryId},category.in.(${categoryValueList})`);
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    return NextResponse.json(
-      { products: [], error: error.message },
-      { status: 500 }
-    );
-  }
-
-  const products = data || [];
+  const products = (productRows || []) as OfferProduct[];
+  const productIds = products.map((product) => Number(product.id));
   const sellerIds = Array.from(
     new Set(
       products
@@ -118,70 +203,136 @@ export async function GET(request: NextRequest) {
     )
   );
 
-  if (sellerIds.length === 0) {
-    return NextResponse.json({ products });
-  }
-
-  const [reviewsResult, ordersResult] = await Promise.all([
-    supabase
-      .from("reviews")
-      .select("seller_id,rating")
-      .in("seller_id", sellerIds),
-    supabase
-      .from("orders")
-      .select("seller_id,status")
-      .in("seller_id", sellerIds),
+  const [profileResult, variantResult] = await Promise.all([
+    sellerIds.length
+      ? supabase
+          .from("profiles")
+          .select(`
+            id,
+            username,
+            seller_name,
+            seller_rating,
+            seller_review_count,
+            seller_status,
+            seller_presence_mode,
+            seller_last_seen_at,
+            seller_delivery_sla_minutes,
+            seller_avg_delivery_minutes,
+            seller_on_time_rate,
+            seller_total_deliveries,
+            seller_service_level
+          `)
+          .in("id", sellerIds)
+      : Promise.resolve({ data: [], error: null }),
+    productIds.length
+      ? supabase
+          .from("product_variants")
+          .select("product_id,name,sku,attributes,price,stock,status")
+          .in("product_id", productIds)
+          .eq("status", "active")
+          .limit(2000)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
-  const sellerStats = new Map<
-    string,
-    { ratingTotal: number; reviewCount: number; completedOrders: number }
-  >();
-
-  for (const sellerId of sellerIds) {
-    sellerStats.set(sellerId, {
-      ratingTotal: 0,
-      reviewCount: 0,
-      completedOrders: 0,
-    });
+  if (profileResult.error) {
+    return NextResponse.json({ error: profileResult.error.message }, { status: 500 });
   }
 
-  if (!reviewsResult.error) {
-    for (const review of reviewsResult.data || []) {
-      if (!review.seller_id) continue;
+  if (variantResult.error) {
+    return NextResponse.json({ error: variantResult.error.message }, { status: 500 });
+  }
 
-      const stats = sellerStats.get(review.seller_id);
-      if (!stats) continue;
+  const profiles = new Map<string, OfferProfile>();
+  for (const profile of (profileResult.data || []) as OfferProfile[]) {
+    profiles.set(profile.id, profile);
+  }
 
-      stats.ratingTotal += Number(review.rating || 0);
-      stats.reviewCount += 1;
+  const variantsByProduct = new Map<number, OfferVariant[]>();
+  for (const variant of (variantResult.data || []) as OfferVariant[]) {
+    const productId = Number(variant.product_id);
+    const existing = variantsByProduct.get(productId) || [];
+    existing.push(variant);
+    variantsByProduct.set(productId, existing);
+  }
+
+  const allPrices = products
+    .map((product) => effectiveProductPrice(product, variantsByProduct.get(Number(product.id)) || []))
+    .filter((price) => price > 0);
+  const medianPrice = median(allPrices);
+
+  const ranked = products.map((product) =>
+    rankOffer({
+      product,
+      profile: product.seller_id ? profiles.get(product.seller_id) : null,
+      variants: variantsByProduct.get(Number(product.id)) || [],
+      medianPrice,
+      query,
+    })
+  );
+
+  const facets = {
+    categories: buildFacet(ranked.map((offer) => offer.category || "Other")),
+    regions: buildFacet(ranked.flatMap((offer) => offer.regions)),
+    platforms: buildFacet(ranked.flatMap((offer) => offer.platforms)),
+    serviceLevels: buildFacet(ranked.map((offer) => offer.seller_service_level)),
+    price: {
+      min: allPrices.length ? Math.min(...allPrices) : 0,
+      max: allPrices.length ? Math.max(...allPrices) : 0,
+      median: medianPrice,
+    },
+  };
+
+  const categoryFilter = normalizeFacet(categoryParam);
+  const levelFilter = normalizeFacet(serviceLevel);
+
+  const filtered = ranked.filter((offer) => {
+    if (!matchesQuery(offer, query)) return false;
+    if (categoryFilter && categoryFilter !== "all" && normalizeFacet(offer.category) !== categoryFilter) {
+      return false;
     }
-  }
-
-  if (!ordersResult.error) {
-    for (const order of ordersResult.data || []) {
-      if (!order.seller_id || order.status !== "completed") continue;
-
-      const stats = sellerStats.get(order.seller_id);
-      if (!stats) continue;
-
-      stats.completedOrders += 1;
-    }
-  }
-
-  const enrichedProducts = products.map((product) => {
-    const stats = product.seller_id ? sellerStats.get(product.seller_id) : null;
-    const sellerRating = stats?.reviewCount
-      ? Number((stats.ratingTotal / stats.reviewCount).toFixed(1))
-      : null;
-
-    return {
-      ...product,
-      seller_rating: sellerRating,
-      seller_review_count: stats?.reviewCount || 0,
-      seller_completed_orders: stats?.completedOrders || 0,
-    };
+    if (region && !containsNormalized(offer.regions, region)) return false;
+    if (platform && !containsNormalized(offer.platforms, platform)) return false;
+    if (levelFilter && normalizeFacet(offer.seller_service_level) !== levelFilter) return false;
+    if (minPrice > 0 && offer.effective_price < minPrice) return false;
+    if (maxPrice > 0 && offer.effective_price > maxPrice) return false;
+    if (minRating > 0 && offer.seller_rating < minRating) return false;
+    if (maxDelivery > 0 && offer.delivery_eta > maxDelivery) return false;
+    if (onlineOnly && offer.seller_presence !== "online") return false;
+    if (inStockOnly && offer.effective_stock <= 0) return false;
+    return true;
   });
 
-  return NextResponse.json({ products: enrichedProducts });
+  const sorted = sortOffers(filtered, sort);
+  const total = sorted.length;
+  const totalPages = total > 0 ? Math.ceil(total / pageSize) : 0;
+  const safePage = totalPages > 0 ? Math.min(page, totalPages) : 1;
+  const start = (safePage - 1) * pageSize;
+  const paginated = sorted.slice(start, start + pageSize);
+
+  return NextResponse.json({
+    game: gameData,
+    products: paginated,
+    facets,
+    pagination: {
+      page: safePage,
+      pageSize,
+      total,
+      totalPages,
+    },
+    appliedFilters: {
+      query,
+      category: categoryParam,
+      region,
+      platform,
+      serviceLevel,
+      minPrice,
+      maxPrice,
+      minRating,
+      maxDelivery,
+      onlineOnly,
+      inStockOnly,
+      sort,
+    },
+    rankingVersion: "v14.1",
+  });
 }

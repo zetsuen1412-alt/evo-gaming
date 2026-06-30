@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
 type GameMasterRow = {
   id: number;
   name: string;
   slug: string;
+  first_letter: string | null;
   image_url: string | null;
   cover_image_url: string | null;
   background_image: string | null;
@@ -25,81 +26,187 @@ function numberValue(value: number | string | null | undefined) {
   return Number.isFinite(numericValue) ? numericValue : 0;
 }
 
-function calculateTrendScore(game: GameMasterRow, activeOfferCount: number) {
-  const ratingScore = numberValue(game.rating) * 3;
-  const metacriticScore = numberValue(game.metacritic) / 10;
-  const offerScore = activeOfferCount * 8;
-  const featuredScore = game.is_featured ? 50 : 0;
-  const manualTrendingScore = game.is_trending ? 40 : 0;
-
-  return Math.round(
-    offerScore + featuredScore + manualTrendingScore + ratingScore + metacriticScore
-  );
+function escapePostgrest(value: string) {
+  return value.replace(/[%_,]/g, " ").trim();
 }
 
-export async function GET() {
-  const [gamesResult, productsResult] = await Promise.all([
-    supabase
-      .from("game_master")
-      .select(
-        "id,name,slug,image_url,cover_image_url,background_image,offer_count,is_trending,is_featured,rating,metacritic"
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const page = Math.max(Number(searchParams.get("page") || 1), 1);
+  const limit = Math.min(
+    Math.max(Number(searchParams.get("limit") || 48), 1),
+    100
+  );
+  const queryText = escapePostgrest(searchParams.get("q") || "");
+  const letter = String(searchParams.get("letter") || "").toUpperCase();
+  const categoryValue = String(searchParams.get("category") || "").trim();
+  const offset = (page - 1) * limit;
+
+  let categoryGameIds: number[] | null = null;
+
+  if (categoryValue) {
+    const normalizedCategory = categoryValue
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    const { data: category, error: categoryError } = await supabase
+      .from("categories")
+      .select("id,name,slug")
+      .or(
+        `slug.eq.${normalizedCategory},name.ilike.%${escapePostgrest(
+          categoryValue
+        )}%`
       )
-      .eq("status", "active")
-      .eq("is_active", true)
-      .range(0, 4999),
-    supabase
+      .maybeSingle();
+
+    if (categoryError) {
+      return NextResponse.json(
+        { error: categoryError.message },
+        { status: 500 }
+      );
+    }
+
+    if (!category) {
+      return NextResponse.json({
+        games: [],
+        count: 0,
+        page,
+        limit,
+        totalPages: 0,
+      });
+    }
+
+    const { data: products, error: productsError } = await supabase
       .from("products")
       .select("game_category_id,stock")
       .eq("status", "active")
+      .or(
+        `category_id.eq.${category.id},category.ilike.%${escapePostgrest(
+          category.name
+        )}%`
+      )
       .not("game_category_id", "is", null)
-      .range(0, 9999),
-  ]);
+      .range(0, 9999);
 
-  if (gamesResult.error) {
-    return NextResponse.json({ error: gamesResult.error.message }, { status: 500 });
-  }
-
-  if (productsResult.error) {
-    return NextResponse.json({ error: productsResult.error.message }, { status: 500 });
-  }
-
-  const activeOfferCountByGameId = (productsResult.data || []).reduce(
-    (map, product: ProductRow) => {
-      const gameId = Number(product.game_category_id);
-
-      if (!Number.isFinite(gameId) || gameId <= 0) return map;
-      if (numberValue(product.stock) <= 0) return map;
-
-      map.set(gameId, (map.get(gameId) || 0) + 1);
-      return map;
-    },
-    new Map<number, number>()
-  );
-
-  const games = ((gamesResult.data || []) as GameMasterRow[])
-    .map((game) => {
-      const activeOfferCount = activeOfferCountByGameId.get(Number(game.id)) || 0;
-      const fallbackOfferCount = numberValue(game.offer_count);
-      const offerCount = activeOfferCount || fallbackOfferCount;
-      const trendScore = calculateTrendScore(game, offerCount);
-
-      return {
-        ...game,
-        offer_count: offerCount,
-        trend_score: trendScore,
-        is_trending: Boolean(game.is_trending || game.is_featured || trendScore >= 40),
-      };
-    })
-    .sort((a, b) => {
-      return (
-        b.trend_score - a.trend_score ||
-        Number(b.is_featured) - Number(a.is_featured) ||
-        Number(b.is_trending) - Number(a.is_trending) ||
-        numberValue(b.rating) - numberValue(a.rating) ||
-        a.name.localeCompare(b.name)
+    if (productsError) {
+      return NextResponse.json(
+        { error: productsError.message },
+        { status: 500 }
       );
-    })
-    .slice(0, 24);
+    }
 
-  return NextResponse.json({ games });
+    categoryGameIds = Array.from(
+      new Set(
+        ((products || []) as ProductRow[])
+          .filter((product) => numberValue(product.stock) > 0)
+          .map((product) => Number(product.game_category_id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+      )
+    );
+
+    if (categoryGameIds.length === 0) {
+      return NextResponse.json({
+        games: [],
+        count: 0,
+        page,
+        limit,
+        totalPages: 0,
+      });
+    }
+  }
+
+  let gamesQuery = supabase
+    .from("game_master")
+    .select(
+      "id,name,slug,first_letter,image_url,cover_image_url,background_image,offer_count,is_trending,is_featured,rating,metacritic",
+      { count: "exact" }
+    )
+    .eq("status", "active")
+    .eq("is_active", true);
+
+  if (queryText) {
+    const normalized = queryText
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    gamesQuery = gamesQuery.or(
+      `normalized_name.ilike.%${queryText.toLowerCase()}%,name.ilike.%${queryText}%,slug.ilike.%${normalized}%`
+    );
+  }
+
+  if (letter && letter !== "ALL") {
+    if (letter === "0-9") {
+      gamesQuery = gamesQuery.in("first_letter", [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+      ]);
+    } else if (/^[A-Z]$/.test(letter)) {
+      gamesQuery = gamesQuery.eq("first_letter", letter);
+    }
+  }
+
+  if (categoryGameIds) {
+    gamesQuery = gamesQuery.in("id", categoryGameIds);
+  }
+
+  const { data, error, count } = await gamesQuery
+    .order("name", { ascending: true })
+    .range(offset, offset + limit - 1);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const games = (data || []) as GameMasterRow[];
+  const gameIds = games.map((game) => game.id);
+  const offerCountByGame = new Map<number, number>();
+
+  if (gameIds.length > 0) {
+    const { data: products, error: productsError } = await supabase
+      .from("products")
+      .select("game_category_id,stock")
+      .eq("status", "active")
+      .in("game_category_id", gameIds)
+      .range(0, 9999);
+
+    if (!productsError) {
+      for (const product of (products || []) as ProductRow[]) {
+        const gameId = Number(product.game_category_id);
+        if (!Number.isFinite(gameId) || numberValue(product.stock) <= 0) continue;
+        offerCountByGame.set(gameId, (offerCountByGame.get(gameId) || 0) + 1);
+      }
+    }
+  }
+
+  const result = games.map((game) => ({
+    ...game,
+    first_letter:
+      game.first_letter || game.name.trim().charAt(0).toUpperCase() || "#",
+    offer_count:
+      offerCountByGame.get(game.id) ?? numberValue(game.offer_count),
+    is_trending: Boolean(game.is_trending),
+    is_featured: Boolean(game.is_featured),
+    rating: numberValue(game.rating),
+  }));
+
+  const total = count || 0;
+
+  return NextResponse.json({
+    games: result,
+    count: total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+  });
 }

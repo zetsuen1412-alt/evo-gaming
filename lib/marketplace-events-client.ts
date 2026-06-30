@@ -1,3 +1,5 @@
+import { supabase } from "@/lib/supabase";
+
 export type MarketplaceEventType =
   | "offer_view"
   | "product_view"
@@ -42,9 +44,15 @@ export async function trackMarketplaceEvent(payload: MarketplaceEventPayload) {
   if (typeof window === "undefined") return;
 
   try {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+
     await fetch("/api/marketplace/events", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
       body: JSON.stringify({
         ...payload,
         session_id: payload.session_id || getMarketplaceSessionId(),

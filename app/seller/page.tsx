@@ -1,387 +1,345 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { User } from "@supabase/supabase-js";
+import { useEffect, useState } from "react";
+import {
+  FaBolt,
+  FaBoxOpen,
+  FaChartLine,
+  FaClock,
+  FaClipboardList,
+  FaMedal,
+  FaMoneyBillWave,
+  FaPlus,
+  FaSignal,
+  FaStar,
+  FaStore,
+  FaUsers,
+  FaWallet,
+} from "react-icons/fa";
+import { useCurrency } from "@/components/CurrencyProvider";
+import { authenticatedFetchJson } from "@/lib/authenticatedFetch";
+import {
+  effectivePresence,
+  formatDeliveryEta,
+  serviceLevelClass,
+  serviceLevelDescription,
+  serviceLevelLabel,
+} from "@/lib/sellerServiceLevel";
 import { supabase } from "@/lib/supabase";
 
-type Profile = {
-  id: string;
-  email: string | null;
-  username: string | null;
-  role: string | null;
-  seller_status: string | null;
-  seller_name: string | null;
-  bio: string | null;
-  discord: string | null;
-  avatar_url: string | null;
-  created_at: string;
-};
-
-type SellerApplication = {
-  id: number;
-  user_id: string;
-  email: string;
-  seller_name: string;
-  full_name: string;
-  phone: string;
-  discord: string | null;
-  identity_number: string;
-  identity_image: string | null;
-  status: string | null;
-  notes: string | null;
-  created_at: string;
-};
-
-function formatDate(value?: string | null) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("id-ID");
-}
-
-function getStatusView(status: string | null | undefined) {
-  if (status === "approved") {
-    return {
-      label: "Approved",
-      title: "Seller Approved",
-      icon: "✅",
-      color: "text-green-300",
-      border: "border-green-400/20",
-      bg: "bg-green-400/10",
-      message:
-        "Your seller account is active. You can create products, manage orders, and grow your store on ComePlayers.",
-    };
-  }
-
-  if (status === "pending") {
-    return {
-      label: "Pending Review",
-      title: "Application Under Review",
-      icon: "🟡",
-      color: "text-yellow-300",
-      border: "border-yellow-400/20",
-      bg: "bg-yellow-400/10",
-      message:
-        "Your seller application has been submitted and is waiting for admin approval.",
-    };
-  }
-
-  if (status === "rejected") {
-    return {
-      label: "Rejected",
-      title: "Application Needs Review",
-      icon: "⚠️",
-      color: "text-red-300",
-      border: "border-red-400/20",
-      bg: "bg-red-400/10",
-      message:
-        "Your seller application was not approved. Review the notes below and submit again if needed.",
-    };
-  }
-
-  return {
-    label: "Not Applied",
-    title: "Become a Seller",
-    icon: "🚀",
-    color: "text-cyan-300",
-    border: "border-cyan-400/20",
-    bg: "bg-cyan-400/10",
-    message:
-      "Complete your seller verification to unlock seller tools and start listing products.",
+type Overview = {
+  profile: {
+    seller_name?: string | null;
+    username?: string | null;
+    email?: string | null;
+    seller_rating?: number | string | null;
+    seller_review_count?: number | string | null;
+    seller_presence_mode?: string | null;
+    seller_last_seen_at?: string | null;
+    seller_delivery_sla_minutes?: number | null;
+    seller_avg_delivery_minutes?: number | string | null;
+    seller_on_time_rate?: number | string | null;
+    seller_total_deliveries?: number | null;
+    seller_late_deliveries?: number | null;
+    seller_service_level?: string | null;
   };
+  wallet: {
+    balance?: number | string | null;
+    pending_balance?: number | string | null;
+  };
+  metrics: {
+    products: number;
+    activeProducts: number;
+    orders: number;
+    paidOrders: number;
+    awaitingDelivery: number;
+    completedOrders: number;
+    lateOrders: number;
+    followers: number;
+    lifetimeEarnings: number;
+  };
+  recentOrders: Array<{
+    id: number;
+    product_title?: string | null;
+    product?: string | null;
+    total_amount?: number | string | null;
+    total_price?: number | string | null;
+    status?: string | null;
+    payment_status?: string | null;
+    created_at?: string | null;
+    delivery_due_at?: string | null;
+    delivery_sla_status?: string | null;
+    delivered_at?: string | null;
+  }>;
+};
+
+function prettyStatus(value?: string | null) {
+  return String(value || "pending")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-export default function SellerVerificationPage() {
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [application, setApplication] = useState<SellerApplication | null>(null);
+export default function SellerDashboardPage() {
+  const { formatPrice } = useCurrency();
+  const [overview, setOverview] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [sellerStatus, setSellerStatus] = useState("");
 
   useEffect(() => {
-    initializePage();
+    async function loadOverview() {
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token;
+
+        if (sessionError || !accessToken) {
+          throw new Error("Please login to open your seller dashboard.");
+        }
+
+        const response = await fetch("/api/seller/overview", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          setSellerStatus(json.sellerStatus || "");
+          throw new Error(json.error || "Seller dashboard is unavailable.");
+        }
+
+        setOverview(json);
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Failed to load seller dashboard."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadOverview();
   }, []);
 
-  async function initializePage() {
-    try {
-      setLoading(true);
+  useEffect(() => {
+    if (!overview) return;
 
-      const { data: userData, error: userError } = await supabase.auth.getUser();
+    const presence = effectivePresence(
+      overview.profile.seller_presence_mode,
+      overview.profile.seller_last_seen_at
+    );
 
-      if (userError) {
-        alert(userError.message);
-        setLoading(false);
-        return;
+    if (presence === "offline") return;
+
+    const heartbeat = async () => {
+      try {
+        await authenticatedFetchJson("/api/seller/service-level", {
+          method: "POST",
+          body: JSON.stringify({ action: "heartbeat" }),
+        });
+      } catch {
+        // Presence falls back to offline automatically when heartbeats stop.
       }
+    };
 
-      if (!userData.user) {
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-
-      setUser(userData.user);
-
-      const { data: profileData, error: profileError } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", userData.user.id)
-        .maybeSingle();
-
-      if (profileError) {
-        alert(profileError.message);
-        setLoading(false);
-        return;
-      }
-
-      if (!profileData) {
-        alert("Profile not found.");
-        setLoading(false);
-        return;
-      }
-
-      setProfile(profileData);
-
-      const { data: applicationData, error: applicationError } = await supabase
-        .from("seller_applications")
-        .select("*")
-        .eq("user_id", userData.user.id)
-        .order("id", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (applicationError) {
-        alert(applicationError.message);
-        setLoading(false);
-        return;
-      }
-
-      setApplication(applicationData || null);
-      setLoading(false);
-    } catch (error) {
-      console.error("Seller verification page error:", error);
-      alert("Failed to load seller verification.");
-      setLoading(false);
-    }
-  }
+    heartbeat();
+    const timer = window.setInterval(heartbeat, 60_000);
+    return () => window.clearInterval(timer);
+  }, [overview]);
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] text-white">
-        <p className="text-xl font-black text-cyan-300">
-          Loading verification center...
-        </p>
+      <main className="min-h-screen bg-[#050816] px-4 py-24 text-center text-white">
+        Loading seller dashboard...
       </main>
     );
   }
 
-  if (!user) {
+  if (!overview) {
+    const href =
+      sellerStatus === "pending" || sellerStatus === "rejected"
+        ? "/seller/verification"
+        : "/seller/apply";
+
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#020617] px-6 text-white">
-        <div className="max-w-md rounded-3xl border border-white/10 bg-white/[0.04] p-8 text-center">
-          <h1 className="text-3xl font-black text-cyan-300">
-            Login Required
-          </h1>
-
-          <p className="mt-4 text-gray-400">
-            Please login first to view your seller verification status.
-          </p>
-
-          <Link
-            href="/"
-            className="mt-6 inline-flex h-12 items-center justify-center rounded-full bg-cyan-400 px-6 font-black text-black hover:bg-cyan-300"
-          >
-            Back to Home
-          </Link>
-        </div>
+      <main className="min-h-screen bg-[#050816] px-4 py-24 text-center text-white">
+        <h1 className="text-4xl font-black">Seller Access Required</h1>
+        <p className="mx-auto mt-4 max-w-xl text-slate-300">{error}</p>
+        <Link
+          href={href}
+          className="mt-8 inline-flex rounded-xl bg-cyan-400 px-6 py-4 font-black text-black"
+        >
+          Open Seller Verification
+        </Link>
       </main>
     );
   }
 
-  const sellerStatus =
-    profile?.seller_status || application?.status || "not_applied";
-  const statusView = getStatusView(sellerStatus);
+  const name =
+    overview.profile.seller_name ||
+    overview.profile.username ||
+    overview.profile.email ||
+    "Seller";
+  const presence = effectivePresence(
+    overview.profile.seller_presence_mode,
+    overview.profile.seller_last_seen_at
+  );
+  const serviceLevel = serviceLevelLabel(overview.profile.seller_service_level);
 
   return (
-    <main className="min-h-screen bg-[#020617] text-white">
-      <section className="relative overflow-hidden border-b border-white/10 px-8 py-12">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(37,99,235,.18),transparent_34%)]" />
-
-        <div className="relative z-10 mx-auto flex max-w-7xl flex-col justify-between gap-8 lg:flex-row lg:items-start">
+    <main className="min-h-screen bg-[#050816] text-white">
+      <section className="border-b border-cyan-400/20 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,.18),transparent_38%)]">
+        <div className="mx-auto flex max-w-7xl flex-col justify-between gap-8 px-4 py-14 lg:flex-row lg:items-end">
           <div>
-            <p className="mb-4 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-black text-cyan-300">
-              Seller Verification Center
-            </p>
-
-            <h1 className="text-5xl font-black md:text-7xl">
-              Verification Status
-            </h1>
-
-            <p className="mt-5 max-w-2xl text-gray-300">
-              Track your seller approval status, identity review, and account
-              readiness.
+            <div className="flex flex-wrap gap-3">
+              <p className="inline-flex rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-sm font-black text-emerald-300">
+                Approved Seller
+              </p>
+              <p className={`inline-flex rounded-full border px-4 py-2 text-sm font-black capitalize ${
+                presence === "online"
+                  ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                  : presence === "away"
+                    ? "border-yellow-400/30 bg-yellow-400/10 text-yellow-300"
+                    : "border-slate-400/30 bg-slate-400/10 text-slate-300"
+              }`}>
+                {presence}
+              </p>
+              <p className={`inline-flex rounded-full border px-4 py-2 text-sm font-black ${serviceLevelClass(overview.profile.seller_service_level)}`}>
+                {serviceLevel} Service
+              </p>
+            </div>
+            <h1 className="mt-5 text-5xl font-black md:text-7xl">{name}</h1>
+            <p className="mt-4 text-slate-300">
+              Manage listings, paid orders, deliveries, followers, and earnings.
             </p>
           </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/seller"
-              className="rounded-full border border-cyan-400 px-5 py-3 font-black text-cyan-300 transition hover:bg-cyan-400 hover:text-black"
-            >
-              Seller Dashboard
-            </Link>
-
-            {sellerStatus !== "approved" ? (
-              <Link
-                href="/seller/apply"
-                className="rounded-full bg-cyan-400 px-5 py-3 font-black text-black transition hover:bg-cyan-300"
-              >
-                Apply / Update
-              </Link>
-            ) : null}
-          </div>
+          <Link
+            href="/seller/products/new"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-400 px-6 py-4 font-black text-black hover:bg-cyan-300"
+          >
+            <FaPlus /> Create Product
+          </Link>
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-8 px-8 py-10 lg:grid-cols-[1fr_420px]">
-        <div className={`rounded-3xl border ${statusView.border} ${statusView.bg} p-8`}>
-          <p className="text-6xl">{statusView.icon}</p>
-
-          <h2 className={`mt-5 text-4xl font-black ${statusView.color}`}>
-            {statusView.title}
-          </h2>
-
-          <p className="mt-4 max-w-3xl text-gray-300">
-            {statusView.message}
-          </p>
-
-          <div className="mt-8 grid gap-5 md:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-              <p className="text-sm text-gray-400">Current Status</p>
-              <p className={`mt-2 text-2xl font-black ${statusView.color}`}>
-                {statusView.label}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-              <p className="text-sm text-gray-400">Seller Name</p>
-              <p className="mt-2 text-2xl font-black">
-                {profile?.seller_name ||
-                  application?.seller_name ||
-                  profile?.username ||
-                  "Not Set"}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-              <p className="text-sm text-gray-400">Account Email</p>
-              <p className="mt-2 break-words text-xl font-black">
-                {profile?.email || user.email || "-"}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-              <p className="text-sm text-gray-400">Profile Created</p>
-              <p className="mt-2 text-xl font-black">
-                {formatDate(profile?.created_at)}
-              </p>
-            </div>
-          </div>
-
-          {application?.notes ? (
-            <div className="mt-8 rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-5">
-              <h3 className="font-black text-yellow-300">Admin Notes</h3>
-              <p className="mt-3 text-gray-300">{application.notes}</p>
-            </div>
-          ) : null}
+      <section className="mx-auto max-w-7xl px-4 py-10">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric icon={<FaBoxOpen />} label="Active Listings" value={String(overview.metrics.activeProducts)} />
+          <Metric icon={<FaClipboardList />} label="Paid Orders" value={String(overview.metrics.paidOrders)} />
+          <Metric icon={<FaStore />} label="Awaiting Delivery" value={String(overview.metrics.awaitingDelivery)} attention={overview.metrics.awaitingDelivery > 0} />
+          <Metric icon={<FaClock />} label="Late Orders" value={String(overview.metrics.lateOrders)} attention={overview.metrics.lateOrders > 0} />
+          <Metric icon={<FaMoneyBillWave />} label="Lifetime Earnings" value={formatPrice(overview.metrics.lifetimeEarnings)} />
+          <Metric icon={<FaWallet />} label="Available Wallet" value={formatPrice(overview.wallet.balance)} />
+          <Metric icon={<FaSignal />} label="On-Time Rate" value={`${Number(overview.profile.seller_on_time_rate || 100).toFixed(1)}%`} />
+          <Metric icon={<FaBolt />} label="Average Delivery" value={formatDeliveryEta(overview.profile.seller_avg_delivery_minutes)} />
+          <Metric icon={<FaUsers />} label="Followers" value={String(overview.metrics.followers)} />
+          <Metric icon={<FaStar />} label="Rating" value={Number(overview.profile.seller_rating || 0).toFixed(1)} />
+          <Metric icon={<FaChartLine />} label="Completed Orders" value={String(overview.metrics.completedOrders)} />
+          <Metric icon={<FaMedal />} label="Service Level" value={serviceLevel} />
         </div>
 
-        <aside className="space-y-6">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-            <h2 className="text-3xl font-black">Verification Checklist</h2>
+        <div className="mt-10 grid gap-8 xl:grid-cols-[1fr_360px]">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-2xl font-black">Recent Orders</h2>
+              <Link href="/seller/orders" className="font-black text-cyan-300">
+                View all →
+              </Link>
+            </div>
 
-            <div className="mt-7 space-y-4">
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <p className="text-sm font-black text-cyan-300">Step 1</p>
-                <h3 className="mt-2 text-xl font-black">Application Submitted</h3>
-                <p className="mt-2 text-sm text-gray-400">
-                  {application
-                    ? `Submitted on ${formatDate(application.created_at)}`
-                    : "Not submitted yet."}
+            <div className="mt-6 space-y-3">
+              {overview.recentOrders.length === 0 ? (
+                <p className="rounded-2xl border border-white/10 bg-black/30 p-6 text-slate-400">
+                  No orders yet.
                 </p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <p className="text-sm font-black text-cyan-300">Step 2</p>
-                <h3 className="mt-2 text-xl font-black">Identity Review</h3>
-                <p className="mt-2 text-sm text-gray-400">
-                  Admin reviews your seller identity and marketplace readiness.
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5">
-                <p className="text-sm font-black text-cyan-300">Step 3</p>
-                <h3 className="mt-2 text-xl font-black">Seller Access</h3>
-                <p className="mt-2 text-sm text-gray-400">
-                  Approved sellers can create listings and manage orders.
-                </p>
-              </div>
+              ) : (
+                overview.recentOrders.map((order) => (
+                  <Link
+                    key={order.id}
+                    href={`/orders/${order.id}`}
+                    className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/30 p-4 transition hover:border-cyan-400"
+                  >
+                    <div>
+                      <p className="font-black">
+                        #{order.id} · {order.product_title || order.product || "Product"}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {prettyStatus(order.payment_status || order.status)}
+                      </p>
+                    </div>
+                    <p className="font-black text-cyan-300">
+                      {formatPrice(order.total_amount || order.total_price)}
+                    </p>
+                  </Link>
+                ))
+              )}
             </div>
           </div>
 
-          {application ? (
-            <div className="rounded-3xl border border-white/10 bg-white/[0.035] p-7 shadow-2xl shadow-black/30">
-              <h2 className="text-2xl font-black">Latest Application</h2>
-
-              <div className="mt-5 space-y-4 text-sm">
-                <div className="flex justify-between border-b border-white/10 pb-3">
-                  <span className="text-gray-400">Application ID</span>
-                  <span className="font-black">#{application.id}</span>
-                </div>
-
-                <div className="flex justify-between border-b border-white/10 pb-3">
-                  <span className="text-gray-400">Status</span>
-                  <span className={`font-black ${statusView.color}`}>
-                    {application.status || "-"}
-                  </span>
-                </div>
-
-                <div className="flex justify-between border-b border-white/10 pb-3">
-                  <span className="text-gray-400">Phone</span>
-                  <span className="font-black">{application.phone || "-"}</span>
-                </div>
-
-                <div className="flex justify-between border-b border-white/10 pb-3">
-                  <span className="text-gray-400">Discord</span>
-                  <span className="font-black">{application.discord || "-"}</span>
-                </div>
-
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Submitted</span>
-                  <span className="font-black">
-                    {formatDate(application.created_at)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-3xl border border-cyan-400/20 bg-cyan-400/10 p-7">
-              <h2 className="text-2xl font-black text-cyan-300">
-                Ready to Sell?
-              </h2>
-
-              <p className="mt-3 text-gray-300">
-                Submit a seller application to unlock seller features.
+          <aside className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+            <h2 className="text-2xl font-black">Seller Tools</h2>
+            <div className={`mt-5 rounded-2xl border p-4 ${serviceLevelClass(overview.profile.seller_service_level)}`}>
+              <p className="text-xs font-black uppercase tracking-[0.18em] opacity-80">{serviceLevel} Service</p>
+              <p className="mt-2 text-sm leading-6 text-slate-200">
+                {serviceLevelDescription(overview.profile.seller_service_level)}
               </p>
-
-              <Link
-                href="/seller/apply"
-                className="mt-6 inline-flex rounded-full bg-cyan-400 px-5 py-3 font-black text-black hover:bg-cyan-300"
-              >
-                Apply Now
-              </Link>
+              <p className="mt-3 text-xs text-slate-300">
+                Promise: {formatDeliveryEta(overview.profile.seller_delivery_sla_minutes)}
+              </p>
             </div>
-          )}
-        </aside>
+            <div className="mt-5 grid gap-3">
+              <Tool href="/seller/products" label="Manage Products" />
+              <Tool href="/seller/products/import" label="Bulk Listing Import" />
+              <Tool href="/seller/storefront" label="Storefront Studio" />
+              <Tool href="/seller/orders" label="Manage Orders" />
+              <Tool href="/seller/service-level" label="Service Level & SLA" />
+              <Tool href="/seller/analytics" label="Analytics" />
+              <Tool href="/seller/reviews" label="Verified Reviews" />
+              <Tool href="/seller/followers" label="Followers" />
+              <Tool href="/wallet" label="Wallet" />
+              <Tool href="/seller/payouts" label="Payout Center" />
+              <Tool href="/seller/verification" label="Verification Status" />
+            </div>
+          </aside>
+        </div>
       </section>
     </main>
+  );
+}
+
+function Metric({
+  icon,
+  label,
+  value,
+  attention = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  attention?: boolean;
+}) {
+  return (
+    <div className={`rounded-3xl border p-5 ${
+      attention
+        ? "border-yellow-400/20 bg-yellow-400/10"
+        : "border-white/10 bg-white/[0.04]"
+    }`}>
+      <div className={attention ? "text-yellow-300" : "text-cyan-300"}>{icon}</div>
+      <p className="mt-4 text-sm text-slate-400">{label}</p>
+      <p className="mt-2 text-3xl font-black">{value}</p>
+    </div>
+  );
+}
+
+function Tool({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 font-black transition hover:border-cyan-400 hover:text-cyan-300"
+    >
+      {label} →
+    </Link>
   );
 }

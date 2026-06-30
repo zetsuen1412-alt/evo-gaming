@@ -1,17 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   FaArrowLeft,
   FaCheckCircle,
+  FaClock,
   FaCreditCard,
   FaMoneyBillWave,
+  FaPaypal,
   FaQrcode,
   FaShieldAlt,
-  FaShoppingCart,
   FaStore,
+  FaTimesCircle,
   FaWallet,
 } from "react-icons/fa";
 import { useCurrency } from "@/components/CurrencyProvider";
@@ -37,6 +39,10 @@ type Order = {
   seller_name?: string | null;
   game_name?: string | null;
   category?: string | null;
+  reservation_status?: string | null;
+  reservation_expires_at?: string | null;
+  expired_at?: string | null;
+  expiration_reason?: string | null;
 };
 
 type Product = {
@@ -51,7 +57,7 @@ type Product = {
   game_name?: string | null;
 };
 
-type PaymentMethod = "wallet" | "qris" | "bank";
+type PaymentMethod = "wallet" | "paypal" | "qris" | "bank";
 
 function numberPrice(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -82,18 +88,36 @@ function getOrderTotal(order: Order | null, product: Product | null) {
   );
 }
 
+function formatCountdown(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export default function PaymentPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { formatPrice, currency } = useCurrency();
 
   const orderId = String(params?.id || "");
 
   const [order, setOrder] = useState<Order | null>(null);
   const [product, setProduct] = useState<Product | null>(null);
-  const [method, setMethod] = useState<PaymentMethod>("wallet");
+  const requestedMethod = searchParams.get("method");
+  const initialMethod: PaymentMethod = ["wallet", "paypal", "qris", "bank"].includes(
+    requestedMethod || ""
+  )
+    ? (requestedMethod as PaymentMethod)
+    : "wallet";
+  const [method, setMethod] = useState<PaymentMethod>(initialMethod);
+  const paypalToken = searchParams.get("token") || searchParams.get("paypal_order_id") || "";
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const paypalCaptureStartedRef = useRef(false);
   const [error, setError] = useState("");
 
   const total = useMemo(() => getOrderTotal(order, product), [order, product]);
@@ -105,6 +129,15 @@ export default function PaymentPage() {
   const gameName = order?.game_name || product?.game_name || "-";
   const category = order?.category || product?.category || "Game Product";
   const imageUrl = product?.image_url || fallbackImage(productTitle);
+  const reservationExpired =
+    Boolean(order) &&
+    ((Boolean(order?.reservation_expires_at) && secondsLeft <= 0) ||
+      ["expired", "released"].includes(
+        String(order?.reservation_status || "").toLowerCase()
+      ) ||
+      ["expired", "cancelled"].includes(
+        String(order?.status || "").toLowerCase()
+      ));
 
   useEffect(() => {
     async function loadPayment() {
@@ -117,105 +150,300 @@ export default function PaymentPage() {
         return;
       }
 
-      const { data: orderData, error: orderError } = await supabase
-        .from("orders")
-        .select("*")
-        .eq("id", Number(orderId))
-        .maybeSingle();
+      try {
+        const accessToken = await getAccessToken();
+        const response = await fetch(`/api/orders/${Number(orderId)}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const json = await response.json();
 
-      if (orderError || !orderData) {
-        setError("Order tidak ditemukan.");
+        if (!response.ok || !json.order) {
+          throw new Error(json.error || "Order tidak ditemukan.");
+        }
+
+        if (json.role !== "buyer") {
+          throw new Error("Only the buyer can open this payment page.");
+        }
+
+        const nextOrder = json.order as Order;
+        if (nextOrder.reservation_expires_at) {
+          setSecondsLeft(
+            Math.max(
+              0,
+              Math.ceil(
+                (new Date(nextOrder.reservation_expires_at).getTime() - Date.now()) /
+                  1000
+              )
+            )
+          );
+        }
+        setOrder(nextOrder);
+        setProduct((json.product || null) as Product | null);
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error ? loadError.message : "Order tidak ditemukan."
+        );
+      } finally {
         setLoading(false);
-        return;
       }
-
-      setOrder(orderData);
-
-      if (orderData.product_id) {
-        const { data: productData } = await supabase
-          .from("products")
-          .select(`
-            id,
-            title,
-            price,
-            seller,
-            seller_id,
-            seller_name,
-            category,
-            image_url,
-            game_name
-          `)
-          .eq("id", Number(orderData.product_id))
-          .maybeSingle();
-
-        setProduct(productData || null);
-      }
-
-      setLoading(false);
     }
 
     loadPayment();
   }, [orderId]);
 
-  async function payNow() {
+  useEffect(() => {
+    const expiresAt = order?.reservation_expires_at;
+
+    if (!expiresAt) {
+      return;
+    }
+
+    const expiresAtMs = new Date(expiresAt).getTime();
+
+    function updateCountdown() {
+      const remaining = Math.max(
+        0,
+        Math.ceil((expiresAtMs - Date.now()) / 1000)
+      );
+      setSecondsLeft(remaining);
+    }
+
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(timer);
+  }, [order?.reservation_expires_at]);
+
+  async function getAccessToken() {
+    const { data, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError || !data.session?.access_token) {
+      throw new Error("Please login before continuing payment.");
+    }
+
+    return data.session.access_token;
+  }
+
+  async function startPayPalPayment() {
+    if (!order) return;
+    if (reservationExpired) {
+      setError("This stock reservation has expired. Please create a new checkout.");
+      return;
+    }
+
+    setPaying(true);
+    setError("");
+
+    try {
+      const accessToken = await getAccessToken();
+
+      const response = await fetch("/api/paypal/create-checkout-order", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ orderId: order.id }),
+      });
+
+      const json = await response.json();
+
+      if (!response.ok || !json.approveUrl) {
+        throw new Error(json.error || "Failed to create PayPal checkout.");
+      }
+
+      window.location.href = json.approveUrl;
+    } catch (paymentError) {
+      setError(
+        paymentError instanceof Error
+          ? paymentError.message
+          : "Failed to start PayPal payment."
+      );
+      setPaying(false);
+    }
+  }
+
+  async function capturePayPalPayment(paypalOrderId: string) {
     if (!order) return;
 
     setPaying(true);
     setError("");
 
-    const paidStatus = method === "wallet" ? "paid" : "waiting_confirmation";
-    const orderStatus = method === "wallet" ? "paid" : "waiting_payment";
+    try {
+      const accessToken = await getAccessToken();
 
-    const paymentProof =
-      method === "wallet"
-        ? "Paid with ComePlayers Wallet"
-        : method === "qris"
-          ? "Waiting QRIS payment confirmation"
-          : "Waiting bank transfer confirmation";
+      const response = await fetch("/api/paypal/capture-checkout-order", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          paypalOrderId,
+          marketplaceOrderId: order.id,
+        }),
+      });
 
-    const updatePayload = {
-      status: orderStatus,
-      payment_status: paidStatus,
-      payment_proof: paymentProof,
-    };
+      const json = await response.json();
 
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update(updatePayload)
-      .eq("id", order.id);
-
-    if (updateError) {
-      const fallbackPayload = {
-        status: orderStatus,
-        payment_proof: paymentProof,
-      };
-
-      const retry = await supabase
-        .from("orders")
-        .update(fallbackPayload)
-        .eq("id", order.id);
-
-      if (retry.error) {
-        setError(retry.error.message);
-        setPaying(false);
-        return;
+      if (!response.ok) {
+        throw new Error(json.error || "Failed to capture PayPal payment.");
       }
+
+      await trackMarketplaceEvent({
+        event_type: "payment_success",
+        user_id: order.buyer_id || null,
+        order_id: order.id,
+        product_id: order.product_id || null,
+        seller_id: order.seller_id || product?.seller_id || null,
+        game_slug: gameName !== "-" ? slugify(gameName) : null,
+        game_name: gameName !== "-" ? gameName : null,
+        category_slug: category !== "Game Product" ? slugify(category) : null,
+        category_name: category !== "Game Product" ? category : null,
+        metadata: {
+          payment_method: "paypal",
+          payment_status: "paid",
+          paypal_order_id: paypalOrderId,
+        },
+      });
+
+      router.push(`/order-success/${order.id}`);
+    } catch (paymentError) {
+      setError(
+        paymentError instanceof Error
+          ? paymentError.message
+          : "Failed to capture PayPal payment."
+      );
+      setPaying(false);
+    }
+  }
+
+  useEffect(() => {
+    if (
+      !order ||
+      !paypalToken ||
+      paypalCaptureStartedRef.current ||
+      searchParams.get("paypalCancel")
+    ) {
+      return;
     }
 
-    await trackMarketplaceEvent({
-      event_type: "payment_success",
-      user_id: order.buyer_id || null,
-      order_id: order.id,
-      product_id: order.product_id || null,
-      seller_id: order.seller_id || product?.seller_id || null,
-      game_slug: gameName !== "-" ? slugify(gameName) : null,
-      game_name: gameName !== "-" ? gameName : null,
-      category_slug: category !== "Game Product" ? slugify(category) : null,
-      category_name: category !== "Game Product" ? category : null,
-      metadata: { payment_method: method, payment_status: paidStatus },
-    });
+    paypalCaptureStartedRef.current = true;
+    void capturePayPalPayment(paypalToken);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order, paypalToken, searchParams]);
 
-    router.push(`/order-success/${order.id}`);
+  async function payNow() {
+    if (!order) return;
+    if (reservationExpired) {
+      setError("This stock reservation has expired. Please create a new checkout.");
+      return;
+    }
+
+    if (method === "paypal") {
+      await startPayPalPayment();
+      return;
+    }
+
+    setPaying(true);
+    setError("");
+
+    try {
+      if (method === "wallet") {
+        const accessToken = await getAccessToken();
+        const response = await fetch("/api/orders/pay-with-wallet", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ orderId: order.id }),
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          throw new Error(json.error || "Wallet payment failed.");
+        }
+
+        await trackMarketplaceEvent({
+          event_type: "payment_success",
+          user_id: order.buyer_id || null,
+          order_id: order.id,
+          product_id: order.product_id || null,
+          seller_id: order.seller_id || product?.seller_id || null,
+          game_slug: gameName !== "-" ? slugify(gameName) : null,
+          game_name: gameName !== "-" ? gameName : null,
+          category_slug:
+            category !== "Game Product" ? slugify(category) : null,
+          category_name: category !== "Game Product" ? category : null,
+          metadata: { payment_method: "wallet", payment_status: "paid" },
+        });
+
+        router.push(`/order-success/${order.id}`);
+        return;
+      }
+
+      const accessToken = await getAccessToken();
+      const response = await fetch("/api/orders/select-payment", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ orderId: order.id, method }),
+      });
+      const json = await response.json();
+
+      if (!response.ok) {
+        throw new Error(json.error || "Failed to select payment method.");
+      }
+
+      router.push(`/orders/${order.id}`);
+    } catch (paymentError) {
+      setError(
+        paymentError instanceof Error
+          ? paymentError.message
+          : "Failed to process payment."
+      );
+    } finally {
+      setPaying(false);
+    }
+  }
+
+  async function cancelOrder() {
+    if (!order || cancelling || paying) return;
+
+    setCancelling(true);
+    setError("");
+
+    try {
+      const accessToken = await getAccessToken();
+      const response = await fetch("/api/orders/cancel", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          orderId: order.id,
+          reason: "buyer_cancelled",
+        }),
+      });
+      const json = await response.json();
+
+      if (!response.ok) {
+        throw new Error(json.error || "Failed to cancel order.");
+      }
+
+      router.push(order.product_id ? `/product/${order.product_id}` : "/my-orders");
+    } catch (cancelError) {
+      setError(
+        cancelError instanceof Error
+          ? cancelError.message
+          : "Failed to cancel order."
+      );
+      setCancelling(false);
+    }
   }
 
   if (loading) {
@@ -265,6 +493,51 @@ export default function PaymentPage() {
 
       <section className="mx-auto grid max-w-7xl gap-8 px-4 py-10 lg:grid-cols-[1fr_420px]">
         <div className="space-y-6">
+          <div
+            className={`rounded-3xl border p-5 ${
+              reservationExpired
+                ? "border-red-400/30 bg-red-400/10"
+                : "border-yellow-400/25 bg-yellow-400/10"
+            }`}
+          >
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+              <div className="flex items-start gap-3">
+                <FaClock
+                  className={`mt-1 text-xl ${
+                    reservationExpired ? "text-red-300" : "text-yellow-300"
+                  }`}
+                />
+                <div>
+                  <p className="font-black">
+                    {reservationExpired
+                      ? "Stock reservation expired"
+                      : "Stock temporarily reserved"}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-300">
+                    {reservationExpired
+                      ? "This item has been returned to marketplace stock. Create a new checkout to continue."
+                      : "Complete payment before the timer ends so another buyer cannot take this stock."}
+                  </p>
+                </div>
+              </div>
+
+              <div
+                className={`shrink-0 rounded-2xl border px-5 py-3 text-center ${
+                  reservationExpired
+                    ? "border-red-400/30 bg-red-400/10 text-red-200"
+                    : "border-yellow-400/30 bg-black/20 text-yellow-200"
+                }`}
+              >
+                <p className="text-xs font-black uppercase tracking-[0.18em]">
+                  Time left
+                </p>
+                <p className="mt-1 text-2xl font-black tabular-nums">
+                  {formatCountdown(secondsLeft)}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
             <h2 className="text-2xl font-black">Order Details</h2>
 
@@ -306,7 +579,7 @@ export default function PaymentPage() {
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
             <h2 className="text-2xl font-black">Choose Payment Method</h2>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-3">
+            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <button
                 onClick={() => setMethod("wallet")}
                 className={`rounded-2xl border p-5 text-left transition ${
@@ -319,6 +592,21 @@ export default function PaymentPage() {
                 <h3 className="mt-4 font-black">Wallet</h3>
                 <p className="mt-2 text-sm text-slate-400">
                   Pay instantly with ComePlayers wallet.
+                </p>
+              </button>
+
+              <button
+                onClick={() => setMethod("paypal")}
+                className={`rounded-2xl border p-5 text-left transition ${
+                  method === "paypal"
+                    ? "border-cyan-400 bg-cyan-400/10"
+                    : "border-white/10 bg-black/30 hover:border-cyan-400/50"
+                }`}
+              >
+                <FaPaypal className="text-3xl text-cyan-300" />
+                <h3 className="mt-4 font-black">PayPal</h3>
+                <p className="mt-2 text-sm text-slate-400">
+                  Pay securely with PayPal Sandbox or Live checkout.
                 </p>
               </button>
 
@@ -354,7 +642,7 @@ export default function PaymentPage() {
             </div>
           </div>
 
-          {method !== "wallet" ? (
+          {method !== "wallet" && method !== "paypal" ? (
             <div className="rounded-3xl border border-yellow-400/20 bg-yellow-400/10 p-6">
               <h2 className="text-2xl font-black text-yellow-200">
                 Payment Instructions
@@ -414,6 +702,19 @@ export default function PaymentPage() {
                 <span className="font-bold uppercase">{method}</span>
               </div>
 
+              <div className="flex justify-between border-b border-white/10 pb-3">
+                <span className="text-slate-300">Reservation</span>
+                <span
+                  className={`font-black ${
+                    reservationExpired ? "text-red-300" : "text-yellow-300"
+                  }`}
+                >
+                  {reservationExpired
+                    ? "Expired"
+                    : formatCountdown(secondsLeft)}
+                </span>
+              </div>
+
               <div className="flex items-start justify-between gap-4 text-lg">
                 <span className="font-black">Total Pay</span>
 
@@ -437,11 +738,29 @@ export default function PaymentPage() {
 
             <button
               onClick={payNow}
-              disabled={paying}
+              disabled={paying || cancelling || reservationExpired}
               className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl bg-cyan-400 px-5 py-4 font-black text-black transition hover:bg-cyan-300 disabled:opacity-60"
             >
-              <FaCreditCard />
-              {paying ? "Processing Payment..." : "Pay Now"}
+              {method === "paypal" ? <FaPaypal /> : <FaCreditCard />}
+              {reservationExpired
+                ? "Reservation Expired"
+                : paying
+                  ? method === "paypal"
+                  ? "Connecting to PayPal..."
+                  : "Processing Payment..."
+                : method === "paypal"
+                  ? "Pay with PayPal"
+                  : "Pay Now"}
+            </button>
+
+            <button
+              type="button"
+              onClick={cancelOrder}
+              disabled={paying || cancelling || reservationExpired}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/20 px-5 py-3 text-sm font-black text-slate-300 transition hover:border-red-400/40 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <FaTimesCircle />
+              {cancelling ? "Cancelling..." : "Cancel Order & Release Stock"}
             </button>
           </div>
 
